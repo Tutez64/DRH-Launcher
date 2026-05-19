@@ -1,8 +1,12 @@
 [package]
-name = "DRH-Launcher"
+name = "drh_launcher"
 version = "0.1.0"
 edition = "2024"
 build = "build.rs"
+
+[[bin]]
+name = "DRH-Launcher"
+path = "src/main.rs"
 
 [dependencies]
 slint = "1.16.1"
