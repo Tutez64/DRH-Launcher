@@ -1,3 +1,12 @@
+slint::slint!{
+    export component HelloWorld {
+        Text {
+            text: "hello world";
+            color: orange;
+        }
+    }
+}
+
 fn main() {
-    println!("Hello, world!");
+    HelloWorld::new().unwrap().run().unwrap();
 }
