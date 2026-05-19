@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 slint = "1.16.1"
+
+[profile.release]
+codegen-units = 1
+lto = true
