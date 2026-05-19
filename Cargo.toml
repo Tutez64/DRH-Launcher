@@ -3,6 +3,7 @@ name = "drh_launcher"
 version = "0.1.0"
 edition = "2024"
 build = "build.rs"
+license = "GPL-3.0-or-later"
 
 [[bin]]
 name = "DRH-Launcher"
