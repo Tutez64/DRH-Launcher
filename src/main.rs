@@ -8,6 +8,7 @@ mod github_releases;
 mod install_state;
 mod paths;
 mod platform;
+mod release_manifest;
 mod release_source;
 
 use std::cell::RefCell;

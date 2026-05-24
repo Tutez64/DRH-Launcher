@@ -234,6 +234,8 @@ When available, a release manifest should describe the release state explicitly.
 }
 ```
 
+DRH Launcher resolves `archive` against the GitHub release assets. For the first implementation, manifests should not point to arbitrary external download URLs.
+
 Later versions of the manifest can add:
 
 - game feature flags
