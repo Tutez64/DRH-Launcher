@@ -1,6 +1,177 @@
-export component HelloWorld {
+import { Button } from "std-widgets.slint";
+
+component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+
+    min-width: 168px;
+    min-height: 42px;
+    border-radius: 6px;
+    background: touch.pressed ? #9f241c : touch.has-hover ? #e1502f : #c73325;
+
     Text {
-        text: "hello world";
-        color: orange;
+        text: root.text;
+        color: #fff7ed;
+        font-size: 15px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component SecondaryButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+
+    min-width: 142px;
+    min-height: 42px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: touch.has-hover ? #f07a37 : #6d3327;
+    background: touch.pressed ? #3a1c18 : touch.has-hover ? #2b1816 : #20171a;
+
+    Text {
+        text: root.text;
+        color: #f3d8c4;
+        font-size: 14px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    in property <string> install-status;
+    in property <string> version-status;
+    in property <string> install-action-text;
+    in property <string> activity-message;
+
+    callback install-or-play();
+    callback check-updates();
+    callback open-settings();
+
+    title: "DRH Launcher";
+    width: 920px;
+    height: 560px;
+    background: #111116;
+
+    VerticalLayout {
+        padding: 28px;
+        spacing: 22px;
+
+        HorizontalLayout {
+            spacing: 16px;
+
+            VerticalLayout {
+                spacing: 5px;
+
+                Text {
+                    text: "DRH Launcher";
+                    font-size: 30px;
+                    font-weight: 700;
+                    color: #fff2df;
+                }
+
+                Text {
+                    text: "Updates, launch options and future mod management for Dungeon Rampage Haxe.";
+                    font-size: 14px;
+                    color: #a99b91;
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+
+            SecondaryButton {
+                text: "Settings";
+                clicked => {
+                    root.open-settings();
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: #3b2925;
+        }
+
+        VerticalLayout {
+            spacing: 14px;
+
+            Text {
+                text: root.install-status;
+                font-size: 22px;
+                font-weight: 600;
+                color: #ffe3c0;
+            }
+
+            Text {
+                text: root.version-status;
+                font-size: 15px;
+                color: #b9aea6;
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                PrimaryButton {
+                    text: root.install-action-text;
+                    clicked => {
+                        root.install-or-play();
+                    }
+                }
+
+                SecondaryButton {
+                    text: "Check for updates";
+                    clicked => {
+                        root.check-updates();
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
+        }
+
+        Rectangle {
+            border-color: #563025;
+            border-width: 1px;
+            border-radius: 6px;
+            background: #18151a;
+            min-height: 82px;
+
+            VerticalLayout {
+                padding: 14px;
+                spacing: 6px;
+
+                Text {
+                    text: "Status";
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: #f07a37;
+                }
+
+                Text {
+                    text: root.activity-message;
+                    font-size: 14px;
+                    color: #dbc8bd;
+                }
+            }
+        }
     }
 }
