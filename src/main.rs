@@ -4,14 +4,21 @@
 
 mod config;
 mod game_install;
+mod github_releases;
 mod install_state;
 mod paths;
+mod platform;
+mod release_source;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::thread;
 
 use config::LauncherConfig;
 use game_install::inspect_install;
+use github_releases::discover_latest_platform_release;
+use platform::Platform;
+use release_source::ReleaseSource;
 
 slint::include_modules!();
 
@@ -63,11 +70,34 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
 
-            refresh_home_state(
-                &ui,
-                &config.borrow(),
-                "Update checks are not wired to GitHub releases yet.",
-            );
+            if !ui.get_update_check_enabled() {
+                return;
+            }
+
+            refresh_home_state(&ui, &config.borrow(), "Checking GitHub releases...");
+            ui.set_update_check_enabled(false);
+            ui.set_update_check_text("Checking...".into());
+
+            let ui = ui.as_weak();
+            let config = config.borrow().clone();
+            thread::spawn(move || {
+                let source = ReleaseSource::drh();
+                let platform = Platform::current();
+                let message = match discover_latest_platform_release(&source, platform) {
+                    Ok(release) => release.summary(),
+                    Err(error) => error,
+                };
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui.upgrade() else {
+                        return;
+                    };
+
+                    refresh_home_state(&ui, &config, &message);
+                    ui.set_update_check_enabled(true);
+                    ui.set_update_check_text("Check for updates".into());
+                });
+            });
         });
     }
 

@@ -2,16 +2,17 @@ import { Button } from "std-widgets.slint";
 
 component PrimaryButton inherits Rectangle {
     in property <string> text;
+    in property <bool> enabled: true;
     callback clicked();
 
     min-width: 168px;
     min-height: 42px;
     border-radius: 6px;
-    background: touch.pressed ? #9f241c : touch.has-hover ? #e1502f : #c73325;
+    background: !root.enabled ? #5b2723 : touch.pressed ? #9f241c : touch.has-hover ? #e1502f : #c73325;
 
     Text {
         text: root.text;
-        color: #fff7ed;
+        color: root.enabled ? #fff7ed : #a9948d;
         font-size: 15px;
         font-weight: 700;
         horizontal-alignment: center;
@@ -19,6 +20,7 @@ component PrimaryButton inherits Rectangle {
     }
 
     touch := TouchArea {
+        enabled: root.enabled;
         clicked => {
             root.clicked();
         }
@@ -27,18 +29,19 @@ component PrimaryButton inherits Rectangle {
 
 component SecondaryButton inherits Rectangle {
     in property <string> text;
+    in property <bool> enabled: true;
     callback clicked();
 
     min-width: 142px;
     min-height: 42px;
     border-radius: 6px;
     border-width: 1px;
-    border-color: touch.has-hover ? #f07a37 : #6d3327;
-    background: touch.pressed ? #3a1c18 : touch.has-hover ? #2b1816 : #20171a;
+    border-color: !root.enabled ? #3f302d : touch.has-hover ? #f07a37 : #6d3327;
+    background: !root.enabled ? #18171a : touch.pressed ? #3a1c18 : touch.has-hover ? #2b1816 : #20171a;
 
     Text {
         text: root.text;
-        color: #f3d8c4;
+        color: root.enabled ? #f3d8c4 : #776b66;
         font-size: 14px;
         font-weight: 600;
         horizontal-alignment: center;
@@ -46,6 +49,7 @@ component SecondaryButton inherits Rectangle {
     }
 
     touch := TouchArea {
+        enabled: root.enabled;
         clicked => {
             root.clicked();
         }
@@ -56,6 +60,8 @@ export component AppWindow inherits Window {
     in property <string> install-status;
     in property <string> version-status;
     in property <string> install-action-text;
+    in property <string> update-check-text: "Check for updates";
+    in property <bool> update-check-enabled: true;
     in property <string> activity-message;
 
     callback install-or-play();
@@ -135,7 +141,8 @@ export component AppWindow inherits Window {
                 }
 
                 SecondaryButton {
-                    text: "Check for updates";
+                    text: root.update-check-text;
+                    enabled: root.update-check-enabled;
                     clicked => {
                         root.check-updates();
                     }
