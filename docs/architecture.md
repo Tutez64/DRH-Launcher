@@ -207,6 +207,8 @@ The update flow should be defensive:
 
 The launcher should not patch the running game process.
 
+The first download implementation should stop after a verified archive has been written to `launcher-data/downloads/`. Extraction and installation replacement are separate steps.
+
 ## Manifest Shape
 
 When available, a release manifest should describe the release state explicitly. The exact schema may evolve, but a minimal manifest should look like this:

@@ -60,6 +60,7 @@ export component AppWindow inherits Window {
     in property <string> install-status;
     in property <string> version-status;
     in property <string> install-action-text;
+    in property <bool> install-action-enabled: true;
     in property <string> update-check-text: "Check for updates";
     in property <bool> update-check-enabled: true;
     in property <string> activity-message;
@@ -135,6 +136,7 @@ export component AppWindow inherits Window {
 
                 PrimaryButton {
                     text: root.install-action-text;
+                    enabled: root.install-action-enabled;
                     clicked => {
                         root.install-or-play();
                     }

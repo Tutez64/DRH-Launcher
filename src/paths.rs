@@ -18,6 +18,11 @@ pub fn default_install_dir() -> PathBuf {
         .join("drh-launcher-data")
 }
 
+#[allow(dead_code)]
+pub fn downloads_dir(install_dir: &std::path::Path) -> PathBuf {
+    install_dir.join("launcher-data").join("downloads")
+}
+
 fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("io.github", "Tutez", "DRH Launcher")
 }
