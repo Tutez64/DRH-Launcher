@@ -17,6 +17,15 @@ Run:
 cargo run
 ```
 
+Debug builds use the [fixture releases](https://github.com/Tutez64/DRHL-Release-Fixtures) by default. Release builds use the real DRH repository by default.
+
+Override the release source explicitly:
+
+```bash
+DRHL_RELEASE_SOURCE=drh cargo run
+DRHL_RELEASE_SOURCE=fixtures cargo run
+```
+
 Check:
 
 ```bash
@@ -34,7 +43,8 @@ cargo build --release
 - Slint-based desktop UI
 - Local JSON configuration
 - Initial home screen
-- Mocked install, launch and update actions
+- GitHub release discovery
+- Verified archive downloads
 
 ## Architecture
 

@@ -30,13 +30,19 @@ fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     let config = Rc::new(RefCell::new(LauncherConfig::load()));
     let latest_release = Arc::new(Mutex::new(None::<PlatformRelease>));
+    let release_source = ReleaseSource::from_environment();
 
-    refresh_home_state(&ui, &config.borrow(), "Ready.");
+    refresh_home_state(
+        &ui,
+        &config.borrow(),
+        &format!("Ready. Release source: {}", release_source.label()),
+    );
 
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
         let latest_release = Arc::clone(&latest_release);
+        let release_source = release_source.clone();
         ui.unwrap().on_install_or_play(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -86,12 +92,11 @@ fn main() -> Result<(), slint::PlatformError> {
             let ui = ui.as_weak();
             let config = config.clone();
             let latest_release = Arc::clone(&latest_release);
+            let release_source = release_source.clone();
             thread::spawn(move || {
                 let release = match release {
                     Some(release) => Ok(release),
-                    None => {
-                        discover_latest_platform_release(&ReleaseSource::drh(), Platform::current())
-                    }
+                    None => discover_latest_platform_release(&release_source, Platform::current()),
                 };
 
                 let message = match release {
@@ -131,6 +136,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
         let latest_release = Arc::clone(&latest_release);
+        let release_source = release_source.clone();
         ui.unwrap().on_check_updates(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -147,10 +153,10 @@ fn main() -> Result<(), slint::PlatformError> {
             let ui = ui.as_weak();
             let config = config.borrow().clone();
             let latest_release = Arc::clone(&latest_release);
+            let release_source = release_source.clone();
             thread::spawn(move || {
-                let source = ReleaseSource::drh();
                 let platform = Platform::current();
-                let result = discover_latest_platform_release(&source, platform);
+                let result = discover_latest_platform_release(&release_source, platform);
                 let release = result.as_ref().ok().cloned();
                 let message = match result {
                     Ok(release) => release.summary(),

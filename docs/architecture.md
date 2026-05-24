@@ -188,6 +188,10 @@ GitHub now exposes a SHA-256 digest for uploaded release assets in the release U
 
 The DRH GitHub repository should be represented as an internal configuration value from the beginning, even if it is not user-editable in the UI. This avoids scattering repository URLs across the codebase.
 
+Debug builds use `Tutez64/DRHL-Release-Fixtures` by default. Release builds use the real DRH repository by default. `DRHL_RELEASE_SOURCE=fixtures` or `DRHL_RELEASE_SOURCE=drh` can override this behavior explicitly.
+
+The fixtures repository is intended for testing manifests, missing assets and small downloadable archives without polluting real DRH releases.
+
 Each downloadable artifact must have:
 
 - URL
