@@ -3,13 +3,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod game_install;
+mod install_state;
 mod paths;
 
 use std::cell::RefCell;
-use std::path::Path;
 use std::rc::Rc;
 
 use config::LauncherConfig;
+use game_install::inspect_install;
 
 slint::include_modules!();
 
@@ -93,25 +95,16 @@ fn main() -> Result<(), slint::PlatformError> {
 }
 
 fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
-    let install_dir = config.install_dir.as_deref();
-    let installed = install_dir.is_some_and(is_game_installed);
+    let status = inspect_install(config.install_dir.as_deref());
 
-    if installed {
-        ui.set_install_status("DRH is installed".into());
-        ui.set_install_action_text("Play".into());
-    } else {
-        ui.set_install_status("DRH is not installed".into());
-        ui.set_install_action_text("Install DRH".into());
-    }
+    ui.set_install_status(status.status_text().into());
+    ui.set_install_action_text(status.state.primary_action().into());
+    ui.set_version_status(status.version_text().into());
 
-    let version_status = install_dir
-        .map(|path| format!("Install directory: {}", path.display()))
-        .unwrap_or_else(|| "No install directory selected.".to_string());
-
-    ui.set_version_status(version_status.into());
-    ui.set_activity_message(message.into());
-}
-
-fn is_game_installed(path: &Path) -> bool {
-    path.join("game").join("version.json").is_file()
+    let activity_message = status
+        .reason
+        .as_deref()
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or(message);
+    ui.set_activity_message(activity_message.into());
 }

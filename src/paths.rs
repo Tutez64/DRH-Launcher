@@ -10,12 +10,12 @@ pub fn config_file() -> PathBuf {
 
 pub fn default_install_dir() -> PathBuf {
     if let Some(dirs) = project_dirs() {
-        return dirs.data_local_dir().join("game");
+        return dirs.data_local_dir().to_path_buf();
     }
 
     env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
-        .join("game")
+        .join("drh-launcher-data")
 }
 
 fn project_dirs() -> Option<ProjectDirs> {
