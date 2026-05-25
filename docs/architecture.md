@@ -57,18 +57,24 @@ The intended installed layout is:
   DRH-Launcher
   launcher-data/
     config.json
+    installed.json
     logs/
     cache/
     downloads/
+    staging/
   game/
-    version.json
     Dungeon Rampage Haxe
     Resources/
     DbConfiguration/
+  game.previous/
   mods/
 ```
 
 The exact executable names and native libraries vary by platform.
+
+`launcher-data/installed.json` is owned by DRH Launcher and records what DRHL believes is installed in `game/` and, when present, `game.previous/`. It should be written after a successful install, update or rollback.
+
+`game.previous/` is reserved for a simple rollback path. It contains the previous `game/` directory after an update replaces it.
 
 ## Install State
 
@@ -211,7 +217,34 @@ The update flow should be defensive:
 
 The launcher should not patch the running game process.
 
-The first extraction implementation should stop after a verified archive has been unpacked to `launcher-data/staging/extracted/`. Installation replacement is a separate step.
+The first installation implementation installs from `launcher-data/staging/extracted/` into `game/`, moving the previous active version to `game.previous/` when present.
+
+After a successful replacement, DRH Launcher should write `launcher-data/installed.json` with the active release metadata and previous release metadata when available, such as:
+
+```json
+{
+  "active": {
+    "version": "V9",
+    "platform": "linux-x64",
+    "source": "Tutez64/Dungeon-Rampage-Haxe",
+    "release_url": "https://github.com/Tutez64/Dungeon-Rampage-Haxe/releases/tag/V9",
+    "archive": "Dungeon.Rampage.Haxe.V9.Linux.tar.gz",
+    "archive_sha256": "...",
+    "installed_at": "2026-05-25T12:34:56Z"
+  },
+  "previous": {
+    "version": "V7",
+    "platform": "linux-x64",
+    "source": "Tutez64/Dungeon-Rampage-Haxe",
+    "release_url": "https://github.com/Tutez64/Dungeon-Rampage-Haxe/releases/tag/V7",
+    "archive": "Dungeon.Rampage.Haxe.V7.Linux.tar.gz",
+    "archive_sha256": "...",
+    "installed_at": "2026-05-20T10:00:00Z"
+  }
+}
+```
+
+DRH Launcher should derive installed metadata from the GitHub release and downloaded archive it used.
 
 ## Manifest Shape
 
@@ -278,10 +311,23 @@ Expected behavior:
 - extraction happens in a staging directory, never directly over the current game
 - replacement happens only after validation succeeds
 - failed replacement should keep or restore the previous launchable game directory when possible
+- a successful replacement should move the old `game/` directory to `game.previous/`
+- an existing `game.previous/` can be removed before creating a new rollback copy
 - updates should not proceed while the game is running
 - partial or inconsistent installs should be reported as `BrokenInstall`
 
 The launcher should prefer a clear recovery action over silent repair when data loss or unexpected deletion is possible.
+
+The initial rollback model is intentionally simple:
+
+```text
+game/           active version
+game.previous/  previous version, if available
+```
+
+For example, if a user updates from `V7` to `V9`, `game.previous/` should contain `V7`, and `installed.json.previous` should record that it is `V7`. This allows the launcher to offer a clear rollback target even if an intermediate release such as `V8` was skipped or known bad.
+
+The UI can later expose `Restore previous version` when `game.previous/` exists. Full multi-version management can be added later if there is a real need.
 
 Destructive or potentially surprising actions should require confirmation, including:
 

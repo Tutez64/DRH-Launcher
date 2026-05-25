@@ -28,6 +28,18 @@ pub fn staging_dir(install_dir: &std::path::Path) -> PathBuf {
     install_dir.join("launcher-data").join("staging")
 }
 
+pub fn game_dir(install_dir: &std::path::Path) -> PathBuf {
+    install_dir.join("game")
+}
+
+pub fn previous_game_dir(install_dir: &std::path::Path) -> PathBuf {
+    install_dir.join("game.previous")
+}
+
+pub fn installed_metadata_file(install_dir: &std::path::Path) -> PathBuf {
+    install_dir.join("launcher-data").join("installed.json")
+}
+
 fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("io.github", "Tutez", "DRH Launcher")
 }

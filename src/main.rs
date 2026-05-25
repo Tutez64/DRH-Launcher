@@ -7,7 +7,9 @@ mod config;
 mod download;
 mod game_install;
 mod github_releases;
+mod install_metadata;
 mod install_state;
+mod installer;
 mod paths;
 mod platform;
 mod release_manifest;
@@ -23,6 +25,7 @@ use config::LauncherConfig;
 use download::download_and_verify;
 use game_install::inspect_install;
 use github_releases::{PlatformRelease, discover_latest_platform_release};
+use installer::install_extracted_archive;
 use platform::Platform;
 use release_source::ReleaseSource;
 
@@ -109,10 +112,23 @@ fn main() -> Result<(), slint::PlatformError> {
                             .replace(release.clone());
                         match download_and_verify(&release.asset, &install_dir) {
                             Ok(download) => match extract_to_staging(&download, &install_dir) {
-                                Ok(extracted) => format!(
-                                    "Archive verified and extracted to {}",
-                                    extracted.path.display()
-                                ),
+                                Ok(extracted) => match install_extracted_archive(
+                                    &extracted,
+                                    &install_dir,
+                                    &release,
+                                    &release_source,
+                                ) {
+                                    Ok(installed) => format!(
+                                        "Installed {}. Previous version: {}",
+                                        installed.active.version,
+                                        installed
+                                            .previous
+                                            .as_ref()
+                                            .map(|previous| previous.version.as_str())
+                                            .unwrap_or("none")
+                                    ),
+                                    Err(error) => error,
+                                },
                                 Err(error) => error,
                             },
                             Err(error) => error,

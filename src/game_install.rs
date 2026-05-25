@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::install_metadata::InstalledState;
 use crate::install_state::InstallState;
+use crate::paths;
 
 #[derive(Clone, Debug)]
 pub struct InstallStatus {
@@ -56,13 +56,6 @@ impl InstallStatus {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct GameVersion {
-    pub version: String,
-    pub platform: Option<String>,
-    pub installed_at: Option<String>,
-}
-
 pub fn inspect_install(install_dir: Option<&Path>) -> InstallStatus {
     let Some(install_dir) = install_dir else {
         return InstallStatus::not_installed();
@@ -77,7 +70,7 @@ pub fn inspect_install(install_dir: Option<&Path>) -> InstallStatus {
         };
     }
 
-    let game_dir = install_dir.join("game");
+    let game_dir = paths::game_dir(install_dir);
     if !game_dir.exists() {
         return InstallStatus {
             state: InstallState::NotInstalled,
@@ -87,25 +80,17 @@ pub fn inspect_install(install_dir: Option<&Path>) -> InstallStatus {
         };
     }
 
-    let version_path = game_dir.join("version.json");
-    let version = match read_version(&version_path) {
-        Ok(version) => version,
-        Err(reason) => {
-            return InstallStatus {
-                state: InstallState::BrokenInstall,
-                install_dir: Some(install_dir.to_path_buf()),
-                installed_version: None,
-                reason: Some(reason),
-            };
-        }
-    };
+    let installed_state = InstalledState::load(install_dir).ok();
+    let installed_version = installed_state
+        .as_ref()
+        .map(|state| state.active.version.clone());
 
     let executable_path = game_dir.join(game_executable_name());
     if !executable_path.is_file() {
         return InstallStatus {
             state: InstallState::BrokenInstall,
             install_dir: Some(install_dir.to_path_buf()),
-            installed_version: Some(version.version),
+            installed_version,
             reason: Some(format!(
                 "Expected game executable is missing: {}",
                 executable_path.display()
@@ -116,7 +101,7 @@ pub fn inspect_install(install_dir: Option<&Path>) -> InstallStatus {
     InstallStatus {
         state: InstallState::Installed,
         install_dir: Some(install_dir.to_path_buf()),
-        installed_version: Some(version.version),
+        installed_version,
         reason: None,
     }
 }
@@ -131,16 +116,10 @@ pub fn game_executable_name() -> &'static str {
     }
 }
 
-fn read_version(path: &Path) -> Result<GameVersion, String> {
-    let contents = fs::read_to_string(path)
-        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
-    serde_json::from_str(&contents)
-        .map_err(|error| format!("Could not parse {}: {error}", path.display()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
@@ -164,14 +143,16 @@ mod tests {
     }
 
     #[test]
-    fn reports_broken_install_when_version_file_is_missing() {
+    fn reports_installed_with_unknown_version_when_metadata_is_missing() {
         let temp = tempdir().unwrap();
-        fs::create_dir(temp.path().join("game")).unwrap();
+        let game_dir = temp.path().join("game");
+        fs::create_dir(&game_dir).unwrap();
+        fs::write(game_dir.join(game_executable_name()), "").unwrap();
 
         let status = inspect_install(Some(temp.path()));
 
-        assert_eq!(status.state, InstallState::BrokenInstall);
-        assert!(status.reason.as_deref().unwrap().contains("Could not read"));
+        assert_eq!(status.state, InstallState::Installed);
+        assert!(status.installed_version.is_none());
     }
 
     #[test]
@@ -179,16 +160,11 @@ mod tests {
         let temp = tempdir().unwrap();
         let game_dir = temp.path().join("game");
         fs::create_dir(&game_dir).unwrap();
-        fs::write(
-            game_dir.join("version.json"),
-            r#"{"version":"V1","platform":"linux-x64","installed_at":null}"#,
-        )
-        .unwrap();
 
         let status = inspect_install(Some(temp.path()));
 
         assert_eq!(status.state, InstallState::BrokenInstall);
-        assert_eq!(status.installed_version.as_deref(), Some("V1"));
+        assert_eq!(status.installed_version.as_deref(), None);
         assert!(
             status
                 .reason
@@ -203,17 +179,12 @@ mod tests {
         let temp = tempdir().unwrap();
         let game_dir = temp.path().join("game");
         fs::create_dir(&game_dir).unwrap();
-        fs::write(
-            game_dir.join("version.json"),
-            r#"{"version":"V2","platform":"linux-x64","installed_at":null}"#,
-        )
-        .unwrap();
         fs::write(game_dir.join(game_executable_name()), "").unwrap();
 
         let status = inspect_install(Some(temp.path()));
 
         assert_eq!(status.state, InstallState::Installed);
-        assert_eq!(status.installed_version.as_deref(), Some("V2"));
+        assert_eq!(status.installed_version.as_deref(), None);
         assert!(status.reason.is_none());
     }
 }
