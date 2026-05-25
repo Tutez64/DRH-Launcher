@@ -15,29 +15,37 @@ pub fn default_install_dir() -> PathBuf {
 
     env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
-        .join("drh-launcher-data")
+        .join("drh-launcher")
 }
 
 #[allow(dead_code)]
 pub fn downloads_dir(install_dir: &std::path::Path) -> PathBuf {
-    install_dir.join("launcher-data").join("downloads")
+    data_dir(install_dir).join("downloads")
 }
 
 #[allow(dead_code)]
 pub fn staging_dir(install_dir: &std::path::Path) -> PathBuf {
-    install_dir.join("launcher-data").join("staging")
+    data_dir(install_dir).join("staging")
+}
+
+pub fn data_dir(install_dir: &std::path::Path) -> PathBuf {
+    install_dir.join("data")
+}
+
+pub fn game_root_dir(install_dir: &std::path::Path) -> PathBuf {
+    install_dir.join("Dungeon Rampage Haxe")
 }
 
 pub fn game_dir(install_dir: &std::path::Path) -> PathBuf {
-    install_dir.join("game")
+    game_root_dir(install_dir).join("current")
 }
 
 pub fn previous_game_dir(install_dir: &std::path::Path) -> PathBuf {
-    install_dir.join("game.previous")
+    game_root_dir(install_dir).join("previous")
 }
 
 pub fn installed_metadata_file(install_dir: &std::path::Path) -> PathBuf {
-    install_dir.join("launcher-data").join("installed.json")
+    data_dir(install_dir).join("installed.json")
 }
 
 fn project_dirs() -> Option<ProjectDirs> {

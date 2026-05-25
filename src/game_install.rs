@@ -85,15 +85,18 @@ pub fn inspect_install(install_dir: Option<&Path>) -> InstallStatus {
         .as_ref()
         .map(|state| state.active.version.clone());
 
-    let executable_path = game_dir.join(game_executable_name());
-    if !executable_path.is_file() {
+    let executable_path = game_executable_names()
+        .iter()
+        .map(|name| game_dir.join(name))
+        .find(|path| is_game_executable(path));
+    if executable_path.is_none() {
         return InstallStatus {
             state: InstallState::BrokenInstall,
             install_dir: Some(install_dir.to_path_buf()),
             installed_version,
             reason: Some(format!(
-                "Expected game executable is missing: {}",
-                executable_path.display()
+                "Expected game executable is missing. Tried: {}",
+                game_executable_names().join(", ")
             )),
         };
     }
@@ -106,13 +109,21 @@ pub fn inspect_install(install_dir: Option<&Path>) -> InstallStatus {
     }
 }
 
-pub fn game_executable_name() -> &'static str {
+pub fn game_executable_names() -> &'static [&'static str] {
     if cfg!(target_os = "windows") {
-        "Dungeon Rampage Haxe.exe"
+        &["Dungeon Rampage Haxe.exe", "DungeonBustersProject.exe"]
     } else if cfg!(target_os = "macos") {
-        "Dungeon Rampage Haxe.app"
+        &["Dungeon Rampage Haxe.app", "DungeonBustersProject.app"]
     } else {
-        "Dungeon Rampage Haxe"
+        &["Dungeon Rampage Haxe", "DungeonBustersProject"]
+    }
+}
+
+pub fn is_game_executable(path: &Path) -> bool {
+    if cfg!(target_os = "macos") {
+        path.is_dir()
+    } else {
+        path.is_file()
     }
 }
 
@@ -145,9 +156,9 @@ mod tests {
     #[test]
     fn reports_installed_with_unknown_version_when_metadata_is_missing() {
         let temp = tempdir().unwrap();
-        let game_dir = temp.path().join("game");
-        fs::create_dir(&game_dir).unwrap();
-        fs::write(game_dir.join(game_executable_name()), "").unwrap();
+        let game_dir = paths::game_dir(temp.path());
+        fs::create_dir_all(&game_dir).unwrap();
+        fs::write(game_dir.join(primary_game_executable_name()), "").unwrap();
 
         let status = inspect_install(Some(temp.path()));
 
@@ -158,8 +169,8 @@ mod tests {
     #[test]
     fn reports_broken_install_when_executable_is_missing() {
         let temp = tempdir().unwrap();
-        let game_dir = temp.path().join("game");
-        fs::create_dir(&game_dir).unwrap();
+        let game_dir = paths::game_dir(temp.path());
+        fs::create_dir_all(&game_dir).unwrap();
 
         let status = inspect_install(Some(temp.path()));
 
@@ -177,14 +188,18 @@ mod tests {
     #[test]
     fn reports_installed_when_required_files_exist() {
         let temp = tempdir().unwrap();
-        let game_dir = temp.path().join("game");
-        fs::create_dir(&game_dir).unwrap();
-        fs::write(game_dir.join(game_executable_name()), "").unwrap();
+        let game_dir = paths::game_dir(temp.path());
+        fs::create_dir_all(&game_dir).unwrap();
+        fs::write(game_dir.join(primary_game_executable_name()), "").unwrap();
 
         let status = inspect_install(Some(temp.path()));
 
         assert_eq!(status.state, InstallState::Installed);
         assert_eq!(status.installed_version.as_deref(), None);
         assert!(status.reason.is_none());
+    }
+
+    fn primary_game_executable_name() -> &'static str {
+        game_executable_names()[0]
     }
 }

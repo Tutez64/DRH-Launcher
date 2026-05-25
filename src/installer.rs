@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::archive::ExtractedArchive;
-use crate::game_install::game_executable_name;
+use crate::game_install::{game_executable_names, is_game_executable};
 use crate::github_releases::PlatformRelease;
 use crate::install_metadata::{InstalledRelease, InstalledState};
 use crate::paths;
@@ -17,6 +17,14 @@ pub fn install_extracted_archive(
     let source_game_dir = find_extracted_game_dir(&extracted.path)?;
     let game_dir = paths::game_dir(install_dir);
     let previous_game_dir = paths::previous_game_dir(install_dir);
+    if let Some(parent) = game_dir.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Could not create game root directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
 
     let previous_metadata = InstalledState::load(install_dir)
         .ok()
@@ -42,7 +50,7 @@ pub fn install_extracted_archive(
     }
 
     fs::rename(&source_game_dir, &game_dir).map_err(|error| {
-        if previous_game_dir.exists() && !game_dir.exists() {
+        if previous_game_dir.exists() {
             let _ = fs::rename(&previous_game_dir, &game_dir);
         }
         format!(
@@ -87,15 +95,17 @@ pub fn find_extracted_game_dir(extracted_dir: &Path) -> Result<PathBuf, String> 
     match candidates.len() {
         1 => Ok(candidates.remove(0)),
         0 => Err(format!(
-            "Could not find extracted game directory containing {}",
-            game_executable_name()
+            "Could not find extracted game directory containing one of: {}",
+            game_executable_names().join(", ")
         )),
         _ => Err("Multiple extracted game directory candidates found".to_string()),
     }
 }
 
 fn is_game_dir(path: &Path) -> bool {
-    path.join(game_executable_name()).exists()
+    game_executable_names()
+        .iter()
+        .any(|name| is_game_executable(&path.join(name)))
 }
 
 #[cfg(test)]
@@ -107,7 +117,7 @@ mod tests {
     #[test]
     fn finds_game_dir_at_extracted_root() {
         let temp = tempdir().unwrap();
-        fs::write(temp.path().join(game_executable_name()), "").unwrap();
+        fs::write(temp.path().join(primary_game_executable_name()), "").unwrap();
 
         assert_eq!(find_extracted_game_dir(temp.path()).unwrap(), temp.path());
     }
@@ -117,7 +127,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let game = temp.path().join("game");
         fs::create_dir(&game).unwrap();
-        fs::write(game.join(game_executable_name()), "").unwrap();
+        fs::write(game.join(primary_game_executable_name()), "").unwrap();
 
         assert_eq!(find_extracted_game_dir(temp.path()).unwrap(), game);
     }
@@ -126,10 +136,10 @@ mod tests {
     fn installs_extracted_archive_and_preserves_previous_metadata() {
         let temp = tempdir().unwrap();
         let install_dir = temp.path().join("install");
-        fs::create_dir(&install_dir).unwrap();
+        fs::create_dir_all(&install_dir).unwrap();
         let current_game = paths::game_dir(&install_dir);
-        fs::create_dir(&current_game).unwrap();
-        fs::write(current_game.join(game_executable_name()), "old").unwrap();
+        fs::create_dir_all(&current_game).unwrap();
+        fs::write(current_game.join(primary_game_executable_name()), "old").unwrap();
         let previous = InstalledState {
             active: test_installed_release("V7"),
             previous: None,
@@ -139,7 +149,7 @@ mod tests {
         let extracted_root = temp.path().join("extracted");
         let extracted_game = extracted_root.join("game");
         fs::create_dir_all(&extracted_game).unwrap();
-        fs::write(extracted_game.join(game_executable_name()), "new").unwrap();
+        fs::write(extracted_game.join(primary_game_executable_name()), "new").unwrap();
         let extracted = ExtractedArchive {
             path: extracted_root,
         };
@@ -156,14 +166,32 @@ mod tests {
         assert_eq!(installed.previous.unwrap().version, "V7");
         assert!(
             paths::game_dir(&install_dir)
-                .join(game_executable_name())
+                .join(primary_game_executable_name())
                 .exists()
         );
         assert!(
             paths::previous_game_dir(&install_dir)
-                .join(game_executable_name())
+                .join(primary_game_executable_name())
                 .exists()
         );
+    }
+
+    #[test]
+    fn does_not_treat_directory_named_like_executable_as_game_dir() {
+        let temp = tempdir().unwrap();
+        let archive_root = temp.path().join(primary_game_executable_name());
+        fs::create_dir(&archive_root).unwrap();
+        fs::write(archive_root.join(primary_game_executable_name()), "").unwrap();
+
+        assert_eq!(find_extracted_game_dir(temp.path()).unwrap(), archive_root);
+    }
+
+    #[test]
+    fn accepts_legacy_executable_name() {
+        let temp = tempdir().unwrap();
+        fs::write(temp.path().join(legacy_primary_game_executable_name()), "").unwrap();
+
+        assert_eq!(find_extracted_game_dir(temp.path()).unwrap(), temp.path());
     }
 
     fn test_release(version: &str) -> PlatformRelease {
@@ -192,5 +220,13 @@ mod tests {
             archive_sha256: "abc123".to_string(),
             installed_at: "unix:0".to_string(),
         }
+    }
+
+    fn legacy_primary_game_executable_name() -> &'static str {
+        game_executable_names()[1]
+    }
+
+    fn primary_game_executable_name() -> &'static str {
+        game_executable_names()[0]
     }
 }

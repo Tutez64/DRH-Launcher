@@ -55,26 +55,30 @@ The intended installed layout is:
 ```text
 <install-dir>/
   DRH-Launcher
-  launcher-data/
+  data/
     config.json
     installed.json
     logs/
     cache/
     downloads/
     staging/
-  game/
-    Dungeon Rampage Haxe
-    Resources/
-    DbConfiguration/
-  game.previous/
+  Dungeon Rampage Haxe/
+    current/
+      Dungeon Rampage Haxe
+      Resources/
+      DbConfiguration/
+    previous/
+      Dungeon Rampage Haxe
+      Resources/
+      DbConfiguration/
   mods/
 ```
 
 The exact executable names and native libraries vary by platform.
 
-`launcher-data/installed.json` is owned by DRH Launcher and records what DRHL believes is installed in `game/` and, when present, `game.previous/`. It should be written after a successful install, update or rollback.
+`data/installed.json` is owned by DRH Launcher and records what DRHL believes is installed in `Dungeon Rampage Haxe/current/` and, when present, `Dungeon Rampage Haxe/previous/`. It should be written after a successful install, update or rollback.
 
-`game.previous/` is reserved for a simple rollback path. It contains the previous `game/` directory after an update replaces it.
+`Dungeon Rampage Haxe/previous/` is reserved for a simple rollback path. It contains the previous `current/` directory after an update replaces it.
 
 ## Install State
 
@@ -217,9 +221,9 @@ The update flow should be defensive:
 
 The launcher should not patch the running game process.
 
-The first installation implementation installs from `launcher-data/staging/extracted/` into `game/`, moving the previous active version to `game.previous/` when present.
+The first installation implementation installs from `data/staging/extracted/` into `Dungeon Rampage Haxe/current/`, moving the previous active version to `Dungeon Rampage Haxe/previous/` when present.
 
-After a successful replacement, DRH Launcher should write `launcher-data/installed.json` with the active release metadata and previous release metadata when available, such as:
+After a successful replacement, DRH Launcher should write `data/installed.json` with the active release metadata and previous release metadata when available, such as:
 
 ```json
 {
@@ -308,11 +312,11 @@ Expected behavior:
 
 - interrupted downloads stay in the cache and can be retried or discarded
 - invalid hashes abort installation and keep the current game unchanged
-- extraction happens in a staging directory, never directly over the current game
+- extraction happens in `data/staging/`, never directly over the current game
 - replacement happens only after validation succeeds
 - failed replacement should keep or restore the previous launchable game directory when possible
-- a successful replacement should move the old `game/` directory to `game.previous/`
-- an existing `game.previous/` can be removed before creating a new rollback copy
+- a successful replacement should move the old `Dungeon Rampage Haxe/current/` directory to `Dungeon Rampage Haxe/previous/`
+- an existing `Dungeon Rampage Haxe/previous/` can be removed before creating a new rollback copy
 - updates should not proceed while the game is running
 - partial or inconsistent installs should be reported as `BrokenInstall`
 
@@ -321,13 +325,13 @@ The launcher should prefer a clear recovery action over silent repair when data 
 The initial rollback model is intentionally simple:
 
 ```text
-game/           active version
-game.previous/  previous version, if available
+Dungeon Rampage Haxe/current/   active version
+Dungeon Rampage Haxe/previous/  previous version, if available
 ```
 
-For example, if a user updates from `V7` to `V9`, `game.previous/` should contain `V7`, and `installed.json.previous` should record that it is `V7`. This allows the launcher to offer a clear rollback target even if an intermediate release such as `V8` was skipped or known bad.
+For example, if a user updates from `V7` to `V9`, `Dungeon Rampage Haxe/previous/` should contain `V7`, and `installed.json.previous` should record that it is `V7`. This allows the launcher to offer a clear rollback target even if an intermediate release such as `V8` was skipped or known bad.
 
-The UI can later expose `Restore previous version` when `game.previous/` exists. Full multi-version management can be added later if there is a real need.
+The UI can later expose `Restore previous version` when `Dungeon Rampage Haxe/previous/` exists. Full multi-version management can be added later if there is a real need.
 
 Destructive or potentially surprising actions should require confirmation, including:
 
@@ -429,7 +433,7 @@ Full self-uninstall may require platform-specific packaging support.
 DRH Launcher should write logs under:
 
 ```text
-launcher-data/logs/
+data/logs/
 ```
 
 The launcher should eventually provide an in-app log viewer for recent logs, plus an action to open the logs directory in the platform file manager.
