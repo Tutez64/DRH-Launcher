@@ -91,11 +91,14 @@ NotInstalled
 Installed
 UpdateAvailable
 Updating
+Playing
 BrokenInstall
 LaunchableButMaybeOutdated
 ```
 
 `UpdateAvailable` means a newer compatible version exists and the launcher can offer or start an update.
+
+`Playing` means DRH was launched by DRH Launcher and the launcher still sees the child process running. While in this state, the primary action should become `Stop` instead of launching another instance. This state is process-based UI state, not installed metadata written to disk.
 
 `LaunchableButMaybeOutdated` means the installed game appears runnable, but the launcher cannot confirm that it is up to date or cannot update it automatically right now. Examples include offline mode, GitHub check failure, failed download, missing manifest data, or an older version that is still accepted. The primary action can remain `Play`, with a warning or secondary update action. The UI should expose the concrete reason when available, such as "Could not check GitHub releases" or "Download failed".
 
@@ -113,6 +116,7 @@ The home screen should show:
 
 - a prominent `Install DRH` button when the game is missing
 - a prominent `Play` button after installation
+- a prominent `Stop` button while a DRH process launched by DRH Launcher is still running
 - installed version
 - latest known version
 - update status
@@ -141,6 +145,10 @@ DRH-Launcher --play
 `DRH-Launcher` opens the full UI.
 
 `DRH-Launcher --play` is intended for Steam and shortcuts. It should quickly check required state, apply or prompt for important updates when needed, then launch DRH without forcing the full UI when everything is ready.
+
+When DRH is launched from the launcher UI, DRH Launcher keeps the child process handle and uses it to prevent multiple launches from the same launcher instance. If the process exits normally, the UI returns to the installed state. If the user presses `Stop`, DRH Launcher terminates the tracked process and returns to the installed state.
+
+This tracking only covers processes started by the current launcher instance. Detecting a DRH process launched directly by the user or by another launcher instance can be added later if it proves useful, but it should be treated carefully to avoid killing an unrelated process by mistake.
 
 ## Launch Options
 
@@ -445,6 +453,7 @@ Logs should be useful for diagnosing:
 - hash verification
 - extraction
 - install replacement
+- game process start, exit and stop actions
 - game launch failures
 - Steam shortcut actions
 

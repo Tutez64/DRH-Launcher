@@ -5,6 +5,7 @@ pub enum InstallState {
     Installed,
     UpdateAvailable,
     Updating,
+    Playing,
     BrokenInstall,
     LaunchableButMaybeOutdated,
 }
@@ -16,6 +17,7 @@ impl InstallState {
             Self::Installed | Self::LaunchableButMaybeOutdated => "Play",
             Self::UpdateAvailable => "Update",
             Self::Updating => "Updating...",
+            Self::Playing => "Stop",
             Self::BrokenInstall => "Repair",
         }
     }

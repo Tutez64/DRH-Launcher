@@ -28,6 +28,7 @@ impl InstallStatus {
             InstallState::Installed => "DRH is installed".to_string(),
             InstallState::UpdateAvailable => "A DRH update is available".to_string(),
             InstallState::Updating => "DRH is updating".to_string(),
+            InstallState::Playing => "DRH is running".to_string(),
             InstallState::BrokenInstall => "DRH installation is incomplete".to_string(),
             InstallState::LaunchableButMaybeOutdated => {
                 "DRH is launchable, but update status is unknown".to_string()

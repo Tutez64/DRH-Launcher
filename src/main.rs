@@ -6,6 +6,7 @@ mod archive;
 mod config;
 mod download;
 mod game_install;
+mod game_launch;
 mod github_releases;
 mod install_metadata;
 mod install_state;
@@ -16,18 +17,23 @@ mod release_manifest;
 mod release_source;
 
 use std::cell::RefCell;
+use std::process::Child;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use archive::extract_to_staging;
 use config::LauncherConfig;
 use download::download_and_verify;
 use game_install::inspect_install;
+use game_launch::launch_game;
 use github_releases::{PlatformRelease, discover_latest_platform_release};
+use install_state::InstallState;
 use installer::install_extracted_archive;
 use platform::Platform;
 use release_source::ReleaseSource;
+use slint::{Timer, TimerMode};
 
 slint::include_modules!();
 
@@ -35,6 +41,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     let config = Rc::new(RefCell::new(LauncherConfig::load()));
     let latest_release = Arc::new(Mutex::new(None::<PlatformRelease>));
+    let game_process = Rc::new(RefCell::new(None::<Child>));
+    let game_monitor = Rc::new(Timer::default());
     let release_source = ReleaseSource::from_environment();
 
     refresh_home_state(
@@ -47,6 +55,8 @@ fn main() -> Result<(), slint::PlatformError> {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
         let latest_release = Arc::clone(&latest_release);
+        let game_process = Rc::clone(&game_process);
+        let game_monitor = Rc::clone(&game_monitor);
         let release_source = release_source.clone();
         ui.unwrap().on_install_or_play(move || {
             let Some(ui) = ui.upgrade() else {
@@ -58,6 +68,37 @@ fn main() -> Result<(), slint::PlatformError> {
             }
 
             let mut config = config.borrow_mut();
+            let process_error = {
+                let mut process = game_process.borrow_mut();
+                match process.as_mut() {
+                    Some(child) => match child.try_wait() {
+                        Ok(None) => Some(Ok(())),
+                        Ok(Some(_)) => {
+                            process.take();
+                            game_monitor.stop();
+                            None
+                        }
+                        Err(error) => Some(Err(error.to_string())),
+                    },
+                    None => None,
+                }
+            };
+            if let Some(process_error) = process_error {
+                match process_error {
+                    Ok(()) => {
+                        let message = stop_game(&game_process);
+                        game_monitor.stop();
+                        refresh_home_state(&ui, &config, &message);
+                    }
+                    Err(error) => refresh_playing_state(
+                        &ui,
+                        &config,
+                        &format!("Could not inspect DRH process: {error}"),
+                    ),
+                }
+                return;
+            }
+
             if config.install_dir.is_none() {
                 config.install_dir = Some(paths::default_install_dir());
                 if let Err(error) = config.save() {
@@ -74,6 +115,28 @@ fn main() -> Result<(), slint::PlatformError> {
                 refresh_home_state(&ui, &config, "No install directory selected.");
                 return;
             };
+
+            let install_status = inspect_install(Some(&install_dir));
+            if matches!(
+                install_status.state,
+                InstallState::Installed | InstallState::LaunchableButMaybeOutdated
+            ) {
+                let config = config.clone();
+                match launch_game(&config) {
+                    Ok(child) => {
+                        game_process.borrow_mut().replace(child);
+                        refresh_playing_state(&ui, &config, "DRH is running.");
+                        start_game_monitor(
+                            Rc::clone(&game_monitor),
+                            ui.as_weak(),
+                            config.clone(),
+                            Rc::clone(&game_process),
+                        );
+                    }
+                    Err(error) => refresh_home_state(&ui, &config, &error),
+                }
+                return;
+            }
 
             let release = latest_release
                 .lock()
@@ -239,4 +302,67 @@ fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
         .filter(|_| message == "Ready.")
         .unwrap_or(message);
     ui.set_activity_message(activity_message.into());
+}
+
+fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
+    let status = inspect_install(config.install_dir.as_deref());
+
+    ui.set_install_status("DRH is running".into());
+    ui.set_install_action_text(InstallState::Playing.primary_action().into());
+    ui.set_install_action_enabled(true);
+    ui.set_version_status(status.version_text().into());
+    ui.set_activity_message(message.into());
+}
+
+fn start_game_monitor(
+    timer: Rc<Timer>,
+    ui: slint::Weak<AppWindow>,
+    config: LauncherConfig,
+    game_process: Rc<RefCell<Option<Child>>>,
+) {
+    let timer_handle = Rc::clone(&timer);
+    timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
+        let finished = {
+            let mut process = game_process.borrow_mut();
+            let Some(child) = process.as_mut() else {
+                timer_handle.stop();
+                return;
+            };
+
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    process.take();
+                    Some(format!("DRH exited with status: {status}"))
+                }
+                Ok(None) => None,
+                Err(error) => {
+                    process.take();
+                    Some(format!("Could not inspect DRH process: {error}"))
+                }
+            }
+        };
+
+        let Some(message) = finished else {
+            return;
+        };
+
+        timer_handle.stop();
+        if let Some(ui) = ui.upgrade() {
+            refresh_home_state(&ui, &config, &message);
+        }
+    });
+}
+
+fn stop_game(game_process: &Rc<RefCell<Option<Child>>>) -> String {
+    let Some(mut child) = game_process.borrow_mut().take() else {
+        return "DRH is not running.".to_string();
+    };
+
+    match child.kill() {
+        Ok(()) => {
+            let _ = child.wait();
+            "DRH stopped.".to_string()
+        }
+        Err(error) => format!("Could not stop DRH: {error}"),
+    }
 }
