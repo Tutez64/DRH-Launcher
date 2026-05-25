@@ -2,6 +2,7 @@
 // when, e.g., starting the app via file manager. Ignored on other platforms.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod archive;
 mod config;
 mod download;
 mod game_install;
@@ -17,6 +18,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use archive::extract_to_staging;
 use config::LauncherConfig;
 use download::download_and_verify;
 use game_install::inspect_install;
@@ -106,12 +108,13 @@ fn main() -> Result<(), slint::PlatformError> {
                             .expect("latest release lock poisoned")
                             .replace(release.clone());
                         match download_and_verify(&release.asset, &install_dir) {
-                            Ok(download) => format!(
-                                "Archive verified: {} ({} bytes, sha256:{})",
-                                download.path.display(),
-                                download.size,
-                                download.sha256
-                            ),
+                            Ok(download) => match extract_to_staging(&download, &install_dir) {
+                                Ok(extracted) => format!(
+                                    "Archive verified and extracted to {}",
+                                    extracted.path.display()
+                                ),
+                                Err(error) => error,
+                            },
                             Err(error) => error,
                         }
                     }

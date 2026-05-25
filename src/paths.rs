@@ -23,6 +23,11 @@ pub fn downloads_dir(install_dir: &std::path::Path) -> PathBuf {
     install_dir.join("launcher-data").join("downloads")
 }
 
+#[allow(dead_code)]
+pub fn staging_dir(install_dir: &std::path::Path) -> PathBuf {
+    install_dir.join("launcher-data").join("staging")
+}
+
 fn project_dirs() -> Option<ProjectDirs> {
     ProjectDirs::from("io.github", "Tutez", "DRH Launcher")
 }

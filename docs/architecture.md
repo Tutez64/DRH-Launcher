@@ -211,7 +211,7 @@ The update flow should be defensive:
 
 The launcher should not patch the running game process.
 
-The first download implementation should stop after a verified archive has been written to `launcher-data/downloads/`. Extraction and installation replacement are separate steps.
+The first extraction implementation should stop after a verified archive has been unpacked to `launcher-data/staging/extracted/`. Installation replacement is a separate step.
 
 ## Manifest Shape
 
