@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use archive::extract_to_staging;
 use config::LauncherConfig;
-use download::download_and_verify;
+use download::{DownloadProgress, download_and_verify_with_progress};
 use game_install::inspect_install;
 use game_launch::launch_game;
 use github_releases::{PlatformRelease, discover_latest_platform_release};
@@ -173,27 +173,64 @@ fn main() -> Result<(), slint::PlatformError> {
                             .lock()
                             .expect("latest release lock poisoned")
                             .replace(release.clone());
-                        match download_and_verify(&release.asset, &install_dir) {
-                            Ok(download) => match extract_to_staging(&download, &install_dir) {
-                                Ok(extracted) => match install_extracted_archive(
-                                    &extracted,
-                                    &install_dir,
-                                    &release,
-                                    &release_source,
-                                ) {
-                                    Ok(installed) => format!(
-                                        "Installed {}. Previous version: {}",
-                                        installed.active.version,
-                                        installed
-                                            .previous
-                                            .as_ref()
-                                            .map(|previous| previous.version.as_str())
-                                            .unwrap_or("none")
-                                    ),
-                                    Err(error) => error,
-                                },
-                                Err(error) => error,
+                        report_background_activity(
+                            &ui,
+                            format!("Found {}. Preparing download...", release.version),
+                            Some("Downloading..."),
+                        );
+                        let mut last_percent = None::<u64>;
+                        match download_and_verify_with_progress(
+                            &release.asset,
+                            &install_dir,
+                            |progress| {
+                                let percent = progress_percent(&progress);
+                                if percent != last_percent
+                                    || progress.downloaded == 0
+                                    || progress.downloaded == progress.total
+                                {
+                                    last_percent = percent;
+                                    report_background_activity(
+                                        &ui,
+                                        format_download_progress(&release.asset.name, &progress),
+                                        Some("Downloading..."),
+                                    );
+                                }
                             },
+                        ) {
+                            Ok(download) => {
+                                report_background_activity(
+                                    &ui,
+                                    "Download verified. Extracting archive...".to_string(),
+                                    Some("Extracting..."),
+                                );
+                                match extract_to_staging(&download, &install_dir) {
+                                    Ok(extracted) => {
+                                        report_background_activity(
+                                            &ui,
+                                            "Archive extracted. Installing files...".to_string(),
+                                            Some("Installing..."),
+                                        );
+                                        match install_extracted_archive(
+                                            &extracted,
+                                            &install_dir,
+                                            &release,
+                                            &release_source,
+                                        ) {
+                                            Ok(installed) => format!(
+                                                "Installed {}. Previous version: {}",
+                                                installed.active.version,
+                                                installed
+                                                    .previous
+                                                    .as_ref()
+                                                    .map(|previous| previous.version.as_str())
+                                                    .unwrap_or("none")
+                                            ),
+                                            Err(error) => error,
+                                        }
+                                    }
+                                    Err(error) => error,
+                                }
+                            }
                             Err(error) => error,
                         }
                     }
@@ -302,6 +339,60 @@ fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
         .filter(|_| message == "Ready.")
         .unwrap_or(message);
     ui.set_activity_message(activity_message.into());
+}
+
+fn report_background_activity(
+    ui: &slint::Weak<AppWindow>,
+    message: String,
+    action_text: Option<&str>,
+) {
+    let ui = ui.clone();
+    let action_text = action_text.map(str::to_string);
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(ui) = ui.upgrade() else {
+            return;
+        };
+
+        ui.set_activity_message(message.into());
+        if let Some(action_text) = action_text {
+            ui.set_install_action_text(action_text.into());
+        }
+    });
+}
+
+fn format_download_progress(asset_name: &str, progress: &DownloadProgress) -> String {
+    let downloaded = format_bytes(progress.downloaded);
+    let total = format_bytes(progress.total);
+
+    match progress_percent(progress) {
+        Some(percent) => format!("Downloading {asset_name}: {percent}% ({downloaded} / {total})"),
+        None => format!("Downloading {asset_name}: {downloaded}"),
+    }
+}
+
+fn progress_percent(progress: &DownloadProgress) -> Option<u64> {
+    if progress.total == 0 {
+        return None;
+    }
+
+    Some(progress.downloaded.saturating_mul(100) / progress.total)
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+
+    let bytes = bytes as f64;
+    if bytes >= GIB {
+        format!("{:.1} GiB", bytes / GIB)
+    } else if bytes >= MIB {
+        format!("{:.1} MiB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes / KIB)
+    } else {
+        format!("{bytes:.0} B")
+    }
 }
 
 fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {

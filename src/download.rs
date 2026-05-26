@@ -19,9 +19,23 @@ pub struct VerifiedDownload {
     pub size: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DownloadProgress {
+    pub downloaded: u64,
+    pub total: u64,
+}
+
 pub fn download_and_verify(
     asset: &ReleaseAsset,
     install_dir: &Path,
+) -> Result<VerifiedDownload, String> {
+    download_and_verify_with_progress(asset, install_dir, |_| {})
+}
+
+pub fn download_and_verify_with_progress(
+    asset: &ReleaseAsset,
+    install_dir: &Path,
+    mut on_progress: impl FnMut(DownloadProgress),
 ) -> Result<VerifiedDownload, String> {
     let expected_sha256 = expected_sha256(asset)?;
     let downloads_dir = paths::downloads_dir(install_dir);
@@ -50,8 +64,30 @@ pub fn download_and_verify(
 
     let mut file = File::create(&temp_path)
         .map_err(|error| format!("Could not create {}: {error}", temp_path.display()))?;
-    let bytes_written = io::copy(&mut response, &mut file)
-        .map_err(|error| format!("Could not write {}: {error}", temp_path.display()))?;
+
+    let expected_size = asset.size;
+    let mut bytes_written = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    on_progress(DownloadProgress {
+        downloaded: bytes_written,
+        total: expected_size,
+    });
+    loop {
+        let bytes_read = response
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not download {}: {error}", asset.name))?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        file.write_all(&buffer[..bytes_read])
+            .map_err(|error| format!("Could not write {}: {error}", temp_path.display()))?;
+        bytes_written += bytes_read as u64;
+        on_progress(DownloadProgress {
+            downloaded: bytes_written,
+            total: expected_size,
+        });
+    }
     file.flush()
         .map_err(|error| format!("Could not flush {}: {error}", temp_path.display()))?;
 
