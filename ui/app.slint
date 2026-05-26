@@ -70,8 +70,10 @@ export component AppWindow inherits Window {
     callback open-settings();
 
     title: "DRH Launcher";
-    width: 920px;
-    height: 560px;
+    preferred-width: 920px;
+    preferred-height: 560px;
+    min-width: 760px;
+    min-height: 460px;
     background: #111116;
 
     VerticalLayout {
