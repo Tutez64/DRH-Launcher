@@ -37,23 +37,10 @@ impl InstallStatus {
     }
 
     pub fn version_text(&self) -> String {
-        let version = self
-            .installed_version
+        self.installed_version
             .as_deref()
             .map(|version| format!("Version: {version}"))
-            .unwrap_or_else(|| "Version: unknown".to_string());
-
-        let directory = self
-            .install_dir
-            .as_deref()
-            .map(|path| format!("Install directory: {}", path.display()))
-            .unwrap_or_else(|| "No install directory selected.".to_string());
-
-        if matches!(self.state, InstallState::NotInstalled) {
-            return directory;
-        }
-
-        format!("{version} | {directory}")
+            .unwrap_or_else(|| "Version: unknown".to_string())
     }
 }
 

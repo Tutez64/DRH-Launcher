@@ -17,7 +17,8 @@ mod release_manifest;
 mod release_source;
 
 use std::cell::RefCell;
-use std::process::Child;
+use std::path::Path;
+use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -321,6 +322,28 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_open_install_folder(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let Some(install_dir) = config.borrow().install_dir.clone() else {
+                refresh_home_state(&ui, &config.borrow(), "No install directory selected.");
+                return;
+            };
+
+            match open_folder(&install_dir) {
+                Ok(()) => set_status_message(&ui, "Install folder opened."),
+                Err(error) => {
+                    set_status_message(&ui, &format!("Could not open install folder: {error}"))
+                }
+            }
+        });
+    }
+
     ui.run()
 }
 
@@ -331,6 +354,7 @@ fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
     ui.set_install_action_text(status.state.primary_action().into());
     ui.set_install_action_enabled(true);
     ui.set_version_status(status.version_text().into());
+    ui.set_open_install_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
 
     let activity_message = status
         .reason
@@ -338,7 +362,7 @@ fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
         .filter(|reason| !reason.is_empty())
         .filter(|_| message == "Ready.")
         .unwrap_or(message);
-    ui.set_activity_message(activity_message.into());
+    set_status_message(ui, activity_message);
 }
 
 fn report_background_activity(
@@ -353,7 +377,7 @@ fn report_background_activity(
             return;
         };
 
-        ui.set_activity_message(message.into());
+        set_status_message(&ui, &message);
         if let Some(action_text) = action_text {
             ui.set_install_action_text(action_text.into());
         }
@@ -402,7 +426,106 @@ fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str)
     ui.set_install_action_text(InstallState::Playing.primary_action().into());
     ui.set_install_action_enabled(true);
     ui.set_version_status(status.version_text().into());
-    ui.set_activity_message(message.into());
+    ui.set_open_install_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
+    set_status_message(ui, message);
+}
+
+fn open_folder(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!("{} does not exist", path.display()));
+    }
+
+    let mut command = if cfg!(target_os = "windows") {
+        let mut command = Command::new("explorer");
+        command.arg(path);
+        command
+    } else if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg(path);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(path);
+        command
+    };
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn set_status_message(ui: &AppWindow, message: &str) {
+    ui.set_status_summary(status_summary(message).into());
+    ui.set_status_detail(status_detail(message).into());
+}
+
+fn status_summary(message: &str) -> String {
+    if message.starts_with("Ready.") {
+        return "Ready.".to_string();
+    }
+
+    if message.starts_with("Downloading ") {
+        return "Download in progress.".to_string();
+    }
+
+    if message.starts_with("Checking ") {
+        return "Checking for updates.".to_string();
+    }
+
+    if message.starts_with("Found ") {
+        return "Release found.".to_string();
+    }
+
+    if message.starts_with("Download verified.") {
+        return "Download verified.".to_string();
+    }
+
+    if message.starts_with("Archive extracted.") {
+        return "Archive extraite.".to_string();
+    }
+
+    if message.starts_with("Installed ") {
+        return "Installation complete.".to_string();
+    }
+
+    if message.starts_with("DRH is running") {
+        return "DRH is running.".to_string();
+    }
+
+    if message.starts_with("DRH stopped.") {
+        return "DRH has stopped.".to_string();
+    }
+
+    if message.starts_with("DRH exited ") {
+        return "DRH exited.".to_string();
+    }
+
+    if message.starts_with("Could not ") || message.starts_with("No ") {
+        return "An action could not be completed.".to_string();
+    }
+
+    let first_line = message.lines().next().unwrap_or(message).trim();
+    const MAX_SUMMARY_CHARS: usize = 92;
+    if first_line.chars().count() <= MAX_SUMMARY_CHARS {
+        first_line.to_string()
+    } else {
+        format!(
+            "{}...",
+            first_line
+                .chars()
+                .take(MAX_SUMMARY_CHARS.saturating_sub(3))
+                .collect::<String>()
+        )
+    }
+}
+
+fn status_detail(message: &str) -> String {
+    if message == "Ready." {
+        "No operation in progress.".to_string()
+    } else {
+        message.to_string()
+    }
 }
 
 fn start_game_monitor(

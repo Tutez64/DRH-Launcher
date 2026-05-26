@@ -1,4 +1,4 @@
-import { Button } from "std-widgets.slint";
+import { CheckBox, LineEdit } from "std-widgets.slint";
 
 component PrimaryButton inherits Rectangle {
     in property <string> text;
@@ -33,7 +33,7 @@ component SecondaryButton inherits Rectangle {
     callback clicked();
 
     min-width: 142px;
-    min-height: 42px;
+    min-height: 38px;
     border-radius: 6px;
     border-width: 1px;
     border-color: !root.enabled ? #3f302d : touch.has-hover ? #f07a37 : #6d3327;
@@ -56,6 +56,123 @@ component SecondaryButton inherits Rectangle {
     }
 }
 
+component NavButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+
+    height: 42px;
+    border-radius: 6px;
+    background: root.active ? #3a1f1b : touch.has-hover ? #211b1e : transparent;
+    border-width: root.active ? 1px : 0px;
+    border-color: #743325;
+
+    Text {
+        text: root.text;
+        color: root.active ? #fff1dd : #cbb8ab;
+        font-size: 14px;
+        font-weight: root.active ? 700 : 600;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        x: 14px;
+        width: parent.width - 28px;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component MetricBlock inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+
+    min-height: 78px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: #3c2a26;
+    background: #17151a;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: 700;
+            color: #f07a37;
+        }
+
+        Text {
+            text: root.value;
+            font-size: 15px;
+            color: #ead8ca;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component SectionTitle inherits Text {
+    in property <string> title;
+
+    text: root.title;
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff0dc;
+}
+
+component SmallLabel inherits Text {
+    in property <string> label;
+
+    text: root.label;
+    font-size: 12px;
+    font-weight: 700;
+    color: #c48a66;
+}
+
+component OptionRow inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+
+    min-height: 58px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: #342724;
+    background: #151419;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        alignment: center;
+
+        VerticalLayout {
+            spacing: 3px;
+
+            Text {
+                text: root.title;
+                font-size: 14px;
+                font-weight: 700;
+                color: #f3dfcf;
+            }
+
+            Text {
+                text: root.description;
+                font-size: 12px;
+                color: #a99b91;
+                wrap: word-wrap;
+            }
+        }
+
+        CheckBox {
+            enabled: false;
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     in property <string> install-status;
     in property <string> version-status;
@@ -63,124 +180,374 @@ export component AppWindow inherits Window {
     in property <bool> install-action-enabled: true;
     in property <string> update-check-text: "Check for updates";
     in property <bool> update-check-enabled: true;
-    in property <string> activity-message;
+    in property <string> status-summary;
+    in property <string> status-detail;
+    in property <bool> open-install-folder-enabled: false;
+    in-out property <int> active-page: 0;
 
     callback install-or-play();
     callback check-updates();
     callback open-settings();
+    callback open-install-folder();
 
     title: "DRH Launcher";
-    preferred-width: 920px;
-    preferred-height: 560px;
-    min-width: 760px;
-    min-height: 460px;
-    background: #111116;
+    preferred-width: 980px;
+    preferred-height: 620px;
+    min-width: 820px;
+    min-height: 520px;
+    background: #0f1014;
 
-    VerticalLayout {
-        padding: 28px;
-        spacing: 22px;
+    HorizontalLayout {
+        padding: 0px;
+        spacing: 0px;
 
-        HorizontalLayout {
-            spacing: 16px;
+        Rectangle {
+            width: 188px;
+            background: #121116;
 
             VerticalLayout {
-                spacing: 5px;
+                padding: 18px;
+                spacing: 10px;
 
                 Text {
-                    text: "DRH Launcher";
-                    font-size: 30px;
-                    font-weight: 700;
-                    color: #fff2df;
-                }
-
-                Text {
-                    text: "Updates, launch options and future mod management for Dungeon Rampage Haxe.";
+                    text: "Dungeon Rampage Haxe";
+                    color: #ffe6c5;
                     font-size: 14px;
-                    color: #a99b91;
+                    font-weight: 800;
+                    wrap: word-wrap;
                 }
-            }
 
-            Rectangle {
-                horizontal-stretch: 1;
-            }
+                Rectangle {
+                    height: 12px;
+                }
 
-            SecondaryButton {
-                text: "Settings";
-                clicked => {
-                    root.open-settings();
+                NavButton {
+                    text: "Home";
+                    active: root.active-page == 0;
+                    clicked => {
+                        root.active-page = 0;
+                    }
+                }
+
+                NavButton {
+                    text: "Options";
+                    active: root.active-page == 1;
+                    clicked => {
+                        root.active-page = 1;
+                    }
+                }
+
+                NavButton {
+                    text: "Mods";
+                    active: root.active-page == 2;
+                    clicked => {
+                        root.active-page = 2;
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+
+                NavButton {
+                    text: "Settings";
+                    active: root.active-page == 3;
+                    clicked => {
+                        root.active-page = 3;
+                    }
                 }
             }
         }
 
         Rectangle {
-            height: 1px;
-            background: #3b2925;
-        }
-
-        VerticalLayout {
-            spacing: 14px;
-
-            Text {
-                text: root.install-status;
-                font-size: 22px;
-                font-weight: 600;
-                color: #ffe3c0;
-            }
-
-            Text {
-                text: root.version-status;
-                font-size: 15px;
-                color: #b9aea6;
-            }
-
-            HorizontalLayout {
-                spacing: 12px;
-
-                PrimaryButton {
-                    text: root.install-action-text;
-                    enabled: root.install-action-enabled;
-                    clicked => {
-                        root.install-or-play();
-                    }
-                }
-
-                SecondaryButton {
-                    text: root.update-check-text;
-                    enabled: root.update-check-enabled;
-                    clicked => {
-                        root.check-updates();
-                    }
-                }
-            }
+            width: 1px;
+            background: #30231f;
         }
 
         Rectangle {
             horizontal-stretch: 1;
-            vertical-stretch: 1;
-        }
-
-        Rectangle {
-            border-color: #563025;
-            border-width: 1px;
-            border-radius: 6px;
-            background: #18151a;
-            min-height: 82px;
+            background: #0f1014;
 
             VerticalLayout {
-                padding: 14px;
-                spacing: 6px;
+                padding: 26px;
+                spacing: 18px;
 
-                Text {
-                    text: "Status";
-                    font-size: 13px;
-                    font-weight: 700;
-                    color: #f07a37;
+                if root.active-page == 0 : Rectangle {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        spacing: 16px;
+
+                        Rectangle {
+                            vertical-stretch: 1;
+                        }
+
+                        HorizontalLayout {
+                            alignment: center;
+
+                            PrimaryButton {
+                                text: root.install-action-text;
+                                enabled: root.install-action-enabled;
+                                clicked => {
+                                    root.install-or-play();
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: center;
+
+                            Text {
+                                text: root.version-status;
+                                font-size: 13px;
+                                color: #a99b91;
+                                horizontal-alignment: center;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: center;
+
+                            SecondaryButton {
+                                text: root.update-check-text;
+                                enabled: root.update-check-enabled;
+                                clicked => {
+                                    root.check-updates();
+                                }
+                            }
+
+                            SecondaryButton {
+                                text: "Options";
+                                clicked => {
+                                    root.active-page = 1;
+                                }
+                            }
+
+                            SecondaryButton {
+                                text: "Repair";
+                                enabled: false;
+                            }
+
+                            SecondaryButton {
+                                text: "Logs";
+                                enabled: false;
+                            }
+                        }
+
+                        Rectangle {
+                            vertical-stretch: 1;
+                        }
+
+                        Rectangle {
+                            border-color: #563025;
+                            border-width: 1px;
+                            border-radius: 6px;
+                            background: #18151a;
+                            min-height: 132px;
+
+                            VerticalLayout {
+                                padding: 14px;
+                                spacing: 8px;
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+
+                                    SmallLabel {
+                                        label: "Status";
+                                    }
+
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                    }
+
+                                    Text {
+                                        text: "Details";
+                                        font-size: 12px;
+                                        color: #9f8e83;
+                                    }
+                                }
+
+                                Text {
+                                    text: root.status-summary;
+                                    font-size: 14px;
+                                    font-weight: 700;
+                                    color: #f1d7c5;
+                                    wrap: word-wrap;
+                                }
+
+                                Rectangle {
+                                    height: 1px;
+                                    background: #2b211f;
+                                }
+
+                                Text {
+                                    text: root.status-detail;
+                                    font-size: 12px;
+                                    color: #ac9d94;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
                 }
 
-                Text {
-                    text: root.activity-message;
-                    font-size: 14px;
-                    color: #dbc8bd;
+                if root.active-page == 1 : Rectangle {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        spacing: 16px;
+
+                        SectionTitle {
+                            title: "Launch Options";
+                        }
+
+                        HorizontalLayout {
+                            spacing: 12px;
+
+                            VerticalLayout {
+                                spacing: 8px;
+                                horizontal-stretch: 1;
+
+                                SmallLabel {
+                                    label: "Pre-launch command";
+                                }
+
+                                LineEdit {
+                                    placeholder-text: "mangohud, gamescope, prime-run...";
+                                    enabled: false;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 8px;
+                                horizontal-stretch: 1;
+
+                                SmallLabel {
+                                    label: "Arguments DRH";
+                                }
+
+                                LineEdit {
+                                    placeholder-text: "--flag=value";
+                                    enabled: false;
+                                }
+                            }
+                        }
+
+                        OptionRow {
+                            title: "Use recommended arguments";
+                            description: "Will be populated from DRH release metadata.";
+                        }
+
+                        OptionRow {
+                            title: "Add to Steam";
+                            description: "Create a Steam shortcut to DRH Launcher with --play mode.";
+                        }
+
+                        OptionRow {
+                            title: "Advanced mode";
+                            description: "Allow custom arguments not listed by the release.";
+                        }
+
+                        Rectangle {
+                            vertical-stretch: 1;
+                        }
+                    }
+                }
+
+                if root.active-page == 2 : Rectangle {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        spacing: 16px;
+
+                        SectionTitle {
+                            title: "Mods";
+                        }
+
+                        MetricBlock {
+                            label: "Mod management";
+                            value: "No mods installed. This section is ready for packs, activation and compatibility checks.";
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+
+                            SecondaryButton {
+                                text: "Import";
+                                enabled: false;
+                            }
+
+                            SecondaryButton {
+                                text: "Open folder";
+                                enabled: false;
+                            }
+                        }
+
+                        Rectangle {
+                            vertical-stretch: 1;
+                        }
+                    }
+                }
+
+                if root.active-page == 3 : Rectangle {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        spacing: 16px;
+
+                        SectionTitle {
+                            title: "Settings";
+                        }
+
+                        MetricBlock {
+                            label: "Install folder";
+                            value: "Current launcher configuration.";
+                        }
+
+                        MetricBlock {
+                            label: "Diagnostics";
+                            value: "Detailed logs will be available here without crowding the home screen.";
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+
+                            SecondaryButton {
+                                text: "Open install folder";
+                                enabled: root.open-install-folder-enabled;
+                                clicked => {
+                                    root.open-install-folder();
+                                }
+                            }
+
+                            SecondaryButton {
+                                text: "Open config";
+                                clicked => {
+                                    root.open-settings();
+                                }
+                            }
+
+                            SecondaryButton {
+                                text: "GitHub";
+                                enabled: false;
+                            }
+
+                            SecondaryButton {
+                                text: "Discord";
+                                enabled: false;
+                            }
+                        }
+
+                        Rectangle {
+                            vertical-stretch: 1;
+                        }
+                    }
                 }
             }
         }
