@@ -38,6 +38,18 @@ use slint::{Timer, TimerMode};
 
 slint::include_modules!();
 
+struct HomeViewState {
+    install_status: String,
+    install_action_text: String,
+    install_action_enabled: bool,
+    version_status: String,
+    home_support_text: String,
+    update_check_text: String,
+    update_check_enabled: bool,
+    open_install_folder_enabled: bool,
+    status_detail: String,
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     let config = Rc::new(RefCell::new(LauncherConfig::load()));
@@ -273,47 +285,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
 
-            refresh_home_state(&ui, &config.borrow(), "Checking GitHub releases...");
-            ui.set_update_check_enabled(false);
-            ui.set_update_check_text("Checking...".into());
-
-            let ui = ui.as_weak();
-            let config = config.borrow().clone();
-            let latest_release = Arc::clone(&latest_release);
-            let release_source = release_source.clone();
-            thread::spawn(move || {
-                let platform = Platform::current();
-                let result = discover_latest_platform_release(&release_source, platform);
-                let release = result.as_ref().ok().cloned();
-                let message = match result {
-                    Ok(release) => format!(
-                        "Latest known version: {} ({}) via {}",
-                        release.version,
-                        release.name,
-                        release.metadata_source.label()
-                    ),
-                    Err(error) => error,
-                };
-
-                let _ = slint::invoke_from_event_loop(move || {
-                    let Some(ui) = ui.upgrade() else {
-                        return;
-                    };
-
-                    if let Some(release) = release {
-                        latest_release
-                            .lock()
-                            .expect("latest release lock poisoned")
-                            .replace(release.clone());
-                        refresh_home_state(&ui, &config, &message);
-                        apply_release_check_result(&ui, &config, &release);
-                    } else {
-                        refresh_home_state(&ui, &config, &message);
-                    }
-                    ui.set_update_check_enabled(true);
-                    ui.set_update_check_text("Check for updates".into());
-                });
-            });
+            start_release_check(
+                &ui,
+                config.borrow().clone(),
+                Arc::clone(&latest_release),
+                release_source.clone(),
+            );
         });
     }
 
@@ -359,30 +336,104 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    start_release_check(
+        &ui,
+        config.borrow().clone(),
+        Arc::clone(&latest_release),
+        release_source.clone(),
+    );
+
     ui.run()
 }
 
+fn start_release_check(
+    ui: &AppWindow,
+    config: LauncherConfig,
+    latest_release: Arc<Mutex<Option<PlatformRelease>>>,
+    release_source: ReleaseSource,
+) {
+    let mut checking_state = home_view_state(&config, None, "Checking GitHub releases...");
+    checking_state.update_check_enabled = false;
+    checking_state.update_check_text = "Checking...".to_string();
+    apply_home_view_state(ui, checking_state);
+
+    let ui = ui.as_weak();
+    thread::spawn(move || {
+        let platform = Platform::current();
+        let result = discover_latest_platform_release(&release_source, platform);
+        let release = result.as_ref().ok().cloned();
+        let message = match result {
+            Ok(release) => format!(
+                "Latest known version: {} ({}) via {}",
+                release.version,
+                release.name,
+                release.metadata_source.label()
+            ),
+            Err(error) => error,
+        };
+
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let state = if let Some(release) = release {
+                latest_release
+                    .lock()
+                    .expect("latest release lock poisoned")
+                    .replace(release.clone());
+                home_view_state(&config, Some(&release), &message)
+            } else {
+                home_view_state(&config, None, &message)
+            };
+            apply_home_view_state(&ui, state);
+        });
+    });
+}
+
 fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
+    let state = home_view_state(config, None, message);
+    apply_home_view_state(ui, state);
+}
+
+fn home_view_state(
+    config: &LauncherConfig,
+    latest_release: Option<&PlatformRelease>,
+    message: &str,
+) -> HomeViewState {
     let status = inspect_install(config.install_dir.as_deref());
-
-    ui.set_install_status(status.status_text().into());
-    ui.set_install_action_text(status.state.primary_action().into());
-    ui.set_install_action_enabled(true);
-    ui.set_version_status(status.version_text().into());
-    ui.set_open_install_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
-
+    let version_status = status.version_text();
     let activity_message = status
         .reason
         .as_deref()
         .filter(|reason| !reason.is_empty())
         .filter(|_| message == "Ready.")
         .unwrap_or(message);
-    set_status_message(ui, activity_message);
+
+    let mut state = HomeViewState {
+        install_status: status.status_text(),
+        install_action_text: status.state.primary_action().to_string(),
+        install_action_enabled: true,
+        version_status: version_status.clone(),
+        home_support_text: home_support_text(&version_status, activity_message),
+        update_check_text: "Check for updates".to_string(),
+        update_check_enabled: true,
+        open_install_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
+        status_detail: status_detail(activity_message),
+    };
+
+    if let Some(release) = latest_release {
+        apply_release_to_home_view_state(&mut state, &status, release);
+    }
+
+    state
 }
 
-fn apply_release_check_result(ui: &AppWindow, config: &LauncherConfig, release: &PlatformRelease) {
-    let status = inspect_install(config.install_dir.as_deref());
-
+fn apply_release_to_home_view_state(
+    state: &mut HomeViewState,
+    status: &game_install::InstallStatus,
+    release: &PlatformRelease,
+) {
     match status.state {
         InstallState::Installed | InstallState::LaunchableButMaybeOutdated => {
             match status.installed_version.as_deref() {
@@ -392,50 +443,48 @@ fn apply_release_check_result(ui: &AppWindow, config: &LauncherConfig, release: 
                         &release.version,
                     ) =>
                 {
-                    ui.set_install_status("A DRH update is available".into());
-                    ui.set_install_action_text(
-                        InstallState::UpdateAvailable.primary_action().into(),
-                    );
-                    ui.set_home_support_text(
-                        format!(
-                            "Update available: installed {installed_version}, latest {}.",
-                            release.version
-                        )
-                        .into(),
+                    state.install_status = "A DRH update is available".to_string();
+                    state.install_action_text =
+                        InstallState::UpdateAvailable.primary_action().to_string();
+                    state.home_support_text = format!(
+                        "Update available: installed {installed_version}, latest {}.",
+                        release.version
                     );
                 }
                 Some(installed_version) => {
-                    ui.set_home_support_text(
-                        format!("You are up to date: {installed_version}.").into(),
-                    );
+                    state.home_support_text = format!("You are up to date: {installed_version}.");
                 }
                 None => {
-                    ui.set_home_support_text(
-                        format!(
-                            "Latest available version: {}. Installed version unknown.",
-                            release.version
-                        )
-                        .into(),
+                    state.home_support_text = format!(
+                        "Latest available version: {}. Installed version unknown.",
+                        release.version
                     );
                 }
             }
         }
         InstallState::NotInstalled => {
-            ui.set_home_support_text(
-                format!("Latest available version: {}.", release.version).into(),
-            );
+            state.home_support_text = format!("Latest available version: {}.", release.version);
         }
         InstallState::BrokenInstall => {
-            ui.set_home_support_text(
-                format!(
-                    "Latest available version: {}. Repair is required.",
-                    release.version
-                )
-                .into(),
+            state.home_support_text = format!(
+                "Latest available version: {}. Repair is required.",
+                release.version
             );
         }
         InstallState::UpdateAvailable | InstallState::Updating | InstallState::Playing => {}
     }
+}
+
+fn apply_home_view_state(ui: &AppWindow, state: HomeViewState) {
+    ui.set_install_status(state.install_status.into());
+    ui.set_install_action_text(state.install_action_text.into());
+    ui.set_install_action_enabled(state.install_action_enabled);
+    ui.set_version_status(state.version_status.into());
+    ui.set_home_support_text(state.home_support_text.into());
+    ui.set_update_check_text(state.update_check_text.into());
+    ui.set_update_check_enabled(state.update_check_enabled);
+    ui.set_open_install_folder_enabled(state.open_install_folder_enabled);
+    ui.set_status_detail(state.status_detail.into());
 }
 
 fn installed_version_needs_update(installed_version: Option<&str>, latest_version: &str) -> bool {
