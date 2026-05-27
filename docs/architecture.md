@@ -56,9 +56,9 @@ The intended installed layout is:
 <install-dir>/
   DRH-Launcher
   data/
-    config.json
     installed.json
     logs/
+      launcher.log
     cache/
     downloads/
     staging/
@@ -75,6 +75,8 @@ The intended installed layout is:
 ```
 
 The exact executable names and native libraries vary by platform.
+
+`config.json` is launcher configuration and currently lives in the platform application config directory. It should not be confused with install-owned metadata under `<install-dir>/data/`.
 
 `data/installed.json` is owned by DRH Launcher and records what DRHL believes is installed in `Dungeon Rampage Haxe/current/` and, when present, `Dungeon Rampage Haxe/previous/`. It should be written after a successful install, update or rollback.
 
@@ -116,22 +118,32 @@ The home screen should show:
 
 - a prominent `Install DRH` button when the game is missing
 - a prominent `Play` button after installation
+- a prominent `Update` button when a newer compatible release is known
 - a prominent `Stop` button while a DRH process launched by DRH Launcher is still running
-- installed version
-- latest known version
-- update status
+- compact installed version / latest-version / update-progress support text near the primary action
 - manual `Check for updates` action
-- compact Discord and GitHub links, visible but not dominant
 
 DRH Launcher checks for updates automatically at startup. Manual checks are still available.
 
-Discord and GitHub links can live in a header corner, footer or menu. They should be easy to find without taking space away from the primary install/play flow. The full Info page can provide the same links with more context.
+The main navigation is:
+
+- `Home`
+- `Options`
+- `Mods`
+- `Settings`
+
+The home screen should stay focused on the primary install/play/update/stop flow. It should not permanently show long logs, install paths or diagnostic details. When extra context is useful, such as download progress, verification, or update availability, it should appear as compact support text near the primary action.
+
+Discord and GitHub links can live in `Settings > About` or another secondary location. They should be easy to find without taking space away from the primary install/play flow.
 
 Useful secondary actions:
 
-- open the install folder
+- go to launch options
+- check for updates
 - verify or repair the installed game
 - open recent logs
+
+The home UI state should be derived from a small view model rather than scattered direct widget updates. This keeps installed state, latest-release state, process state and temporary progress messages easier to reason about as the launcher grows.
 
 ## Launch Modes
 
@@ -423,16 +435,33 @@ The game may need explicit support to load mods cleanly. Until then, the launche
 
 ## Settings
 
-Settings should eventually include:
+`Settings` is the launcher-specific area. It is split into sub-sections:
+
+- `General`
+- `Logs`
+- `About`
+
+`General` should include:
 
 - install directory
+- config file path
 - release channel
-- pre-executable command
-- game arguments
-- Steam shortcut actions
 - reinstall or uninstall DRH
-- launcher logs and diagnostics
 - uninstall guidance for DRH Launcher
+
+`Logs` should include:
+
+- a recent in-app launcher log view
+- a refresh action
+- an action to open the logs directory
+
+`About` should include:
+
+- DRH Launcher version
+- active release source
+- Discord and GitHub links
+- license information
+- technology credits
 
 Full self-uninstall may require platform-specific packaging support.
 
@@ -441,10 +470,12 @@ Full self-uninstall may require platform-specific packaging support.
 DRH Launcher should write logs under:
 
 ```text
-data/logs/
+data/logs/launcher.log
 ```
 
-The launcher should eventually provide an in-app log viewer for recent logs, plus an action to open the logs directory in the platform file manager.
+The launcher provides an in-app recent log viewer in `Settings > Logs`, plus an action to open the logs directory in the platform file manager. Log writes should be best-effort: failure to write diagnostics must not break install, update or launch flows.
+
+Log entries use readable UTC timestamps and severity levels.
 
 Logs should be useful for diagnosing:
 
@@ -457,14 +488,13 @@ Logs should be useful for diagnosing:
 - game launch failures
 - Steam shortcut actions
 
-## Info Page
+## About Page
 
-The info page should include:
+The `Settings > About` page should include:
 
 - Discord link
 - GitHub project links
-- explanation of DRH and DRH Launcher
 - license information
 - technology credits
-- installed DRH version
 - DRH Launcher version
+- active release source
