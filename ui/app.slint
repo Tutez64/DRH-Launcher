@@ -85,6 +85,34 @@ component NavButton inherits Rectangle {
     }
 }
 
+component TabButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+
+    min-width: 108px;
+    height: 36px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.active ? #743325 : #342724;
+    background: root.active ? #3a1f1b : touch.has-hover ? #211b1e : #151419;
+
+    Text {
+        text: root.text;
+        color: root.active ? #fff1dd : #cbb8ab;
+        font-size: 13px;
+        font-weight: root.active ? 700 : 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 component MetricBlock inherits Rectangle {
     in property <string> label;
     in property <string> value;
@@ -182,13 +210,19 @@ export component AppWindow inherits Window {
     in property <bool> update-check-enabled: true;
     in property <string> home-support-text;
     in property <string> status-detail;
+    in property <string> launcher-version;
+    in property <string> release-source-label;
+    in property <string> config-path;
     in property <bool> open-install-folder-enabled: false;
+    in property <bool> open-logs-folder-enabled: false;
     in-out property <int> active-page: 0;
+    in-out property <int> settings-page: 0;
 
     callback install-or-play();
     callback check-updates();
     callback open-settings();
     callback open-install-folder();
+    callback open-logs-folder();
 
     title: "DRH Launcher";
     preferred-width: 980px;
@@ -333,7 +367,10 @@ export component AppWindow inherits Window {
 
                             SecondaryButton {
                                 text: "Logs";
-                                enabled: false;
+                                clicked => {
+                                    root.active-page = 3;
+                                    root.settings-page = 1;
+                                }
                             }
                         }
 
@@ -454,32 +491,123 @@ export component AppWindow inherits Window {
                             title: "Settings";
                         }
 
-                        MetricBlock {
-                            label: "Install folder";
-                            value: "Current launcher configuration.";
-                        }
-
-                        MetricBlock {
-                            label: "Diagnostics";
-                            value: "Detailed logs will be available here without crowding the home screen.";
-                        }
-
                         HorizontalLayout {
-                            spacing: 10px;
+                            spacing: 8px;
 
-                            SecondaryButton {
-                                text: "Open install folder";
-                                enabled: root.open-install-folder-enabled;
+                            TabButton {
+                                text: "General";
+                                active: root.settings-page == 0;
                                 clicked => {
-                                    root.open-install-folder();
+                                    root.settings-page = 0;
                                 }
                             }
 
-                            SecondaryButton {
-                                text: "Open config";
+                            TabButton {
+                                text: "Logs";
+                                active: root.settings-page == 1;
                                 clicked => {
-                                    root.open-settings();
+                                    root.settings-page = 1;
                                 }
+                            }
+
+                            TabButton {
+                                text: "About";
+                                active: root.settings-page == 2;
+                                clicked => {
+                                    root.settings-page = 2;
+                                }
+                            }
+                        }
+
+                        if root.settings-page == 0 : VerticalLayout {
+                            spacing: 16px;
+
+                            MetricBlock {
+                                label: "Install folder";
+                                value: "Current launcher configuration.";
+                            }
+
+                            MetricBlock {
+                                label: "Config file";
+                                value: root.config-path;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+
+                                SecondaryButton {
+                                    text: "Open install folder";
+                                    enabled: root.open-install-folder-enabled;
+                                    clicked => {
+                                        root.open-install-folder();
+                                    }
+                                }
+
+                                SecondaryButton {
+                                    text: "Open config";
+                                    clicked => {
+                                        root.open-settings();
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.settings-page == 1 : VerticalLayout {
+                            spacing: 16px;
+
+                            Rectangle {
+                                vertical-stretch: 1;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: #342724;
+                                background: #151419;
+
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 8px;
+
+                                    SmallLabel {
+                                        label: "Latest diagnostic";
+                                    }
+
+                                    Text {
+                                        text: root.status-detail;
+                                        font-size: 13px;
+                                        color: #ead8ca;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+
+                                SecondaryButton {
+                                    text: "Open logs folder";
+                                    enabled: root.open-logs-folder-enabled;
+                                    clicked => {
+                                        root.open-logs-folder();
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.settings-page == 2 : VerticalLayout {
+                            spacing: 16px;
+
+                            MetricBlock {
+                                label: "DRH Launcher";
+                                value: root.launcher-version;
+                            }
+
+                            MetricBlock {
+                                label: "Release source";
+                                value: root.release-source-label;
+                            }
+
+                            MetricBlock {
+                                label: "License";
+                                value: "GPL-3.0-or-later";
                             }
 
                             SecondaryButton {

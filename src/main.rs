@@ -47,6 +47,7 @@ struct HomeViewState {
     update_check_text: String,
     update_check_enabled: bool,
     open_install_folder_enabled: bool,
+    open_logs_folder_enabled: bool,
     status_detail: String,
 }
 
@@ -57,6 +58,10 @@ fn main() -> Result<(), slint::PlatformError> {
     let game_process = Rc::new(RefCell::new(None::<Child>));
     let game_monitor = Rc::new(Timer::default());
     let release_source = ReleaseSource::from_environment();
+
+    ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
+    ui.set_release_source_label(release_source.label().into());
+    ui.set_config_path(paths::config_file().display().to_string().into());
 
     refresh_home_state(
         &ui,
@@ -336,6 +341,28 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_open_logs_folder(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let Some(install_dir) = config.borrow().install_dir.clone() else {
+                refresh_home_state(&ui, &config.borrow(), "No install directory selected.");
+                return;
+            };
+
+            match open_logs_folder(&install_dir) {
+                Ok(()) => set_status_message(&ui, "Logs folder opened."),
+                Err(error) => {
+                    set_status_message(&ui, &format!("Could not open logs folder: {error}"))
+                }
+            }
+        });
+    }
+
     start_release_check(
         &ui,
         config.borrow().clone(),
@@ -419,6 +446,7 @@ fn home_view_state(
         update_check_text: "Check for updates".to_string(),
         update_check_enabled: true,
         open_install_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
+        open_logs_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
         status_detail: status_detail(activity_message),
     };
 
@@ -484,6 +512,7 @@ fn apply_home_view_state(ui: &AppWindow, state: HomeViewState) {
     ui.set_update_check_text(state.update_check_text.into());
     ui.set_update_check_enabled(state.update_check_enabled);
     ui.set_open_install_folder_enabled(state.open_install_folder_enabled);
+    ui.set_open_logs_folder_enabled(state.open_logs_folder_enabled);
     ui.set_status_detail(state.status_detail.into());
 }
 
@@ -582,6 +611,13 @@ fn open_folder(path: &Path) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+fn open_logs_folder(install_dir: &Path) -> Result<(), String> {
+    let logs_dir = paths::logs_dir(install_dir);
+    std::fs::create_dir_all(&logs_dir)
+        .map_err(|error| format!("Could not create {}: {error}", logs_dir.display()))?;
+    open_folder(&logs_dir)
+}
+
 fn set_status_message(ui: &AppWindow, message: &str) {
     let version_text = ui.get_version_status();
     ui.set_home_support_text(home_support_text(&version_text, message).into());
@@ -592,6 +628,7 @@ fn home_support_text(version_text: &str, message: &str) -> String {
     if message.starts_with("Ready.")
         || message.starts_with("DRH is running")
         || message == "Install folder opened."
+        || message == "Logs folder opened."
     {
         return version_text.to_string();
     }
