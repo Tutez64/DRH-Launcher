@@ -4,6 +4,7 @@
 
 mod archive;
 mod config;
+mod diagnostics;
 mod download;
 mod game_install;
 mod game_launch;
@@ -49,6 +50,7 @@ struct HomeViewState {
     open_install_folder_enabled: bool,
     open_logs_folder_enabled: bool,
     status_detail: String,
+    logs_content: String,
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -67,6 +69,14 @@ fn main() -> Result<(), slint::PlatformError> {
         &ui,
         &config.borrow(),
         &format!("Ready. Release source: {}", release_source.label()),
+    );
+    log_for_config(
+        &config.borrow(),
+        diagnostics::LogLevel::Info,
+        &format!(
+            "DRH Launcher started. Release source: {}",
+            release_source.label()
+        ),
     );
 
     {
@@ -105,6 +115,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 match process_error {
                     Ok(()) => {
                         let message = stop_game(&game_process);
+                        log_for_config(&config, diagnostics::LogLevel::Info, &message);
                         game_monitor.stop();
                         refresh_home_state(&ui, &config, &message);
                     }
@@ -120,6 +131,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if config.install_dir.is_none() {
                 config.install_dir = Some(paths::default_install_dir());
                 if let Err(error) = config.save() {
+                    log_for_config(&config, diagnostics::LogLevel::Error, &error.to_string());
                     refresh_home_state(
                         &ui,
                         &config,
@@ -130,6 +142,11 @@ fn main() -> Result<(), slint::PlatformError> {
             }
 
             let Some(install_dir) = config.install_dir.clone() else {
+                log_for_config(
+                    &config,
+                    diagnostics::LogLevel::Warn,
+                    "No install directory selected.",
+                );
                 refresh_home_state(&ui, &config, "No install directory selected.");
                 return;
             };
@@ -154,6 +171,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let config = config.clone();
                 match launch_game(&config) {
                     Ok(child) => {
+                        log_for_config(&config, diagnostics::LogLevel::Info, "DRH launched.");
                         game_process.borrow_mut().replace(child);
                         refresh_playing_state(&ui, &config, "DRH is running.");
                         start_game_monitor(
@@ -163,7 +181,10 @@ fn main() -> Result<(), slint::PlatformError> {
                             Rc::clone(&game_process),
                         );
                     }
-                    Err(error) => refresh_home_state(&ui, &config, &error),
+                    Err(error) => {
+                        log_for_config(&config, diagnostics::LogLevel::Error, &error);
+                        refresh_home_state(&ui, &config, &error);
+                    }
                 }
                 return;
             }
@@ -174,6 +195,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 "Checking GitHub releases...".to_string()
             };
             refresh_home_state(&ui, &config, &initial_message);
+            let _ = diagnostics::write(&install_dir, diagnostics::LogLevel::Info, &initial_message);
             ui.set_install_action_enabled(false);
             ui.set_update_check_enabled(false);
             ui.set_install_action_text(if release.is_some() {
@@ -198,12 +220,18 @@ fn main() -> Result<(), slint::PlatformError> {
                             .lock()
                             .expect("latest release lock poisoned")
                             .replace(release.clone());
+                        let _ = diagnostics::write(
+                            &install_dir,
+                            diagnostics::LogLevel::Info,
+                            &format!("Found release {}. Starting install.", release.version),
+                        );
                         report_background_activity(
                             &ui,
                             format!("Found {}. Preparing download...", release.version),
                             Some("Downloading..."),
                         );
                         let mut last_percent = None::<u64>;
+                        let mut last_logged_percent = None::<u64>;
                         match download_and_verify_with_progress(
                             &release.asset,
                             &install_dir,
@@ -220,9 +248,22 @@ fn main() -> Result<(), slint::PlatformError> {
                                         Some("Downloading..."),
                                     );
                                 }
+                                if should_log_download_progress(percent, last_logged_percent) {
+                                    last_logged_percent = percent;
+                                    let _ = diagnostics::write(
+                                        &install_dir,
+                                        diagnostics::LogLevel::Info,
+                                        &format_download_progress(&release.asset.name, &progress),
+                                    );
+                                }
                             },
                         ) {
                             Ok(download) => {
+                                let _ = diagnostics::write(
+                                    &install_dir,
+                                    diagnostics::LogLevel::Info,
+                                    "Download verified. Extracting archive.",
+                                );
                                 report_background_activity(
                                     &ui,
                                     "Download verified. Extracting archive...".to_string(),
@@ -230,6 +271,11 @@ fn main() -> Result<(), slint::PlatformError> {
                                 );
                                 match extract_to_staging(&download, &install_dir) {
                                     Ok(extracted) => {
+                                        let _ = diagnostics::write(
+                                            &install_dir,
+                                            diagnostics::LogLevel::Info,
+                                            "Archive extracted. Installing files.",
+                                        );
                                         report_background_activity(
                                             &ui,
                                             "Archive extracted. Installing files...".to_string(),
@@ -241,15 +287,23 @@ fn main() -> Result<(), slint::PlatformError> {
                                             &release,
                                             &release_source,
                                         ) {
-                                            Ok(installed) => format!(
-                                                "Installed {}. Previous version: {}",
-                                                installed.active.version,
-                                                installed
-                                                    .previous
-                                                    .as_ref()
-                                                    .map(|previous| previous.version.as_str())
-                                                    .unwrap_or("none")
-                                            ),
+                                            Ok(installed) => {
+                                                let message = format!(
+                                                    "Installed {}. Previous version: {}",
+                                                    installed.active.version,
+                                                    installed
+                                                        .previous
+                                                        .as_ref()
+                                                        .map(|previous| previous.version.as_str())
+                                                        .unwrap_or("none")
+                                                );
+                                                let _ = diagnostics::write(
+                                                    &install_dir,
+                                                    diagnostics::LogLevel::Info,
+                                                    &message,
+                                                );
+                                                message
+                                            }
                                             Err(error) => error,
                                         }
                                     }
@@ -261,6 +315,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     Err(error) => error,
                 };
+
+                let level = if is_error_message(&message) {
+                    diagnostics::LogLevel::Error
+                } else {
+                    diagnostics::LogLevel::Info
+                };
+                let _ = diagnostics::write(&install_dir, level, &message);
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui.upgrade() else {
@@ -328,13 +389,26 @@ fn main() -> Result<(), slint::PlatformError> {
             };
 
             let Some(install_dir) = config.borrow().install_dir.clone() else {
+                log_for_config(
+                    &config.borrow(),
+                    diagnostics::LogLevel::Warn,
+                    "No install directory selected.",
+                );
                 refresh_home_state(&ui, &config.borrow(), "No install directory selected.");
                 return;
             };
 
             match open_folder(&install_dir) {
-                Ok(()) => set_status_message(&ui, "Install folder opened."),
+                Ok(()) => {
+                    log_for_config(
+                        &config.borrow(),
+                        diagnostics::LogLevel::Info,
+                        "Install folder opened.",
+                    );
+                    set_status_message(&ui, "Install folder opened.");
+                }
                 Err(error) => {
+                    log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
                     set_status_message(&ui, &format!("Could not open install folder: {error}"))
                 }
             }
@@ -350,16 +424,37 @@ fn main() -> Result<(), slint::PlatformError> {
             };
 
             let Some(install_dir) = config.borrow().install_dir.clone() else {
+                log_for_config(
+                    &config.borrow(),
+                    diagnostics::LogLevel::Warn,
+                    "No install directory selected.",
+                );
                 refresh_home_state(&ui, &config.borrow(), "No install directory selected.");
                 return;
             };
 
             match open_logs_folder(&install_dir) {
-                Ok(()) => set_status_message(&ui, "Logs folder opened."),
+                Ok(()) => {
+                    refresh_logs_view(&ui, &config.borrow());
+                    set_status_message(&ui, "Logs folder opened.");
+                }
                 Err(error) => {
+                    log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
                     set_status_message(&ui, &format!("Could not open logs folder: {error}"))
                 }
             }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_refresh_logs(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            refresh_logs_view(&ui, &config.borrow());
         });
     }
 
@@ -379,6 +474,11 @@ fn start_release_check(
     latest_release: Arc<Mutex<Option<PlatformRelease>>>,
     release_source: ReleaseSource,
 ) {
+    log_for_config(
+        &config,
+        diagnostics::LogLevel::Info,
+        "Checking GitHub releases.",
+    );
     let mut checking_state = home_view_state(&config, None, "Checking GitHub releases...");
     checking_state.update_check_enabled = false;
     checking_state.update_check_text = "Checking...".to_string();
@@ -389,15 +489,21 @@ fn start_release_check(
         let platform = Platform::current();
         let result = discover_latest_platform_release(&release_source, platform);
         let release = result.as_ref().ok().cloned();
-        let message = match result {
+        let message = match &result {
             Ok(release) => format!(
                 "Latest known version: {} ({}) via {}",
                 release.version,
                 release.name,
                 release.metadata_source.label()
             ),
-            Err(error) => error,
+            Err(error) => error.to_string(),
         };
+        let level = if result.is_ok() {
+            diagnostics::LogLevel::Info
+        } else {
+            diagnostics::LogLevel::Error
+        };
+        log_for_config(&config, level, &message);
 
         let _ = slint::invoke_from_event_loop(move || {
             let Some(ui) = ui.upgrade() else {
@@ -448,6 +554,7 @@ fn home_view_state(
         open_install_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
         open_logs_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
         status_detail: status_detail(activity_message),
+        logs_content: logs_content(config),
     };
 
     if let Some(release) = latest_release {
@@ -514,6 +621,35 @@ fn apply_home_view_state(ui: &AppWindow, state: HomeViewState) {
     ui.set_open_install_folder_enabled(state.open_install_folder_enabled);
     ui.set_open_logs_folder_enabled(state.open_logs_folder_enabled);
     ui.set_status_detail(state.status_detail.into());
+    ui.set_logs_content(state.logs_content.into());
+}
+
+fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
+    ui.set_logs_content(logs_content(config).into());
+}
+
+fn logs_content(config: &LauncherConfig) -> String {
+    let Some(install_dir) = config.install_dir.as_deref() else {
+        return "No install directory selected.".to_string();
+    };
+
+    diagnostics::read_recent(install_dir)
+        .unwrap_or_else(|error| format!("Could not read launcher log: {error}"))
+}
+
+fn log_for_config(config: &LauncherConfig, level: diagnostics::LogLevel, message: &str) {
+    let Some(install_dir) = config.install_dir.as_deref() else {
+        return;
+    };
+
+    let _ = diagnostics::write(install_dir, level, message);
+}
+
+fn is_error_message(message: &str) -> bool {
+    message.starts_with("Could not ")
+        || message.starts_with("No ")
+        || message.contains(" failed")
+        || message.contains(" missing")
 }
 
 fn installed_version_needs_update(installed_version: Option<&str>, latest_version: &str) -> bool {
@@ -558,6 +694,15 @@ fn progress_percent(progress: &DownloadProgress) -> Option<u64> {
     Some(progress.downloaded.saturating_mul(100) / progress.total)
 }
 
+fn should_log_download_progress(percent: Option<u64>, last_logged_percent: Option<u64>) -> bool {
+    match percent {
+        Some(percent) if percent == 0 || percent == 100 => last_logged_percent != Some(percent),
+        Some(percent) if percent % 10 == 0 => last_logged_percent != Some(percent),
+        None => last_logged_percent.is_none(),
+        _ => false,
+    }
+}
+
 fn format_bytes(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
     const MIB: f64 = KIB * 1024.0;
@@ -583,6 +728,8 @@ fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str)
     ui.set_install_action_enabled(true);
     ui.set_version_status(status.version_text().into());
     ui.set_open_install_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
+    ui.set_open_logs_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
+    refresh_logs_view(ui, config);
     set_status_message(ui, message);
 }
 
@@ -720,21 +867,28 @@ fn start_game_monitor(
             match child.try_wait() {
                 Ok(Some(status)) => {
                     process.take();
-                    Some(format!("DRH exited with status: {status}"))
+                    Some((
+                        diagnostics::LogLevel::Info,
+                        format!("DRH exited with status: {status}"),
+                    ))
                 }
                 Ok(None) => None,
                 Err(error) => {
                     process.take();
-                    Some(format!("Could not inspect DRH process: {error}"))
+                    Some((
+                        diagnostics::LogLevel::Error,
+                        format!("Could not inspect DRH process: {error}"),
+                    ))
                 }
             }
         };
 
-        let Some(message) = finished else {
+        let Some((level, message)) = finished else {
             return;
         };
 
         timer_handle.stop();
+        log_for_config(&config, level, &message);
         if let Some(ui) = ui.upgrade() {
             refresh_home_state(&ui, &config, &message);
         }

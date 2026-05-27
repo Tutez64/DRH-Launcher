@@ -1,4 +1,4 @@
-import { CheckBox, LineEdit } from "std-widgets.slint";
+import { CheckBox, LineEdit, ScrollView } from "std-widgets.slint";
 
 component PrimaryButton inherits Rectangle {
     in property <string> text;
@@ -210,6 +210,7 @@ export component AppWindow inherits Window {
     in property <bool> update-check-enabled: true;
     in property <string> home-support-text;
     in property <string> status-detail;
+    in property <string> logs-content;
     in property <string> launcher-version;
     in property <string> release-source-label;
     in property <string> config-path;
@@ -217,12 +218,14 @@ export component AppWindow inherits Window {
     in property <bool> open-logs-folder-enabled: false;
     in-out property <int> active-page: 0;
     in-out property <int> settings-page: 0;
+    property <int> logs-scroll-ticks: 0;
 
     callback install-or-play();
     callback check-updates();
     callback open-settings();
     callback open-install-folder();
     callback open-logs-folder();
+    callback refresh-logs();
 
     title: "DRH Launcher";
     preferred-width: 980px;
@@ -370,6 +373,7 @@ export component AppWindow inherits Window {
                                 clicked => {
                                     root.active-page = 3;
                                     root.settings-page = 1;
+                                    root.logs-scroll-ticks = 0;
                                 }
                             }
                         }
@@ -507,6 +511,7 @@ export component AppWindow inherits Window {
                                 active: root.settings-page == 1;
                                 clicked => {
                                     root.settings-page = 1;
+                                    root.logs-scroll-ticks = 0;
                                 }
                             }
 
@@ -521,6 +526,7 @@ export component AppWindow inherits Window {
 
                         if root.settings-page == 0 : VerticalLayout {
                             spacing: 16px;
+                            vertical-stretch: 1;
 
                             MetricBlock {
                                 label: "Install folder";
@@ -550,10 +556,15 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+
+                            Rectangle {
+                                vertical-stretch: 1;
+                            }
                         }
 
                         if root.settings-page == 1 : VerticalLayout {
                             spacing: 16px;
+                            vertical-stretch: 1;
 
                             Rectangle {
                                 vertical-stretch: 1;
@@ -567,14 +578,33 @@ export component AppWindow inherits Window {
                                     spacing: 8px;
 
                                     SmallLabel {
-                                        label: "Latest diagnostic";
+                                        label: "Recent launcher log";
                                     }
 
-                                    Text {
-                                        text: root.status-detail;
-                                        font-size: 13px;
-                                        color: #ead8ca;
-                                        wrap: word-wrap;
+                                    log-scroll := ScrollView {
+                                        visible: root.logs-scroll-ticks > 0;
+                                        horizontal-stretch: 1;
+                                        vertical-stretch: 1;
+                                        viewport-width: self.width;
+                                        viewport-height: log-text.height;
+
+                                        log-text := Text {
+                                            text: root.logs-content;
+                                            width: parent.viewport-width;
+                                            font-size: 13px;
+                                            color: #ead8ca;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+
+                                    scroll-logs-to-end := Timer {
+                                        interval: 1ms;
+                                        running: root.active-page == 3 && root.settings-page == 1 && root.logs-scroll-ticks < 3;
+
+                                        triggered => {
+                                            log-scroll.viewport-y = -100000px;
+                                            root.logs-scroll-ticks += 1;
+                                        }
                                     }
                                 }
                             }
@@ -589,11 +619,21 @@ export component AppWindow inherits Window {
                                         root.open-logs-folder();
                                     }
                                 }
+
+                                SecondaryButton {
+                                    text: "Refresh";
+                                    enabled: root.open-logs-folder-enabled;
+                                    clicked => {
+                                        root.logs-scroll-ticks = 0;
+                                        root.refresh-logs();
+                                    }
+                                }
                             }
                         }
 
                         if root.settings-page == 2 : VerticalLayout {
                             spacing: 16px;
+                            vertical-stretch: 1;
 
                             MetricBlock {
                                 label: "DRH Launcher";
@@ -619,10 +659,10 @@ export component AppWindow inherits Window {
                                 text: "Discord";
                                 enabled: false;
                             }
-                        }
 
-                        Rectangle {
-                            vertical-stretch: 1;
+                            Rectangle {
+                                vertical-stretch: 1;
+                            }
                         }
                     }
                 }
