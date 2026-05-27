@@ -16,27 +16,6 @@ pub struct PlatformRelease {
     pub asset: ReleaseAsset,
 }
 
-impl PlatformRelease {
-    pub fn summary(&self) -> String {
-        let digest = self
-            .asset
-            .digest
-            .as_deref()
-            .unwrap_or("no GitHub digest available");
-        format!(
-            "Latest {} release: {} / {} via {} ({}, {} bytes, {digest}). Release: {}. Download: {}",
-            self.asset.platform_id,
-            self.version,
-            self.name,
-            self.metadata_source.label(),
-            self.asset.name,
-            self.asset.size,
-            self.html_url,
-            self.asset.download_url
-        )
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReleaseMetadataSource {
     Manifest,

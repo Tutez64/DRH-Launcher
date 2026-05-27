@@ -117,11 +117,23 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
 
+            let release = latest_release
+                .lock()
+                .expect("latest release lock poisoned")
+                .clone();
             let install_status = inspect_install(Some(&install_dir));
+            let update_available = release.as_ref().is_some_and(|release| {
+                installed_version_needs_update(
+                    install_status.installed_version.as_deref(),
+                    &release.version,
+                )
+            });
+
             if matches!(
                 install_status.state,
                 InstallState::Installed | InstallState::LaunchableButMaybeOutdated
-            ) {
+            ) && !update_available
+            {
                 let config = config.clone();
                 match launch_game(&config) {
                     Ok(child) => {
@@ -138,11 +150,6 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 return;
             }
-
-            let release = latest_release
-                .lock()
-                .expect("latest release lock poisoned")
-                .clone();
 
             let initial_message = if let Some(release) = &release {
                 format!("Downloading {}...", release.asset.name)
@@ -279,7 +286,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 let result = discover_latest_platform_release(&release_source, platform);
                 let release = result.as_ref().ok().cloned();
                 let message = match result {
-                    Ok(release) => release.summary(),
+                    Ok(release) => format!(
+                        "Latest known version: {} ({}) via {}",
+                        release.version,
+                        release.name,
+                        release.metadata_source.label()
+                    ),
                     Err(error) => error,
                 };
 
@@ -292,9 +304,12 @@ fn main() -> Result<(), slint::PlatformError> {
                         latest_release
                             .lock()
                             .expect("latest release lock poisoned")
-                            .replace(release);
+                            .replace(release.clone());
+                        refresh_home_state(&ui, &config, &message);
+                        apply_release_check_result(&ui, &config, &release);
+                    } else {
+                        refresh_home_state(&ui, &config, &message);
                     }
-                    refresh_home_state(&ui, &config, &message);
                     ui.set_update_check_enabled(true);
                     ui.set_update_check_text("Check for updates".into());
                 });
@@ -363,6 +378,69 @@ fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
         .filter(|_| message == "Ready.")
         .unwrap_or(message);
     set_status_message(ui, activity_message);
+}
+
+fn apply_release_check_result(ui: &AppWindow, config: &LauncherConfig, release: &PlatformRelease) {
+    let status = inspect_install(config.install_dir.as_deref());
+
+    match status.state {
+        InstallState::Installed | InstallState::LaunchableButMaybeOutdated => {
+            match status.installed_version.as_deref() {
+                Some(installed_version)
+                    if installed_version_needs_update(
+                        Some(installed_version),
+                        &release.version,
+                    ) =>
+                {
+                    ui.set_install_status("A DRH update is available".into());
+                    ui.set_install_action_text(
+                        InstallState::UpdateAvailable.primary_action().into(),
+                    );
+                    ui.set_home_support_text(
+                        format!(
+                            "Update available: installed {installed_version}, latest {}.",
+                            release.version
+                        )
+                        .into(),
+                    );
+                }
+                Some(installed_version) => {
+                    ui.set_home_support_text(
+                        format!("You are up to date: {installed_version}.").into(),
+                    );
+                }
+                None => {
+                    ui.set_home_support_text(
+                        format!(
+                            "Latest available version: {}. Installed version unknown.",
+                            release.version
+                        )
+                        .into(),
+                    );
+                }
+            }
+        }
+        InstallState::NotInstalled => {
+            ui.set_home_support_text(
+                format!("Latest available version: {}.", release.version).into(),
+            );
+        }
+        InstallState::BrokenInstall => {
+            ui.set_home_support_text(
+                format!(
+                    "Latest available version: {}. Repair is required.",
+                    release.version
+                )
+                .into(),
+            );
+        }
+        InstallState::UpdateAvailable | InstallState::Updating | InstallState::Playing => {}
+    }
+}
+
+fn installed_version_needs_update(installed_version: Option<&str>, latest_version: &str) -> bool {
+    installed_version
+        .is_some_and(|installed_version| installed_version.trim() != latest_version.trim())
 }
 
 fn report_background_activity(
@@ -456,41 +534,51 @@ fn open_folder(path: &Path) -> Result<(), String> {
 }
 
 fn set_status_message(ui: &AppWindow, message: &str) {
-    ui.set_status_summary(status_summary(message).into());
+    let version_text = ui.get_version_status();
+    ui.set_home_support_text(home_support_text(&version_text, message).into());
     ui.set_status_detail(status_detail(message).into());
 }
 
-fn status_summary(message: &str) -> String {
-    if message.starts_with("Ready.") {
-        return "Ready.".to_string();
+fn home_support_text(version_text: &str, message: &str) -> String {
+    if message.starts_with("Ready.")
+        || message.starts_with("DRH is running")
+        || message == "Install folder opened."
+    {
+        return version_text.to_string();
     }
 
     if message.starts_with("Downloading ") {
-        return "Download in progress.".to_string();
+        return message.to_string();
     }
 
     if message.starts_with("Checking ") {
         return "Checking for updates.".to_string();
     }
 
-    if message.starts_with("Found ") {
-        return "Release found.".to_string();
+    if let Some(release_version) = message
+        .strip_prefix("Found ")
+        .and_then(|message| message.split_once('.').map(|(version, _)| version))
+    {
+        return format!("Preparing download for {release_version}.");
     }
 
     if message.starts_with("Download verified.") {
-        return "Download verified.".to_string();
+        return "Download verified. Extracting archive.".to_string();
     }
 
     if message.starts_with("Archive extracted.") {
-        return "Archive extraite.".to_string();
+        return "Archive extracted. Installing files.".to_string();
     }
 
-    if message.starts_with("Installed ") {
-        return "Installation complete.".to_string();
+    if let Some(installed_version) = message
+        .strip_prefix("Installed ")
+        .and_then(|message| message.split_once('.').map(|(version, _)| version))
+    {
+        return format!("Installed {installed_version}.");
     }
 
-    if message.starts_with("DRH is running") {
-        return "DRH is running.".to_string();
+    if message.starts_with("Latest known version: ") {
+        return message.to_string();
     }
 
     if message.starts_with("DRH stopped.") {
@@ -502,7 +590,7 @@ fn status_summary(message: &str) -> String {
     }
 
     if message.starts_with("Could not ") || message.starts_with("No ") {
-        return "An action could not be completed.".to_string();
+        return "Action failed. Check logs for details.".to_string();
     }
 
     let first_line = message.lines().next().unwrap_or(message).trim();
