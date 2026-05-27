@@ -232,6 +232,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         );
                         let mut last_percent = None::<u64>;
                         let mut last_logged_percent = None::<u64>;
+                        let mut reported_verification = false;
                         match download_and_verify_with_progress(
                             &release.asset,
                             &install_dir,
@@ -255,6 +256,19 @@ fn main() -> Result<(), slint::PlatformError> {
                                         diagnostics::LogLevel::Info,
                                         &format_download_progress(&release.asset.name, &progress),
                                     );
+                                }
+                                if !reported_verification
+                                    && progress.total > 0
+                                    && progress.downloaded == progress.total
+                                {
+                                    reported_verification = true;
+                                    let message = "Verifying download.".to_string();
+                                    let _ = diagnostics::write(
+                                        &install_dir,
+                                        diagnostics::LogLevel::Info,
+                                        &message,
+                                    );
+                                    report_background_activity(&ui, message, Some("Verifying..."));
                                 }
                             },
                         ) {
@@ -781,6 +795,10 @@ fn home_support_text(version_text: &str, message: &str) -> String {
     }
 
     if message.starts_with("Downloading ") {
+        return message.to_string();
+    }
+
+    if message.starts_with("Verifying download ") {
         return message.to_string();
     }
 
