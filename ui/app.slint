@@ -1,4 +1,4 @@
-import { CheckBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { LineEdit, ScrollView } from "std-widgets.slint";
 
 component PrimaryButton inherits Rectangle {
     in property <string> text;
@@ -161,42 +161,101 @@ component SmallLabel inherits Text {
     color: #c48a66;
 }
 
-component OptionRow inherits Rectangle {
-    in property <string> title;
-    in property <string> description;
+component SegmentedButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
 
-    min-height: 58px;
-    border-radius: 6px;
+    min-width: 132px;
+    height: 34px;
     border-width: 1px;
-    border-color: #342724;
-    background: #151419;
+    border-color: root.active ? #f07a37 : #342724;
+    background: root.active ? #3a1f1b : touch.has-hover ? #211b1e : #151419;
 
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 12px;
-        alignment: center;
+    Text {
+        text: root.text;
+        color: root.active ? #fff1dd : #cbb8ab;
+        font-size: 13px;
+        font-weight: root.active ? 700 : 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
 
-        VerticalLayout {
-            spacing: 3px;
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
 
-            Text {
-                text: root.title;
-                font-size: 14px;
-                font-weight: 700;
-                color: #f3dfcf;
-            }
+component InfoHint inherits Rectangle {
+    in property <string> text;
 
-            Text {
-                text: root.description;
-                font-size: 12px;
-                color: #a99b91;
-                wrap: word-wrap;
-            }
+    z: 10;
+    width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: #6d3327;
+    background: touch.has-hover ? #2b1816 : #151419;
+
+    Text {
+        text: "i";
+        color: #f3d8c4;
+        font-size: 12px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        z: 20;
+        x: -74px;
+        y: -1 * self.height - 14px;
+        width: 390px;
+        height: hint-text.preferred-height + 16px;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: #6d3327;
+        background: #20171a;
+        visible: touch.has-hover;
+
+        hint-text := Text {
+            x: 10px;
+            y: 8px;
+            width: parent.width - 20px;
+            text: root.text;
+            color: #ead8ca;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+
+    touch := TouchArea {}
+}
+
+component LaunchTextField inherits Rectangle {
+    in property <string> label;
+    in property <string> placeholder;
+    in property <bool> enabled: true;
+    in-out property <string> value;
+
+    horizontal-stretch: 1;
+    min-width: 260px;
+    min-height: 64px;
+
+    VerticalLayout {
+        spacing: 8px;
+
+        SmallLabel {
+            label: root.label;
         }
 
-        CheckBox {
-            enabled: false;
+        LineEdit {
+            horizontal-stretch: 1;
+            enabled: root.enabled;
+            placeholder-text: root.placeholder;
+            text <=> root.value;
         }
     }
 }
@@ -214,6 +273,16 @@ export component AppWindow inherits Window {
     in property <string> launcher-version;
     in property <string> release-source-label;
     in property <string> config-path;
+    in-out property <string> pre-launch-command;
+    in-out property <int> launch-arguments-mode: 1;
+    in-out property <string> custom-game-args;
+    in-out property <string> saved-pre-launch-command;
+    in-out property <int> saved-launch-arguments-mode: 1;
+    in-out property <string> saved-custom-game-args;
+    in-out property <string> launch-options-save-text: "Save";
+    property <bool> launch-options-dirty: root.pre-launch-command != root.saved-pre-launch-command
+        || root.launch-arguments-mode != root.saved-launch-arguments-mode
+        || root.custom-game-args != root.saved-custom-game-args;
     in property <bool> open-install-folder-enabled: false;
     in property <bool> open-logs-folder-enabled: false;
     in-out property <int> active-page: 0;
@@ -226,6 +295,7 @@ export component AppWindow inherits Window {
     callback open-install-folder();
     callback open-logs-folder();
     callback refresh-logs();
+    callback save-launch-options();
 
     title: "DRH Launcher";
     preferred-width: 980px;
@@ -391,55 +461,106 @@ export component AppWindow inherits Window {
                     VerticalLayout {
                         spacing: 16px;
 
-                        SectionTitle {
-                            title: "Launch Options";
+                        MetricBlock {
+                            label: "Known options";
+                            value: "This installed version does not expose known launch options yet. Game defaults and DRHL recommended currently add no extra arguments; Custom remains available.";
+                        }
+
+                        VerticalLayout {
+                            spacing: 12px;
+
+                            LaunchTextField {
+                                label: "Pre-launch command";
+                                placeholder: "mangohud, gamescope, prime-run...";
+                                value <=> root.pre-launch-command;
+                            }
+
+                            VerticalLayout {
+                                spacing: 8px;
+
+                                HorizontalLayout {
+                                    z: 10;
+                                    spacing: 8px;
+                                    alignment: start;
+
+                                    SmallLabel {
+                                        label: "Arguments";
+                                    }
+
+                                    InfoHint {
+                                        text: "These are original Dungeon Rampage launch options.\nGame defaults uses the game's own defaults.\nDRHL recommended is the launcher default.\nCustom lets you type arguments manually.";
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 0px;
+
+                                    SegmentedButton {
+                                        text: "Game defaults";
+                                        active: root.launch-arguments-mode == 0;
+                                        clicked => {
+                                            root.launch-arguments-mode = 0;
+                                            root.custom-game-args = "";
+                                        }
+                                    }
+
+                                    SegmentedButton {
+                                        text: "DRHL recommended";
+                                        active: root.launch-arguments-mode == 1;
+                                        clicked => {
+                                            root.launch-arguments-mode = 1;
+                                            root.custom-game-args = "";
+                                        }
+                                    }
+
+                                    SegmentedButton {
+                                        text: "Custom";
+                                        active: root.launch-arguments-mode == 2;
+                                        clicked => {
+                                            root.launch-arguments-mode = 2;
+                                        }
+                                    }
+                                }
+
+                                LineEdit {
+                                    horizontal-stretch: 1;
+                                    enabled: root.launch-arguments-mode == 2;
+                                    placeholder-text: "--want-numbered-hud true --quality-control-button false";
+                                    text <=> root.custom-game-args;
+                                }
+                            }
                         }
 
                         HorizontalLayout {
-                            spacing: 12px;
+                            spacing: 10px;
+                            alignment: end;
 
-                            VerticalLayout {
-                                spacing: 8px;
-                                horizontal-stretch: 1;
-
-                                SmallLabel {
-                                    label: "Pre-launch command";
-                                }
-
-                                LineEdit {
-                                    placeholder-text: "mangohud, gamescope, prime-run...";
-                                    enabled: false;
+                            SecondaryButton {
+                                text: "Cancel";
+                                enabled: root.launch-options-dirty;
+                                clicked => {
+                                    root.pre-launch-command = root.saved-pre-launch-command;
+                                    root.launch-arguments-mode = root.saved-launch-arguments-mode;
+                                    root.custom-game-args = root.saved-custom-game-args;
+                                    root.launch-options-save-text = "Save";
                                 }
                             }
 
-                            VerticalLayout {
-                                spacing: 8px;
-                                horizontal-stretch: 1;
-
-                                SmallLabel {
-                                    label: "Arguments DRH";
-                                }
-
-                                LineEdit {
-                                    placeholder-text: "--flag=value";
-                                    enabled: false;
+                            PrimaryButton {
+                                text: root.launch-options-dirty ? "Save" : root.launch-options-save-text;
+                                enabled: root.launch-options-dirty;
+                                clicked => {
+                                    root.save-launch-options();
                                 }
                             }
                         }
 
-                        OptionRow {
-                            title: "Use recommended arguments";
-                            description: "Will be populated from DRH release metadata.";
-                        }
-
-                        OptionRow {
-                            title: "Add to Steam";
-                            description: "Create a Steam shortcut to DRH Launcher with --play mode.";
-                        }
-
-                        OptionRow {
-                            title: "Advanced mode";
-                            description: "Allow custom arguments not listed by the release.";
+                        reset-save-button := Timer {
+                            interval: 2s;
+                            running: root.launch-options-save-text != "Save";
+                            triggered => {
+                                root.launch-options-save-text = "Save";
+                            }
                         }
 
                         Rectangle {

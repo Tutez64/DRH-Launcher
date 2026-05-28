@@ -13,16 +13,26 @@ pub fn launch_game(config: &LauncherConfig) -> Result<Child, String> {
     let game_dir = paths::game_dir(install_dir);
     let executable = find_game_executable(&game_dir)?;
 
-    let mut command = if cfg!(target_os = "macos") && executable.is_dir() {
+    let pre_launch_command = parse_command_line(&config.pre_launch_command)
+        .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
+    let game_args = config.effective_game_args();
+
+    let mut command = if !pre_launch_command.is_empty() {
+        let mut command = Command::new(&pre_launch_command[0]);
+        command.args(&pre_launch_command[1..]);
+        command.arg(&executable);
+        command.args(&game_args);
+        command
+    } else if cfg!(target_os = "macos") && executable.is_dir() {
         let mut command = Command::new("open");
         command.arg(&executable);
-        if !config.game_args.is_empty() {
-            command.arg("--args").args(&config.game_args);
+        if !game_args.is_empty() {
+            command.arg("--args").args(&game_args);
         }
         command
     } else {
         let mut command = Command::new(&executable);
-        command.args(&config.game_args);
+        command.args(&game_args);
         command
     };
 
@@ -30,6 +40,78 @@ pub fn launch_game(config: &LauncherConfig) -> Result<Child, String> {
     command
         .spawn()
         .map_err(|error| format!("Could not launch DRH: {error}"))
+}
+
+pub fn launch_command_summary(config: &LauncherConfig) -> Result<String, String> {
+    let install_dir = config
+        .install_dir
+        .as_deref()
+        .ok_or_else(|| "No install directory selected.".to_string())?;
+    let game_dir = paths::game_dir(install_dir);
+    let executable = find_game_executable(&game_dir)?;
+    let pre_launch_command = parse_command_line(&config.pre_launch_command)
+        .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
+    let game_args = config.effective_game_args();
+
+    let mut parts = Vec::new();
+    if !pre_launch_command.is_empty() {
+        parts.extend(pre_launch_command);
+        parts.push(executable.display().to_string());
+        parts.extend(game_args);
+    } else if cfg!(target_os = "macos") && executable.is_dir() {
+        parts.push("open".to_string());
+        parts.push(executable.display().to_string());
+        if !game_args.is_empty() {
+            parts.push("--args".to_string());
+            parts.extend(game_args);
+        }
+    } else {
+        parts.push(executable.display().to_string());
+        parts.extend(game_args);
+    }
+
+    Ok(parts
+        .into_iter()
+        .map(|part| quote_command_part(&part))
+        .collect::<Vec<_>>()
+        .join(" "))
+}
+
+pub fn parse_command_line(input: &str) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.chars().peekable();
+    let mut quote = None::<char>;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' | '"' if quote.is_none() => quote = Some(ch),
+            ch if Some(ch) == quote => quote = None,
+            '\\' => {
+                let Some(next) = chars.next() else {
+                    current.push(ch);
+                    continue;
+                };
+                current.push(next);
+            }
+            ch if ch.is_whitespace() && quote.is_none() => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            ch => current.push(ch),
+        }
+    }
+
+    if let Some(quote) = quote {
+        return Err(format!("unterminated {quote} quote"));
+    }
+
+    if !current.is_empty() {
+        args.push(current);
+    }
+
+    Ok(args)
 }
 
 pub fn find_game_executable(game_dir: &Path) -> Result<PathBuf, String> {
@@ -45,9 +127,22 @@ pub fn find_game_executable(game_dir: &Path) -> Result<PathBuf, String> {
         })
 }
 
+fn quote_command_part(part: &str) -> String {
+    if !part.is_empty()
+        && part
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | '='))
+    {
+        return part.to_string();
+    }
+
+    format!("'{}'", part.replace('\'', "'\\''"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::LaunchArgumentsMode;
     use std::fs;
     use tempfile::tempdir;
 
@@ -78,6 +173,41 @@ mod tests {
         let error = find_game_executable(temp.path()).unwrap_err();
 
         assert!(error.contains("Could not find game executable"));
+    }
+
+    #[test]
+    fn parses_command_line_with_quotes() {
+        let args = parse_command_line("--name \"Dungeon Rampage\" --enabled true").unwrap();
+
+        assert_eq!(args, vec!["--name", "Dungeon Rampage", "--enabled", "true"]);
+    }
+
+    #[test]
+    fn rejects_unclosed_quotes() {
+        let error = parse_command_line("--name \"Dungeon Rampage").unwrap_err();
+
+        assert!(error.contains("unterminated"));
+    }
+
+    #[test]
+    fn launch_command_summary_uses_installed_executable_path() {
+        let temp = tempdir().unwrap();
+        let game_dir = paths::game_dir(temp.path());
+        fs::create_dir_all(&game_dir).unwrap();
+        let executable = game_dir.join(game_executable_names()[0]);
+        create_executable(&executable);
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().to_path_buf()),
+            launch_arguments_mode: LaunchArgumentsMode::Custom,
+            game_args: vec!["--name".to_string(), "Dungeon Rampage".to_string()],
+            ..LauncherConfig::default()
+        };
+
+        let summary = launch_command_summary(&config).unwrap();
+
+        assert!(summary.contains(&quote_command_part(&executable.display().to_string())));
+        assert!(summary.contains("'Dungeon Rampage'"));
+        assert!(!summary.contains("<DRH executable>"));
     }
 
     fn create_executable(path: &Path) {

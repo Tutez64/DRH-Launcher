@@ -182,11 +182,23 @@ Game arguments:
 Dungeon Rampage Haxe <game-args>
 ```
 
-Known game arguments should eventually be described by release metadata rather than parsed from source code at runtime. The UI can then offer:
+DRH feature flags currently accept command-line values in this shape:
 
-- default arguments from the release manifest
-- recommended arguments maintained by the project
-- advanced custom arguments
+```text
+--flag
+--flag true
+--flag false
+```
+
+Passing a flag without a value enables it. Passing `false` disables it, including flags whose game default is `true`.
+
+Known game arguments should eventually be described by release metadata rather than parsed from source code at runtime. The UI currently exposes launch arguments as an explicit mode:
+
+- `Game defaults`: launch DRH without extra launcher-provided game arguments.
+- `DRHL recommended`: the launcher default. Until recommendation metadata exists, this currently adds no extra game arguments.
+- `Custom`: use the manually entered argument string.
+
+Once release metadata exists, the UI can replace the temporary metadata notice with selectable known arguments and project-maintained recommendations.
 
 The source of truth in DRH is currently the constructor of `src/brain/utils/FeatureFlags.hx`, where feature flags and their default `true` / `false` values are listed.
 
@@ -198,6 +210,8 @@ The preferred long-term flow is:
 4. DRH Launcher presents known flags as user-facing options.
 
 This avoids runtime source parsing in DRH Launcher and keeps each launcher version compatible with the DRH version it installs.
+
+When launch option metadata is not available for the installed release, the UI should say so in user-facing language and still allow manual custom arguments.
 
 ## Updates
 

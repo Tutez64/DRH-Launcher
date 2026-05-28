@@ -26,7 +26,7 @@ use std::thread;
 use std::time::Duration;
 
 use archive::extract_to_staging;
-use config::LauncherConfig;
+use config::{LaunchArgumentsMode, LauncherConfig};
 use download::{DownloadProgress, download_and_verify_with_progress};
 use game_install::inspect_install;
 use game_launch::launch_game;
@@ -64,6 +64,7 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
     ui.set_release_source_label(release_source.label().into());
     ui.set_config_path(paths::config_file().display().to_string().into());
+    refresh_launch_options_view(&ui, &config.borrow(), "Save");
 
     refresh_home_state(
         &ui,
@@ -171,7 +172,16 @@ fn main() -> Result<(), slint::PlatformError> {
                 let config = config.clone();
                 match launch_game(&config) {
                     Ok(child) => {
-                        log_for_config(&config, diagnostics::LogLevel::Info, "DRH launched.");
+                        log_for_config(
+                            &config,
+                            diagnostics::LogLevel::Info,
+                            &format!(
+                                "DRH launched with command: {}",
+                                game_launch::launch_command_summary(&config).unwrap_or_else(
+                                    |error| format!("command summary unavailable ({error})")
+                                )
+                            ),
+                        );
                         game_process.borrow_mut().replace(child);
                         refresh_playing_state(&ui, &config, "DRH is running.");
                         start_game_monitor(
@@ -397,6 +407,50 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
+        ui.unwrap().on_save_launch_options(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let mut config = config.borrow_mut();
+            config.pre_launch_command = ui.get_pre_launch_command().trim().to_string();
+            config.launch_arguments_mode =
+                LaunchArgumentsMode::from_ui_index(ui.get_launch_arguments_mode());
+            let custom_game_args = match config.launch_arguments_mode {
+                LaunchArgumentsMode::Custom => ui.get_custom_game_args().trim().to_string(),
+                _ => String::new(),
+            };
+            match game_launch::parse_command_line(&custom_game_args) {
+                Ok(args) => {
+                    config.game_args = args;
+                    match config.save() {
+                        Ok(()) => {
+                            log_for_config(
+                                &config,
+                                diagnostics::LogLevel::Info,
+                                "Launch options saved.",
+                            );
+                            refresh_launch_options_view(&ui, &config, "Saved successfully");
+                        }
+                        Err(error) => {
+                            let message = format!("Could not save launch options: {error}");
+                            log_for_config(&config, diagnostics::LogLevel::Error, &message);
+                            refresh_launch_options_view(&ui, &config, "Save failed");
+                        }
+                    }
+                }
+                Err(error) => {
+                    let message = format!("Could not parse custom arguments: {error}");
+                    log_for_config(&config, diagnostics::LogLevel::Error, &message);
+                    refresh_launch_options_view(&ui, &config, "Invalid arguments");
+                }
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
         ui.unwrap().on_open_install_folder(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -541,6 +595,22 @@ fn start_release_check(
 fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
     let state = home_view_state(config, None, message);
     apply_home_view_state(ui, state);
+}
+
+fn refresh_launch_options_view(ui: &AppWindow, config: &LauncherConfig, save_text: &str) {
+    let custom_game_args = match config.launch_arguments_mode {
+        LaunchArgumentsMode::Custom => config.game_args.join(" "),
+        _ => String::new(),
+    };
+
+    ui.set_saved_pre_launch_command(config.pre_launch_command.clone().into());
+    ui.set_saved_launch_arguments_mode(config.launch_arguments_mode.ui_index());
+    ui.set_saved_custom_game_args(custom_game_args.clone().into());
+
+    ui.set_pre_launch_command(config.pre_launch_command.clone().into());
+    ui.set_launch_arguments_mode(config.launch_arguments_mode.ui_index());
+    ui.set_custom_game_args(custom_game_args.into());
+    ui.set_launch_options_save_text(save_text.into());
 }
 
 fn home_view_state(
