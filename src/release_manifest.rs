@@ -1,9 +1,9 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::platform::Platform;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ReleaseManifest {
     pub version: String,
     pub platforms: HashMap<String, ManifestPlatform>,
@@ -28,20 +28,20 @@ impl ReleaseManifest {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestPlatform {
     pub archive: String,
     pub sha256: String,
     pub size: u64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestLaunchOptions {
     #[serde(default)]
     pub game_arguments: Vec<ManifestGameArgument>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestGameArgument {
     pub name: String,
     pub flag: String,

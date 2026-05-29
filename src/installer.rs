@@ -220,6 +220,7 @@ mod tests {
             archive: format!("archive-{version}.tar.gz"),
             archive_sha256: "abc123".to_string(),
             installed_at: "unix:0".to_string(),
+            launch_options: None,
         }
     }
 

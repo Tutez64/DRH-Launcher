@@ -78,7 +78,7 @@ The exact executable names and native libraries vary by platform.
 
 `config.json` is launcher configuration and currently lives in the platform application config directory. It should not be confused with install-owned metadata under `<install-dir>/data/`.
 
-`data/installed.json` is owned by DRH Launcher and records what DRHL believes is installed in `Dungeon Rampage Haxe/current/` and, when present, `Dungeon Rampage Haxe/previous/`. It should be written after a successful install, update or rollback.
+`data/installed.json` is owned by DRH Launcher and records what DRHL believes is installed in `Dungeon Rampage Haxe/current/` and, when present, `Dungeon Rampage Haxe/previous/`. It should be written after a successful install, update or rollback. Installed release metadata can include the release `launch_options`; the Options page should use that local metadata so it matches the installed game even when a newer release exists.
 
 `Dungeon Rampage Haxe/previous/` is reserved for a simple rollback path. It contains the previous `current/` directory after an update replaces it.
 
@@ -123,7 +123,7 @@ The home screen should show:
 - compact installed version / latest-version / update-progress support text near the primary action
 - manual `Check for updates` action
 
-DRH Launcher checks for updates automatically at startup. Manual checks are still available.
+DRH Launcher checks for updates automatically at startup. Manual checks are still available. Update checks should use the latest GitHub release metadata and do not need to download the release manifest; the manifest is only needed when preparing an install or update.
 
 The main navigation is:
 
@@ -266,7 +266,10 @@ After a successful replacement, DRH Launcher should write `data/installed.json` 
     "release_url": "https://github.com/Tutez64/Dungeon-Rampage-Haxe/releases/tag/V9",
     "archive": "Dungeon.Rampage.Haxe.V9.Linux.tar.gz",
     "archive_sha256": "...",
-    "installed_at": "2026-05-25T12:34:56Z"
+    "installed_at": "2026-05-25T12:34:56Z",
+    "launch_options": {
+      "game_arguments": []
+    }
   },
   "previous": {
     "version": "V7",

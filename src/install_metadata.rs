@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::github_releases::PlatformRelease;
 use crate::paths;
-use crate::release_manifest::normalize_sha256;
+use crate::release_manifest::{ManifestLaunchOptions, normalize_sha256};
 use crate::release_source::ReleaseSource;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -45,6 +45,8 @@ pub struct InstalledRelease {
     pub archive: String,
     pub archive_sha256: String,
     pub installed_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_options: Option<ManifestLaunchOptions>,
 }
 
 impl InstalledRelease {
@@ -62,6 +64,7 @@ impl InstalledRelease {
                 .map(normalize_sha256)
                 .unwrap_or_default(),
             installed_at: current_timestamp(),
+            launch_options: release.launch_options.clone(),
         }
     }
 }
@@ -120,6 +123,7 @@ mod tests {
         assert_eq!(metadata.source, "Tutez64/DRHL-Release-Fixtures");
         assert_eq!(metadata.archive, "Dungeon.Rampage.Haxe.V9.Linux.tar.gz");
         assert_eq!(metadata.archive_sha256, "abc123");
+        assert!(metadata.launch_options.is_none());
     }
 
     fn test_installed_release(version: &str) -> InstalledRelease {
@@ -131,6 +135,7 @@ mod tests {
             archive: format!("archive-{version}.tar.gz"),
             archive_sha256: "abc123".to_string(),
             installed_at: "unix:0".to_string(),
+            launch_options: None,
         }
     }
 }

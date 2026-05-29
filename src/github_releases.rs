@@ -63,6 +63,21 @@ pub fn discover_latest_platform_release(
     source: &ReleaseSource,
     platform: Platform,
 ) -> Result<PlatformRelease, String> {
+    discover_latest_platform_release_with_manifest(source, platform, false)
+}
+
+pub fn discover_latest_platform_release_for_install(
+    source: &ReleaseSource,
+    platform: Platform,
+) -> Result<PlatformRelease, String> {
+    discover_latest_platform_release_with_manifest(source, platform, true)
+}
+
+fn discover_latest_platform_release_with_manifest(
+    source: &ReleaseSource,
+    platform: Platform,
+    include_manifest: bool,
+) -> Result<PlatformRelease, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
@@ -79,7 +94,11 @@ pub fn discover_latest_platform_release(
         .json()
         .map_err(|error| format!("Could not parse GitHub release response: {error}"))?;
 
-    let manifest = fetch_manifest_if_available(&client, &release)?;
+    let manifest = if include_manifest {
+        fetch_manifest_if_available(&client, &release)?
+    } else {
+        None
+    };
     select_platform_release(release, platform, manifest.as_ref())
 }
 

@@ -29,7 +29,10 @@ use archive::extract_to_staging;
 use config::{LaunchArgumentsMode, LauncherConfig};
 use download::{DownloadProgress, download_and_verify_with_progress};
 use game_install::inspect_install;
-use github_releases::{PlatformRelease, discover_latest_platform_release};
+use github_releases::{
+    PlatformRelease, ReleaseMetadataSource, discover_latest_platform_release,
+    discover_latest_platform_release_for_install,
+};
 use install_state::InstallState;
 use installer::install_extracted_archive;
 use platform::Platform;
@@ -64,10 +67,11 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
     ui.set_release_source_label(release_source.label().into());
     ui.set_config_path(paths::config_file().display().to_string().into());
+    let installed_launch_options = load_installed_launch_options(&config.borrow());
     refresh_launch_options_view(
         &ui,
         &config.borrow(),
-        latest_release_metadata(&latest_release).as_ref(),
+        installed_launch_options.as_ref(),
         "Save",
     );
 
@@ -175,7 +179,9 @@ fn main() -> Result<(), slint::PlatformError> {
             ) && !update_available
             {
                 let config = config.clone();
-                let recommended_game_args = release_recommended_game_args(release.as_ref());
+                let installed_launch_options = load_installed_launch_options(&config);
+                let recommended_game_args =
+                    release_recommended_game_args(installed_launch_options.as_ref());
                 match game_launch::launch_game_with_recommended_args(
                     &config,
                     &recommended_game_args,
@@ -233,8 +239,13 @@ fn main() -> Result<(), slint::PlatformError> {
             let release_source = release_source.clone();
             thread::spawn(move || {
                 let release = match release {
-                    Some(release) => Ok(release),
-                    None => discover_latest_platform_release(&release_source, Platform::current()),
+                    Some(release) if release.metadata_source == ReleaseMetadataSource::Manifest => {
+                        Ok(release)
+                    }
+                    _ => discover_latest_platform_release_for_install(
+                        &release_source,
+                        Platform::current(),
+                    ),
                 };
 
                 let message = match release {
@@ -365,6 +376,13 @@ fn main() -> Result<(), slint::PlatformError> {
                         return;
                     };
 
+                    let installed_launch_options = load_installed_launch_options(&config);
+                    refresh_launch_options_view(
+                        &ui,
+                        &config,
+                        installed_launch_options.as_ref(),
+                        "Save",
+                    );
                     refresh_home_state(&ui, &config, &message);
                     ui.set_install_action_enabled(true);
                     ui.set_update_check_enabled(true);
@@ -420,7 +438,6 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
-        let latest_release = Arc::clone(&latest_release);
         ui.unwrap().on_save_launch_options(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -430,15 +447,15 @@ fn main() -> Result<(), slint::PlatformError> {
             config.pre_launch_command = ui.get_pre_launch_command().trim().to_string();
             config.launch_arguments_mode =
                 LaunchArgumentsMode::from_ui_index(ui.get_launch_arguments_mode());
-            let latest_release = latest_release_metadata(&latest_release);
-            let game_args = match launch_options_game_args(&ui, latest_release.as_ref()) {
+            let installed_launch_options = load_installed_launch_options(&config);
+            let game_args = match launch_options_game_args(&ui, installed_launch_options.as_ref()) {
                 Ok(args) => args,
                 Err(error) => {
                     log_for_config(&config, diagnostics::LogLevel::Error, &error);
                     refresh_launch_options_view(
                         &ui,
                         &config,
-                        latest_release.as_ref(),
+                        installed_launch_options.as_ref(),
                         "Invalid arguments",
                     );
                     return;
@@ -456,7 +473,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     refresh_launch_options_view(
                         &ui,
                         &config,
-                        latest_release.as_ref(),
+                        installed_launch_options.as_ref(),
                         "Saved successfully",
                     );
                 }
@@ -466,7 +483,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     refresh_launch_options_view(
                         &ui,
                         &config,
-                        latest_release.as_ref(),
+                        installed_launch_options.as_ref(),
                         "Save failed",
                     );
                 }
@@ -477,16 +494,17 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
-        let latest_release = Arc::clone(&latest_release);
         ui.unwrap().on_select_launch_arguments_mode(move |mode| {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
 
+            let config = config.borrow();
+            let installed_launch_options = load_installed_launch_options(&config);
             apply_launch_arguments_mode_to_view(
                 &ui,
-                &config.borrow(),
-                latest_release_metadata(&latest_release).as_ref(),
+                &config,
+                installed_launch_options.as_ref(),
                 LaunchArgumentsMode::from_ui_index(mode),
                 ui.get_custom_game_args().to_string(),
             );
@@ -526,16 +544,17 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
-        let latest_release = Arc::clone(&latest_release);
         ui.unwrap().on_cancel_launch_options(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
 
+            let config = config.borrow();
+            let installed_launch_options = load_installed_launch_options(&config);
             refresh_launch_options_view(
                 &ui,
-                &config.borrow(),
-                latest_release_metadata(&latest_release).as_ref(),
+                &config,
+                installed_launch_options.as_ref(),
                 "Save",
             );
         });
@@ -676,10 +695,22 @@ fn start_release_check(
                     .lock()
                     .expect("latest release lock poisoned")
                     .replace(release.clone());
-                refresh_launch_options_view(&ui, &config, Some(&release), "Save");
+                let installed_launch_options = load_installed_launch_options(&config);
+                refresh_launch_options_view(
+                    &ui,
+                    &config,
+                    installed_launch_options.as_ref(),
+                    "Save",
+                );
                 home_view_state(&config, Some(&release), &message)
             } else {
-                refresh_launch_options_view(&ui, &config, None, "Save");
+                let installed_launch_options = load_installed_launch_options(&config);
+                refresh_launch_options_view(
+                    &ui,
+                    &config,
+                    installed_launch_options.as_ref(),
+                    "Save",
+                );
                 home_view_state(&config, None, &message)
             };
             apply_home_view_state(&ui, state);
@@ -695,11 +726,11 @@ fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
 fn refresh_launch_options_view(
     ui: &AppWindow,
     config: &LauncherConfig,
-    release: Option<&PlatformRelease>,
+    launch_options: Option<&ManifestLaunchOptions>,
     save_text: &str,
 ) {
-    let (launch_options, custom_game_args) = launch_options_view_state(config, release);
-    let launch_options_state = launch_options_state(&launch_options);
+    let (view_options, custom_game_args) = launch_options_view_state(config, launch_options);
+    let launch_options_state = launch_options_state(&view_options);
 
     ui.set_saved_pre_launch_command(config.pre_launch_command.clone().into());
     ui.set_saved_launch_arguments_mode(config.launch_arguments_mode.ui_index());
@@ -710,21 +741,18 @@ fn refresh_launch_options_view(
     ui.set_launch_arguments_mode(config.launch_arguments_mode.ui_index());
     ui.set_custom_game_args(custom_game_args.into());
     ui.set_launch_options_save_text(save_text.into());
-    apply_launch_options_to_view(ui, launch_options, ui.get_custom_game_args().to_string());
+    apply_launch_options_to_view(ui, view_options, ui.get_custom_game_args().to_string());
 }
 
-fn latest_release_metadata(
-    latest_release: &Arc<Mutex<Option<PlatformRelease>>>,
-) -> Option<PlatformRelease> {
-    latest_release
-        .lock()
-        .expect("latest release lock poisoned")
-        .clone()
+fn load_installed_launch_options(config: &LauncherConfig) -> Option<ManifestLaunchOptions> {
+    let install_dir = config.install_dir.as_deref()?;
+    install_metadata::InstalledState::load(install_dir)
+        .ok()
+        .and_then(|state| state.active.launch_options)
 }
 
-fn release_recommended_game_args(release: Option<&PlatformRelease>) -> Vec<String> {
-    release
-        .and_then(|release| release.launch_options.as_ref())
+fn release_recommended_game_args(launch_options: Option<&ManifestLaunchOptions>) -> Vec<String> {
+    launch_options
         .map(recommended_launch_option_args)
         .unwrap_or_default()
 }
@@ -744,9 +772,9 @@ fn recommended_launch_option_args(launch_options: &ManifestLaunchOptions) -> Vec
 
 fn launch_options_view_state(
     config: &LauncherConfig,
-    release: Option<&PlatformRelease>,
+    manifest_options: Option<&ManifestLaunchOptions>,
 ) -> (Vec<LaunchOptionView>, String) {
-    let Some(manifest_options) = release.and_then(|release| release.launch_options.as_ref()) else {
+    let Some(manifest_options) = manifest_options else {
         let extra_args = if matches!(config.launch_arguments_mode, LaunchArgumentsMode::Custom) {
             config.game_args.join(" ")
         } else {
@@ -797,7 +825,7 @@ fn launch_options_view_state(
 fn apply_launch_arguments_mode_to_view(
     ui: &AppWindow,
     config: &LauncherConfig,
-    release: Option<&PlatformRelease>,
+    manifest_options: Option<&ManifestLaunchOptions>,
     mode: LaunchArgumentsMode,
     extra_args: String,
 ) {
@@ -812,7 +840,7 @@ fn apply_launch_arguments_mode_to_view(
         game_args: config.game_args.clone(),
         ..config.clone()
     };
-    let (options, _) = launch_options_view_state(&preview_config, release);
+    let (options, _) = launch_options_view_state(&preview_config, manifest_options);
     apply_launch_options_to_view(ui, options, extra_args);
 }
 
@@ -844,12 +872,12 @@ fn launch_options_state(options: &[LaunchOptionView]) -> String {
 
 fn launch_options_game_args(
     ui: &AppWindow,
-    release: Option<&PlatformRelease>,
+    manifest_options: Option<&ManifestLaunchOptions>,
 ) -> Result<Vec<String>, String> {
     let mut args = if LaunchArgumentsMode::from_ui_index(ui.get_launch_arguments_mode())
         == LaunchArgumentsMode::Custom
     {
-        known_launch_options_game_args(ui, release)
+        known_launch_options_game_args(ui, manifest_options)
     } else {
         Vec::new()
     };
@@ -861,9 +889,9 @@ fn launch_options_game_args(
 
 fn known_launch_options_game_args(
     ui: &AppWindow,
-    release: Option<&PlatformRelease>,
+    manifest_options: Option<&ManifestLaunchOptions>,
 ) -> Vec<String> {
-    let Some(manifest_options) = release.and_then(|release| release.launch_options.as_ref()) else {
+    let Some(manifest_options) = manifest_options else {
         return Vec::new();
     };
 
