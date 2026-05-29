@@ -1,5 +1,11 @@
 import { LineEdit, ScrollView } from "std-widgets.slint";
 
+export struct LaunchOptionView {
+    name: string,
+    flag: string,
+    checked: bool,
+}
+
 component PrimaryButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
@@ -188,6 +194,82 @@ component SegmentedButton inherits Rectangle {
     }
 }
 
+component LaunchOptionToggle inherits Rectangle {
+    in property <string> text;
+    in property <bool> checked;
+    property <length> label-left-padding: 38px;
+    property <length> label-right-padding: 12px;
+    out property <float> measured-min-width-px:
+        max(112px, measurement.preferred-width + root.label-left-padding + root.label-right-padding) / 1px;
+    callback toggled(bool);
+    callback width-measured(float);
+
+    init => {
+        root.width-measured(root.measured-min-width-px);
+    }
+
+    changed measured-min-width-px => {
+        root.width-measured(root.measured-min-width-px);
+    }
+
+    height: 38px;
+    min-width: root.measured-min-width-px * 1px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.checked ? #f07a37 : touch.has-hover ? #6d3327 : #342724;
+    background: root.checked ? #2a1c18 : touch.has-hover ? #211b1e : #151419;
+
+    measurement := Text {
+        text: root.text;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0px;
+        wrap: no-wrap;
+        overflow: clip;
+        opacity: 0;
+    }
+
+    Rectangle {
+        x: 12px;
+        y: (parent.height - self.height) / 2;
+        width: 18px;
+        height: 18px;
+        border-radius: 3px;
+        border-width: 2px;
+        border-color: root.checked ? #f07a37 : #8a7568;
+        background: root.checked ? #c73325 : transparent;
+
+        Text {
+            visible: root.checked;
+            text: "✓";
+            color: #fff7ed;
+            font-size: 13px;
+            font-weight: 800;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    Text {
+        x: root.label-left-padding;
+        width: parent.width - root.label-left-padding - root.label-right-padding;
+        text: root.text;
+        color: root.checked ? #fff1dd : #cbb8ab;
+        font-size: 13px;
+        font-weight: root.checked ? 700 : 600;
+        letter-spacing: 0px;
+        wrap: no-wrap;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.toggled(!root.checked);
+        }
+    }
+}
+
 component InfoHint inherits Rectangle {
     in property <string> text;
 
@@ -234,6 +316,31 @@ component InfoHint inherits Rectangle {
     touch := TouchArea {}
 }
 
+component AppLineEdit inherits Rectangle {
+    in property <string> placeholder;
+    in property <bool> enabled: true;
+    in-out property <string> value;
+
+    horizontal-stretch: 1;
+    min-height: input.min-height;
+
+    input := LineEdit {
+        width: parent.width;
+        enabled: root.enabled;
+        placeholder-text: root.placeholder;
+        text <=> root.value;
+    }
+
+    Rectangle {
+        visible: input.has-focus;
+        width: parent.width;
+        height: input.height;
+        border-radius: 4px;
+        border-width: 2px;
+        border-color: #e1502f;
+    }
+}
+
 component LaunchTextField inherits Rectangle {
     in property <string> label;
     in property <string> placeholder;
@@ -251,11 +358,10 @@ component LaunchTextField inherits Rectangle {
             label: root.label;
         }
 
-        LineEdit {
-            horizontal-stretch: 1;
+        AppLineEdit {
             enabled: root.enabled;
-            placeholder-text: root.placeholder;
-            text <=> root.value;
+            placeholder: root.placeholder;
+            value <=> root.value;
         }
     }
 }
@@ -280,8 +386,13 @@ export component AppWindow inherits Window {
     in-out property <int> saved-launch-arguments-mode: 1;
     in-out property <string> saved-custom-game-args;
     in-out property <string> launch-options-save-text: "Save";
+    in property <[LaunchOptionView]> launch-options;
+    in property <float> launch-option-min-width-px: 210;
+    in-out property <string> launch-options-state;
+    in-out property <string> saved-launch-options-state;
     property <bool> launch-options-dirty: root.pre-launch-command != root.saved-pre-launch-command
         || root.launch-arguments-mode != root.saved-launch-arguments-mode
+        || root.launch-options-state != root.saved-launch-options-state
         || root.custom-game-args != root.saved-custom-game-args;
     in property <bool> open-install-folder-enabled: false;
     in property <bool> open-logs-folder-enabled: false;
@@ -298,6 +409,10 @@ export component AppWindow inherits Window {
     callback open-logs-folder();
     callback refresh-logs();
     callback save-launch-options();
+    callback select-launch-arguments-mode(int);
+    callback toggle-launch-option(int, bool);
+    callback launch-option-width-measured(float);
+    callback cancel-launch-options();
 
     title: "DRH Launcher";
     preferred-width: 980px;
@@ -461,113 +576,151 @@ export component AppWindow inherits Window {
                     horizontal-stretch: 1;
                     vertical-stretch: 1;
 
-                    VerticalLayout {
-                        spacing: 16px;
+                    options-page-scroll := ScrollView {
+                        width: parent.width;
+                        height: parent.height;
+                        viewport-width: self.width;
+                        viewport-height: max(options-page-content.preferred-height, self.height);
 
-                        MetricBlock {
-                            label: "Known options";
-                            value: "This installed version does not expose known launch options yet. Game defaults and DRHL recommended currently add no extra arguments; Custom remains available.";
-                        }
-
-                        VerticalLayout {
-                            spacing: 12px;
-
-                            LaunchTextField {
-                                label: "Pre-launch command";
-                                placeholder: "mangohud, gamescope, prime-run...";
-                                value <=> root.pre-launch-command;
-                            }
+                        options-page-content := VerticalLayout {
+                            width: options-page-scroll.width;
+                            height: max(self.preferred-height, options-page-scroll.height);
+                            spacing: 16px;
 
                             VerticalLayout {
-                                spacing: 8px;
+                                spacing: 12px;
 
-                                HorizontalLayout {
-                                    z: 10;
+                                LaunchTextField {
+                                    label: "Pre-launch command";
+                                    placeholder: "mangohud, gamescope, prime-run...";
+                                    value <=> root.pre-launch-command;
+                                }
+
+                                VerticalLayout {
                                     spacing: 8px;
-                                    alignment: start;
+
+                                    HorizontalLayout {
+                                        z: 10;
+                                        spacing: 8px;
+                                        alignment: start;
+
+                                        SmallLabel {
+                                            label: "Arguments";
+                                        }
+
+                                        InfoHint {
+                                            text: "These are original Dungeon Rampage launch options.\nGame defaults uses the game's own defaults.\nDRHL recommended is the launcher default.\nCustom lets you adjust known options manually.";
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 0px;
+
+                                        SegmentedButton {
+                                            text: "Game defaults";
+                                            active: root.launch-arguments-mode == 0;
+                                            clicked => {
+                                                root.select-launch-arguments-mode(0);
+                                            }
+                                        }
+
+                                        SegmentedButton {
+                                            text: "DRHL recommended";
+                                            active: root.launch-arguments-mode == 1;
+                                            clicked => {
+                                                root.select-launch-arguments-mode(1);
+                                            }
+                                        }
+
+                                        SegmentedButton {
+                                            text: "Custom";
+                                            active: root.launch-arguments-mode == 2;
+                                            clicked => {
+                                                root.select-launch-arguments-mode(2);
+                                            }
+                                        }
+                                    }
+
+                                    if root.launch-options.length > 0 : option-area := Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: option-grid.preferred-height;
+
+                                        option-grid := GridLayout {
+                                            width: parent.width;
+                                            property <length> available-width: option-area.width;
+                                            property <int> columns:
+                                                option-grid.available-width >= root.launch-option-min-width-px * 4px + 24px ? 4
+                                                : option-grid.available-width >= root.launch-option-min-width-px * 3px + 16px ? 3
+                                                : option-grid.available-width >= root.launch-option-min-width-px * 2px + 8px ? 2
+                                                : 1;
+                                            spacing: 8px;
+
+                                            for option[index] in root.launch-options: LaunchOptionToggle {
+                                                min-width: root.launch-option-min-width-px * 1px;
+                                                row: index / option-grid.columns;
+                                                col: Math.mod(index, option-grid.columns);
+                                                text: option.name;
+                                                checked: option.checked;
+                                                toggled(checked) => {
+                                                    root.toggle-launch-option(index, checked);
+                                                }
+                                                width-measured(width) => {
+                                                    root.launch-option-width-measured(width);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if root.launch-options.length == 0 : Text {
+                                        text: "No known launch options loaded from the release manifest.";
+                                        color: #a99b91;
+                                        font-size: 13px;
+                                    }
 
                                     SmallLabel {
-                                        label: "Arguments";
+                                        label: "Extra arguments";
                                     }
 
-                                    InfoHint {
-                                        text: "These are original Dungeon Rampage launch options.\nGame defaults uses the game's own defaults.\nDRHL recommended is the launcher default.\nCustom lets you type arguments manually.";
+                                    AppLineEdit {
+                                        placeholder: "Extra arguments";
+                                        value <=> root.custom-game-args;
                                     }
-                                }
-
-                                HorizontalLayout {
-                                    spacing: 0px;
-
-                                    SegmentedButton {
-                                        text: "Game defaults";
-                                        active: root.launch-arguments-mode == 0;
-                                        clicked => {
-                                            root.launch-arguments-mode = 0;
-                                            root.custom-game-args = "";
-                                        }
-                                    }
-
-                                    SegmentedButton {
-                                        text: "DRHL recommended";
-                                        active: root.launch-arguments-mode == 1;
-                                        clicked => {
-                                            root.launch-arguments-mode = 1;
-                                            root.custom-game-args = "";
-                                        }
-                                    }
-
-                                    SegmentedButton {
-                                        text: "Custom";
-                                        active: root.launch-arguments-mode == 2;
-                                        clicked => {
-                                            root.launch-arguments-mode = 2;
-                                        }
-                                    }
-                                }
-
-                                LineEdit {
-                                    horizontal-stretch: 1;
-                                    enabled: root.launch-arguments-mode == 2;
-                                    placeholder-text: "--want-numbered-hud true --quality-control-button false";
-                                    text <=> root.custom-game-args;
                                 }
                             }
-                        }
 
-                        HorizontalLayout {
-                            spacing: 10px;
-                            alignment: end;
+                            Rectangle {
+                                vertical-stretch: 1;
+                            }
 
-                            SecondaryButton {
-                                text: "Cancel";
-                                enabled: root.launch-options-dirty;
-                                clicked => {
-                                    root.pre-launch-command = root.saved-pre-launch-command;
-                                    root.launch-arguments-mode = root.saved-launch-arguments-mode;
-                                    root.custom-game-args = root.saved-custom-game-args;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                alignment: end;
+
+                                SecondaryButton {
+                                    text: "Cancel";
+                                    enabled: root.launch-options-dirty;
+                                    clicked => {
+                                        root.cancel-launch-options();
+                                    }
+                                }
+
+                                PrimaryButton {
+                                    text: root.launch-options-dirty ? "Save" : root.launch-options-save-text;
+                                    enabled: root.launch-options-dirty;
+                                    clicked => {
+                                        root.save-launch-options();
+                                    }
+                                }
+                            }
+
+                            reset-save-button := Timer {
+                                interval: 2s;
+                                running: root.launch-options-save-text != "Save";
+                                triggered => {
                                     root.launch-options-save-text = "Save";
                                 }
                             }
 
-                            PrimaryButton {
-                                text: root.launch-options-dirty ? "Save" : root.launch-options-save-text;
-                                enabled: root.launch-options-dirty;
-                                clicked => {
-                                    root.save-launch-options();
-                                }
-                            }
-                        }
-
-                        reset-save-button := Timer {
-                            interval: 2s;
-                            running: root.launch-options-save-text != "Save";
-                            triggered => {
-                                root.launch-options-save-text = "Save";
-                            }
-                        }
-
-                        Rectangle {
-                            vertical-stretch: 1;
                         }
                     }
                 }

@@ -4,7 +4,9 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use crate::platform::Platform;
-use crate::release_manifest::{ReleaseManifest, is_manifest_asset_name, normalize_sha256};
+use crate::release_manifest::{
+    ManifestLaunchOptions, ReleaseManifest, is_manifest_asset_name, normalize_sha256,
+};
 use crate::release_source::ReleaseSource;
 
 #[derive(Clone, Debug)]
@@ -14,6 +16,7 @@ pub struct PlatformRelease {
     pub html_url: String,
     pub metadata_source: ReleaseMetadataSource,
     pub asset: ReleaseAsset,
+    pub launch_options: Option<ManifestLaunchOptions>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -142,6 +145,7 @@ fn select_manifest_platform(
             .unwrap_or_else(|| "Unnamed release".to_string()),
         html_url: release.html_url,
         metadata_source: ReleaseMetadataSource::Manifest,
+        launch_options: manifest.launch_options.clone(),
         asset: ReleaseAsset {
             platform_id: platform.id().to_string(),
             name: manifest_platform.archive.clone(),
@@ -178,6 +182,7 @@ fn select_platform_asset_fallback(
             .unwrap_or_else(|| "Unnamed release".to_string()),
         html_url: release.html_url,
         metadata_source: ReleaseMetadataSource::GitHubAssetFallback,
+        launch_options: None,
         asset: ReleaseAsset {
             platform_id: platform.id().to_string(),
             name: asset.name,
@@ -224,6 +229,7 @@ mod tests {
         assert_eq!(selected.asset.name, "Dungeon.Rampage.Haxe.V4.Linux.tar.gz");
         assert_eq!(selected.asset.size, 20);
         assert_eq!(selected.asset.digest.as_deref(), Some("sha256:linux"));
+        assert!(selected.launch_options.is_none());
     }
 
     #[test]
@@ -262,6 +268,16 @@ mod tests {
                         "sha256": "manifest_hash",
                         "size": 123
                     }
+                },
+                "launch_options": {
+                    "game_arguments": [
+                        {
+                            "name": "want-zoom",
+                            "flag": "--want-zoom",
+                            "default": false,
+                            "recommended": true
+                        }
+                    ]
                 }
             }"#,
         )
@@ -281,6 +297,10 @@ mod tests {
         assert_eq!(
             selected.asset.digest.as_deref(),
             Some("sha256:manifest_hash")
+        );
+        assert_eq!(
+            selected.launch_options.unwrap().game_arguments[0].recommended,
+            Some(true)
         );
     }
 }

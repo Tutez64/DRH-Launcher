@@ -29,13 +29,13 @@ use archive::extract_to_staging;
 use config::{LaunchArgumentsMode, LauncherConfig};
 use download::{DownloadProgress, download_and_verify_with_progress};
 use game_install::inspect_install;
-use game_launch::launch_game;
 use github_releases::{PlatformRelease, discover_latest_platform_release};
 use install_state::InstallState;
 use installer::install_extracted_archive;
 use platform::Platform;
+use release_manifest::ManifestLaunchOptions;
 use release_source::ReleaseSource;
-use slint::{Timer, TimerMode};
+use slint::{Model, ModelRc, Timer, TimerMode, VecModel};
 
 slint::include_modules!();
 
@@ -64,7 +64,12 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
     ui.set_release_source_label(release_source.label().into());
     ui.set_config_path(paths::config_file().display().to_string().into());
-    refresh_launch_options_view(&ui, &config.borrow(), "Save");
+    refresh_launch_options_view(
+        &ui,
+        &config.borrow(),
+        latest_release_metadata(&latest_release).as_ref(),
+        "Save",
+    );
 
     refresh_home_state(
         &ui,
@@ -170,16 +175,24 @@ fn main() -> Result<(), slint::PlatformError> {
             ) && !update_available
             {
                 let config = config.clone();
-                match launch_game(&config) {
+                let recommended_game_args = release_recommended_game_args(release.as_ref());
+                match game_launch::launch_game_with_recommended_args(
+                    &config,
+                    &recommended_game_args,
+                ) {
                     Ok(child) => {
                         log_for_config(
                             &config,
                             diagnostics::LogLevel::Info,
                             &format!(
                                 "DRH launched with command: {}",
-                                game_launch::launch_command_summary(&config).unwrap_or_else(
-                                    |error| format!("command summary unavailable ({error})")
+                                game_launch::launch_command_summary_with_recommended_args(
+                                    &config,
+                                    &recommended_game_args
                                 )
+                                .unwrap_or_else(|error| format!(
+                                    "command summary unavailable ({error})"
+                                ))
                             ),
                         );
                         game_process.borrow_mut().replace(child);
@@ -407,6 +420,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
+        let latest_release = Arc::clone(&latest_release);
         ui.unwrap().on_save_launch_options(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -416,35 +430,114 @@ fn main() -> Result<(), slint::PlatformError> {
             config.pre_launch_command = ui.get_pre_launch_command().trim().to_string();
             config.launch_arguments_mode =
                 LaunchArgumentsMode::from_ui_index(ui.get_launch_arguments_mode());
-            let custom_game_args = match config.launch_arguments_mode {
-                LaunchArgumentsMode::Custom => ui.get_custom_game_args().trim().to_string(),
-                _ => String::new(),
+            let latest_release = latest_release_metadata(&latest_release);
+            let game_args = match launch_options_game_args(&ui, latest_release.as_ref()) {
+                Ok(args) => args,
+                Err(error) => {
+                    log_for_config(&config, diagnostics::LogLevel::Error, &error);
+                    refresh_launch_options_view(
+                        &ui,
+                        &config,
+                        latest_release.as_ref(),
+                        "Invalid arguments",
+                    );
+                    return;
+                }
             };
-            match game_launch::parse_command_line(&custom_game_args) {
-                Ok(args) => {
-                    config.game_args = args;
-                    match config.save() {
-                        Ok(()) => {
-                            log_for_config(
-                                &config,
-                                diagnostics::LogLevel::Info,
-                                "Launch options saved.",
-                            );
-                            refresh_launch_options_view(&ui, &config, "Saved successfully");
-                        }
-                        Err(error) => {
-                            let message = format!("Could not save launch options: {error}");
-                            log_for_config(&config, diagnostics::LogLevel::Error, &message);
-                            refresh_launch_options_view(&ui, &config, "Save failed");
-                        }
-                    }
+
+            config.game_args = game_args;
+            match config.save() {
+                Ok(()) => {
+                    log_for_config(
+                        &config,
+                        diagnostics::LogLevel::Info,
+                        "Launch options saved.",
+                    );
+                    refresh_launch_options_view(
+                        &ui,
+                        &config,
+                        latest_release.as_ref(),
+                        "Saved successfully",
+                    );
                 }
                 Err(error) => {
-                    let message = format!("Could not parse custom arguments: {error}");
+                    let message = format!("Could not save launch options: {error}");
                     log_for_config(&config, diagnostics::LogLevel::Error, &message);
-                    refresh_launch_options_view(&ui, &config, "Invalid arguments");
+                    refresh_launch_options_view(
+                        &ui,
+                        &config,
+                        latest_release.as_ref(),
+                        "Save failed",
+                    );
                 }
             }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let latest_release = Arc::clone(&latest_release);
+        ui.unwrap().on_select_launch_arguments_mode(move |mode| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            apply_launch_arguments_mode_to_view(
+                &ui,
+                &config.borrow(),
+                latest_release_metadata(&latest_release).as_ref(),
+                LaunchArgumentsMode::from_ui_index(mode),
+                ui.get_custom_game_args().to_string(),
+            );
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        ui.unwrap().on_launch_option_width_measured(move |width| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if width > ui.get_launch_option_min_width_px() {
+                ui.set_launch_option_min_width_px(width);
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        ui.unwrap().on_toggle_launch_option(move |index, checked| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let mut options = launch_options_from_model(&ui);
+            let Some(option) = options.get_mut(index as usize) else {
+                return;
+            };
+            option.checked = checked;
+            ui.set_launch_arguments_mode(LaunchArgumentsMode::Custom.ui_index());
+            apply_launch_options_to_view(&ui, options, ui.get_custom_game_args().to_string());
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let latest_release = Arc::clone(&latest_release);
+        ui.unwrap().on_cancel_launch_options(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            refresh_launch_options_view(
+                &ui,
+                &config.borrow(),
+                latest_release_metadata(&latest_release).as_ref(),
+                "Save",
+            );
         });
     }
 
@@ -583,8 +676,10 @@ fn start_release_check(
                     .lock()
                     .expect("latest release lock poisoned")
                     .replace(release.clone());
+                refresh_launch_options_view(&ui, &config, Some(&release), "Save");
                 home_view_state(&config, Some(&release), &message)
             } else {
+                refresh_launch_options_view(&ui, &config, None, "Save");
                 home_view_state(&config, None, &message)
             };
             apply_home_view_state(&ui, state);
@@ -597,20 +692,261 @@ fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
     apply_home_view_state(ui, state);
 }
 
-fn refresh_launch_options_view(ui: &AppWindow, config: &LauncherConfig, save_text: &str) {
-    let custom_game_args = match config.launch_arguments_mode {
-        LaunchArgumentsMode::Custom => config.game_args.join(" "),
-        _ => String::new(),
-    };
+fn refresh_launch_options_view(
+    ui: &AppWindow,
+    config: &LauncherConfig,
+    release: Option<&PlatformRelease>,
+    save_text: &str,
+) {
+    let (launch_options, custom_game_args) = launch_options_view_state(config, release);
+    let launch_options_state = launch_options_state(&launch_options);
 
     ui.set_saved_pre_launch_command(config.pre_launch_command.clone().into());
     ui.set_saved_launch_arguments_mode(config.launch_arguments_mode.ui_index());
     ui.set_saved_custom_game_args(custom_game_args.clone().into());
+    ui.set_saved_launch_options_state(launch_options_state.clone().into());
 
     ui.set_pre_launch_command(config.pre_launch_command.clone().into());
     ui.set_launch_arguments_mode(config.launch_arguments_mode.ui_index());
     ui.set_custom_game_args(custom_game_args.into());
     ui.set_launch_options_save_text(save_text.into());
+    apply_launch_options_to_view(ui, launch_options, ui.get_custom_game_args().to_string());
+}
+
+fn latest_release_metadata(
+    latest_release: &Arc<Mutex<Option<PlatformRelease>>>,
+) -> Option<PlatformRelease> {
+    latest_release
+        .lock()
+        .expect("latest release lock poisoned")
+        .clone()
+}
+
+fn release_recommended_game_args(release: Option<&PlatformRelease>) -> Vec<String> {
+    release
+        .and_then(|release| release.launch_options.as_ref())
+        .map(recommended_launch_option_args)
+        .unwrap_or_default()
+}
+
+fn recommended_launch_option_args(launch_options: &ManifestLaunchOptions) -> Vec<String> {
+    launch_options
+        .game_arguments
+        .iter()
+        .flat_map(|argument| match argument.recommended {
+            Some(recommended) if recommended != argument.default => {
+                vec![argument.flag.clone(), recommended.to_string()]
+            }
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn launch_options_view_state(
+    config: &LauncherConfig,
+    release: Option<&PlatformRelease>,
+) -> (Vec<LaunchOptionView>, String) {
+    let Some(manifest_options) = release.and_then(|release| release.launch_options.as_ref()) else {
+        let extra_args = if matches!(config.launch_arguments_mode, LaunchArgumentsMode::Custom) {
+            config.game_args.join(" ")
+        } else {
+            config.game_args.join(" ")
+        };
+        return (Vec::new(), extra_args);
+    };
+
+    let (values, extra_args) = match config.launch_arguments_mode {
+        LaunchArgumentsMode::GameDefaults => (
+            manifest_options
+                .game_arguments
+                .iter()
+                .map(|argument| argument.default)
+                .collect(),
+            config.game_args.clone(),
+        ),
+        LaunchArgumentsMode::Recommended => (
+            manifest_options
+                .game_arguments
+                .iter()
+                .map(|argument| argument.recommended.unwrap_or(argument.default))
+                .collect(),
+            config.game_args.clone(),
+        ),
+        LaunchArgumentsMode::Custom => parse_known_game_args(
+            manifest_options,
+            &config.game_args,
+            default_launch_option_values(manifest_options),
+        ),
+    };
+
+    (
+        manifest_options
+            .game_arguments
+            .iter()
+            .zip(values)
+            .map(|(argument, checked)| LaunchOptionView {
+                name: argument.name.clone().into(),
+                flag: argument.flag.clone().into(),
+                checked,
+            })
+            .collect(),
+        quote_args_for_display(&extra_args),
+    )
+}
+
+fn apply_launch_arguments_mode_to_view(
+    ui: &AppWindow,
+    config: &LauncherConfig,
+    release: Option<&PlatformRelease>,
+    mode: LaunchArgumentsMode,
+    extra_args: String,
+) {
+    ui.set_launch_arguments_mode(mode.ui_index());
+
+    if matches!(mode, LaunchArgumentsMode::Custom) {
+        return;
+    }
+
+    let preview_config = LauncherConfig {
+        launch_arguments_mode: mode,
+        game_args: config.game_args.clone(),
+        ..config.clone()
+    };
+    let (options, _) = launch_options_view_state(&preview_config, release);
+    apply_launch_options_to_view(ui, options, extra_args);
+}
+
+fn apply_launch_options_to_view(
+    ui: &AppWindow,
+    options: Vec<LaunchOptionView>,
+    extra_args: String,
+) {
+    let state = launch_options_state(&options);
+    ui.set_launch_option_min_width_px(132.0);
+    ui.set_launch_options(ModelRc::new(VecModel::from(options)));
+    ui.set_launch_options_state(state.into());
+    ui.set_custom_game_args(extra_args.into());
+}
+
+fn launch_options_from_model(ui: &AppWindow) -> Vec<LaunchOptionView> {
+    let model = ui.get_launch_options();
+    (0..model.row_count())
+        .filter_map(|index| model.row_data(index))
+        .collect()
+}
+
+fn launch_options_state(options: &[LaunchOptionView]) -> String {
+    options
+        .iter()
+        .map(|option| if option.checked { '1' } else { '0' })
+        .collect()
+}
+
+fn launch_options_game_args(
+    ui: &AppWindow,
+    release: Option<&PlatformRelease>,
+) -> Result<Vec<String>, String> {
+    let mut args = if LaunchArgumentsMode::from_ui_index(ui.get_launch_arguments_mode())
+        == LaunchArgumentsMode::Custom
+    {
+        known_launch_options_game_args(ui, release)
+    } else {
+        Vec::new()
+    };
+    let extra_args = game_launch::parse_command_line(ui.get_custom_game_args().trim())
+        .map_err(|error| format!("Could not parse extra arguments: {error}"))?;
+    args.extend(extra_args);
+    Ok(args)
+}
+
+fn known_launch_options_game_args(
+    ui: &AppWindow,
+    release: Option<&PlatformRelease>,
+) -> Vec<String> {
+    let Some(manifest_options) = release.and_then(|release| release.launch_options.as_ref()) else {
+        return Vec::new();
+    };
+
+    launch_options_from_model(ui)
+        .into_iter()
+        .zip(manifest_options.game_arguments.iter())
+        .flat_map(|(option, argument)| {
+            if option.checked == argument.default {
+                Vec::new()
+            } else {
+                vec![argument.flag.clone(), option.checked.to_string()]
+            }
+        })
+        .collect()
+}
+
+fn default_launch_option_values(launch_options: &ManifestLaunchOptions) -> Vec<bool> {
+    launch_options
+        .game_arguments
+        .iter()
+        .map(|argument| argument.default)
+        .collect()
+}
+
+fn parse_known_game_args(
+    launch_options: &ManifestLaunchOptions,
+    args: &[String],
+    mut values: Vec<bool>,
+) -> (Vec<bool>, Vec<String>) {
+    let mut extra_args = Vec::new();
+    let mut index = 0;
+
+    while index < args.len() {
+        let arg = &args[index];
+        let Some(option_index) = launch_options
+            .game_arguments
+            .iter()
+            .position(|option| option.flag == *arg)
+        else {
+            extra_args.push(arg.clone());
+            index += 1;
+            continue;
+        };
+
+        let mut value = true;
+        if let Some(next) = args.get(index + 1) {
+            match next.to_ascii_lowercase().as_str() {
+                "true" => {
+                    value = true;
+                    index += 1;
+                }
+                "false" => {
+                    value = false;
+                    index += 1;
+                }
+                _ => {}
+            }
+        }
+
+        values[option_index] = value;
+        index += 1;
+    }
+
+    (values, extra_args)
+}
+
+fn quote_args_for_display(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| quote_arg_for_display(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn quote_arg_for_display(arg: &str) -> String {
+    if arg.is_empty() {
+        return "\"\"".to_string();
+    }
+
+    if !arg.chars().any(char::is_whitespace) && !arg.contains('"') && !arg.contains('\\') {
+        return arg.to_string();
+    }
+
+    format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn home_view_state(

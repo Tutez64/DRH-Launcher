@@ -102,6 +102,7 @@ mod tests {
             name: "Dungeon Rampage Haxe V9".to_string(),
             html_url: "https://example.test/V9".to_string(),
             metadata_source: ReleaseMetadataSource::GitHubAssetFallback,
+            launch_options: None,
             asset: ReleaseAsset {
                 platform_id: "linux-x64".to_string(),
                 name: "Dungeon.Rampage.Haxe.V9.Linux.tar.gz".to_string(),

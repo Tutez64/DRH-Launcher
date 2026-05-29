@@ -200,6 +200,7 @@ mod tests {
             name: format!("Dungeon Rampage Haxe {version}"),
             html_url: format!("https://example.test/{version}"),
             metadata_source: ReleaseMetadataSource::GitHubAssetFallback,
+            launch_options: None,
             asset: ReleaseAsset {
                 platform_id: "linux-x64".to_string(),
                 name: format!("Dungeon.Rampage.Haxe.{version}.Linux.tar.gz"),

@@ -5,7 +5,10 @@ use crate::config::LauncherConfig;
 use crate::game_install::{game_executable_names, is_game_executable};
 use crate::paths;
 
-pub fn launch_game(config: &LauncherConfig) -> Result<Child, String> {
+pub fn launch_game_with_recommended_args(
+    config: &LauncherConfig,
+    recommended_game_args: &[String],
+) -> Result<Child, String> {
     let install_dir = config
         .install_dir
         .as_deref()
@@ -15,7 +18,7 @@ pub fn launch_game(config: &LauncherConfig) -> Result<Child, String> {
 
     let pre_launch_command = parse_command_line(&config.pre_launch_command)
         .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
-    let game_args = config.effective_game_args();
+    let game_args = config.effective_game_args_with_recommended(recommended_game_args);
 
     let mut command = if !pre_launch_command.is_empty() {
         let mut command = Command::new(&pre_launch_command[0]);
@@ -43,6 +46,13 @@ pub fn launch_game(config: &LauncherConfig) -> Result<Child, String> {
 }
 
 pub fn launch_command_summary(config: &LauncherConfig) -> Result<String, String> {
+    launch_command_summary_with_recommended_args(config, &[])
+}
+
+pub fn launch_command_summary_with_recommended_args(
+    config: &LauncherConfig,
+    recommended_game_args: &[String],
+) -> Result<String, String> {
     let install_dir = config
         .install_dir
         .as_deref()
@@ -51,7 +61,7 @@ pub fn launch_command_summary(config: &LauncherConfig) -> Result<String, String>
     let executable = find_game_executable(&game_dir)?;
     let pre_launch_command = parse_command_line(&config.pre_launch_command)
         .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
-    let game_args = config.effective_game_args();
+    let game_args = config.effective_game_args_with_recommended(recommended_game_args);
 
     let mut parts = Vec::new();
     if !pre_launch_command.is_empty() {

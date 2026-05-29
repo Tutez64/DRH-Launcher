@@ -7,6 +7,8 @@ use crate::platform::Platform;
 pub struct ReleaseManifest {
     pub version: String,
     pub platforms: HashMap<String, ManifestPlatform>,
+    #[serde(default)]
+    pub launch_options: Option<ManifestLaunchOptions>,
 }
 
 impl ReleaseManifest {
@@ -31,6 +33,23 @@ pub struct ManifestPlatform {
     pub archive: String,
     pub sha256: String,
     pub size: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ManifestLaunchOptions {
+    #[serde(default)]
+    pub game_arguments: Vec<ManifestGameArgument>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ManifestGameArgument {
+    pub name: String,
+    pub flag: String,
+    pub default: bool,
+    #[serde(default)]
+    pub recommended: Option<bool>,
+    #[serde(default)]
+    pub config_key: Option<String>,
 }
 
 pub fn is_manifest_asset_name(name: &str, version: &str) -> bool {
@@ -60,6 +79,22 @@ mod tests {
                         "sha256": "abc123",
                         "size": 123
                     }
+                },
+                "launch_options": {
+                    "game_arguments": [
+                        {
+                            "name": "want-zoom",
+                            "flag": "--want-zoom",
+                            "default": false,
+                            "recommended": true
+                        },
+                        {
+                            "name": "quality-control-button",
+                            "flag": "--quality-control-button",
+                            "default": true,
+                            "config_key": "quality-control-button"
+                        }
+                    ]
                 }
             }"#,
         )
@@ -71,6 +106,14 @@ mod tests {
         assert_eq!(platform.archive, "Dungeon.Rampage.Haxe.V3.Linux.tar.gz");
         assert_eq!(platform.sha256, "abc123");
         assert_eq!(platform.size, 123);
+        let launch_options = manifest.launch_options.unwrap();
+        assert_eq!(launch_options.game_arguments.len(), 2);
+        assert_eq!(launch_options.game_arguments[0].flag, "--want-zoom");
+        assert_eq!(launch_options.game_arguments[0].recommended, Some(true));
+        assert_eq!(
+            launch_options.game_arguments[1].config_key.as_deref(),
+            Some("quality-control-button")
+        );
     }
 
     #[test]

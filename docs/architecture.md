@@ -195,10 +195,8 @@ Passing a flag without a value enables it. Passing `false` disables it, includin
 Known game arguments should eventually be described by release metadata rather than parsed from source code at runtime. The UI currently exposes launch arguments as an explicit mode:
 
 - `Game defaults`: launch DRH without extra launcher-provided game arguments.
-- `DRHL recommended`: the launcher default. Until recommendation metadata exists, this currently adds no extra game arguments.
+- `DRHL recommended`: the launcher default, built from per-argument `recommended` values in the release manifest.
 - `Custom`: use the manually entered argument string.
-
-Once release metadata exists, the UI can replace the temporary metadata notice with selectable known arguments and project-maintained recommendations.
 
 The source of truth in DRH is currently the constructor of `src/brain/utils/FeatureFlags.hx`, where feature flags and their default `true` / `false` values are listed.
 
@@ -307,16 +305,33 @@ When available, a release manifest should describe the release state explicitly.
       "sha256": "...",
       "size": 123456
     }
+  },
+  "launch_options": {
+    "game_arguments": [
+      {
+        "name": "want-zoom",
+        "flag": "--want-zoom",
+        "default": false,
+        "recommended": true
+      },
+      {
+        "name": "use-hd-assets",
+        "flag": "--experimental-use-hd-assets",
+        "default": false,
+        "config_key": "experimental_use_hd_assets"
+      }
+    ]
   }
 }
 ```
+
+`config_key` is optional. It records the matching DRH JSON configuration key when it differs from `name`; DRH Launcher still launches with `flag`.
+`recommended` is optional on each game argument. When omitted, DRH Launcher treats the recommended value as equal to `default`.
 
 DRH Launcher resolves `archive` against the GitHub release assets. For the first implementation, manifests should not point to arbitrary external download URLs.
 
 Later versions of the manifest can add:
 
-- game feature flags
-- recommended launch arguments
 - pack definitions
 - compatibility metadata
 - release channels

@@ -85,16 +85,20 @@ impl LaunchArgumentsMode {
 
 impl LauncherConfig {
     pub fn effective_game_args(&self) -> Vec<String> {
+        self.effective_game_args_with_recommended(&[])
+    }
+
+    pub fn effective_game_args_with_recommended(&self, recommended: &[String]) -> Vec<String> {
         match self.launch_arguments_mode {
-            LaunchArgumentsMode::GameDefaults => Vec::new(),
-            LaunchArgumentsMode::Recommended => recommended_game_args(),
+            LaunchArgumentsMode::GameDefaults => self.game_args.clone(),
+            LaunchArgumentsMode::Recommended => {
+                let mut args = recommended.to_vec();
+                args.extend(self.game_args.clone());
+                args
+            }
             LaunchArgumentsMode::Custom => self.game_args.clone(),
         }
     }
-}
-
-fn recommended_game_args() -> Vec<String> {
-    Vec::new()
 }
 
 #[cfg(test)]
@@ -123,6 +127,29 @@ mod tests {
         assert_eq!(
             config.effective_game_args(),
             vec!["--want-zoom".to_string(), "true".to_string()]
+        );
+    }
+
+    #[test]
+    fn recommended_launch_arguments_can_come_from_release_metadata() {
+        let config = LauncherConfig::default();
+
+        assert_eq!(
+            config.effective_game_args_with_recommended(&["--want-zoom".to_string()]),
+            vec!["--want-zoom".to_string()]
+        );
+    }
+
+    #[test]
+    fn non_custom_modes_append_saved_extra_arguments() {
+        let config = LauncherConfig {
+            game_args: vec!["--debug".to_string()],
+            ..LauncherConfig::default()
+        };
+
+        assert_eq!(
+            config.effective_game_args_with_recommended(&["--want-zoom".to_string()]),
+            vec!["--want-zoom".to_string(), "--debug".to_string()]
         );
     }
 }
