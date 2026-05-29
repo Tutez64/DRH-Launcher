@@ -6,6 +6,11 @@ export struct LaunchOptionView {
     checked: bool,
 }
 
+export struct LogLineView {
+    text: string,
+    color: brush,
+}
+
 component PrimaryButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
@@ -363,7 +368,7 @@ export component AppWindow inherits Window {
     in property <bool> update-check-enabled: true;
     in property <string> home-support-text;
     in property <string> status-detail;
-    in property <string> logs-content;
+    in property <[LogLineView]> log-lines;
     in property <string> launcher-version;
     in property <string> release-source-label;
     in property <string> config-path;
@@ -858,7 +863,7 @@ export component AppWindow inherits Window {
                                         horizontal-stretch: 1;
                                         vertical-stretch: 1;
                                         viewport-width: self.width;
-                                        viewport-height: log-text.height;
+                                        viewport-height: log-lines-layout.preferred-height;
 
                                         changed viewport-y => {
                                             if (root.logs-scroll-ticks >= 2 && root.logs-restore-ticks > 0) {
@@ -866,12 +871,18 @@ export component AppWindow inherits Window {
                                             }
                                         }
 
-                                        log-text := Text {
-                                            text: root.logs-content;
+                                        log-lines-layout := VerticalLayout {
                                             width: parent.viewport-width;
-                                            font-size: 13px;
-                                            color: #ead8ca;
-                                            wrap: word-wrap;
+                                            min-width: 0px;
+                                            spacing: 2px;
+
+                                            for line in root.log-lines: Text {
+                                                text: line.text;
+                                                width: parent.width;
+                                                font-size: 13px;
+                                                color: line.color;
+                                                wrap: word-wrap;
+                                            }
                                         }
                                     }
 
@@ -883,7 +894,7 @@ export component AppWindow inherits Window {
                                             log-scroll.viewport-y = -100000px;
                                             root.logs-scroll-ticks += 1;
                                             if (root.logs-scroll-ticks >= 2) {
-                                                root.logs-viewport-y = Math.min(0px, log-scroll.height - log-text.height);
+                                                root.logs-viewport-y = Math.min(0px, log-scroll.height - log-lines-layout.preferred-height);
                                                 root.logs-restore-ticks = 1;
                                             }
                                         }

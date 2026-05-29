@@ -38,7 +38,7 @@ use installer::install_extracted_archive;
 use platform::Platform;
 use release_manifest::ManifestLaunchOptions;
 use release_source::ReleaseSource;
-use slint::{Model, ModelRc, Timer, TimerMode, VecModel};
+use slint::{Brush, Color, Model, ModelRc, Timer, TimerMode, VecModel};
 
 slint::include_modules!();
 
@@ -53,7 +53,7 @@ struct HomeViewState {
     open_install_folder_enabled: bool,
     open_logs_folder_enabled: bool,
     status_detail: String,
-    logs_content: String,
+    log_lines: Vec<LogLineView>,
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -1059,7 +1059,7 @@ fn home_view_state(
         open_install_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
         open_logs_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
         status_detail: status_detail(activity_message),
-        logs_content: logs_content(config),
+        log_lines: log_lines(config),
     };
 
     if let Some(release) = latest_release {
@@ -1126,20 +1126,43 @@ fn apply_home_view_state(ui: &AppWindow, state: HomeViewState) {
     ui.set_open_install_folder_enabled(state.open_install_folder_enabled);
     ui.set_open_logs_folder_enabled(state.open_logs_folder_enabled);
     ui.set_status_detail(state.status_detail.into());
-    ui.set_logs_content(state.logs_content.into());
+    ui.set_log_lines(ModelRc::new(VecModel::from(state.log_lines)));
 }
 
 fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
-    ui.set_logs_content(logs_content(config).into());
+    ui.set_log_lines(ModelRc::new(VecModel::from(log_lines(config))));
 }
 
-fn logs_content(config: &LauncherConfig) -> String {
+fn log_lines(config: &LauncherConfig) -> Vec<LogLineView> {
     let Some(install_dir) = config.install_dir.as_deref() else {
-        return "No install directory selected.".to_string();
+        return log_lines_from_text("No install directory selected.");
     };
 
-    diagnostics::read_recent(install_dir)
-        .unwrap_or_else(|error| format!("Could not read launcher log: {error}"))
+    let content = diagnostics::read_recent(install_dir)
+        .unwrap_or_else(|error| format!("Could not read launcher log: {error}"));
+    log_lines_from_text(&content)
+}
+
+fn log_lines_from_text(content: &str) -> Vec<LogLineView> {
+    content
+        .lines()
+        .map(|line| LogLineView {
+            text: line.into(),
+            color: log_line_color(line),
+        })
+        .collect()
+}
+
+fn log_line_color(line: &str) -> Brush {
+    if line.contains("[ERROR]") {
+        Color::from_rgb_u8(255, 108, 82).into()
+    } else if line.contains("[WARN]") {
+        Color::from_rgb_u8(240, 194, 102).into()
+    } else if line.contains("[INFO]") {
+        Color::from_rgb_u8(201, 216, 205).into()
+    } else {
+        Color::from_rgb_u8(234, 216, 202).into()
+    }
 }
 
 fn log_for_config(config: &LauncherConfig, level: diagnostics::LogLevel, message: &str) {
