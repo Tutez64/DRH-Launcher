@@ -22,6 +22,10 @@ pub fn downloads_dir(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("downloads")
 }
 
+pub fn download_cache_index_file(install_dir: &std::path::Path) -> PathBuf {
+    downloads_dir(install_dir).join("cache.txt")
+}
+
 pub fn staging_dir(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("staging")
 }

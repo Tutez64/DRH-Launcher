@@ -227,6 +227,7 @@ mod tests {
             path,
             sha256: "unused".to_string(),
             size: 0,
+            reused: false,
         }
     }
 

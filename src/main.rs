@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use archive::extract_to_staging;
 use config::{LaunchArgumentsMode, LauncherConfig};
-use download::{DownloadProgress, download_and_verify_with_progress};
+use download::{DownloadProgress, download_and_verify_with_progress, update_download_cache};
 use game_install::inspect_install;
 use github_releases::{
     PlatformRelease, ReleaseMetadataSource, discover_latest_platform_release,
@@ -299,14 +299,30 @@ fn main() -> Result<(), slint::PlatformError> {
                                     report_background_activity(&ui, message);
                                 }
                             },
+                            |cache_error| {
+                                let _ = diagnostics::write(
+                                    &install_dir,
+                                    diagnostics::LogLevel::Warn,
+                                    &cache_error,
+                                );
+                            },
                         ) {
                             Ok(download) => {
-                                let verified_message = format!(
-                                    "Download verified: {} ({} bytes, sha256:{})",
-                                    download.path.display(),
-                                    download.size,
-                                    download.sha256
-                                );
+                                let verified_message = if download.reused {
+                                    format!(
+                                        "Reused cached archive: {} ({} bytes, sha256:{})",
+                                        download.path.display(),
+                                        download.size,
+                                        download.sha256
+                                    )
+                                } else {
+                                    format!(
+                                        "Download verified: {} ({} bytes, sha256:{})",
+                                        download.path.display(),
+                                        download.size,
+                                        download.sha256
+                                    )
+                                };
                                 let _ = diagnostics::write(
                                     &install_dir,
                                     diagnostics::LogLevel::Info,
@@ -340,6 +356,31 @@ fn main() -> Result<(), slint::PlatformError> {
                                             &release_source,
                                         ) {
                                             Ok(installed) => {
+                                                match update_download_cache(
+                                                    &install_dir,
+                                                    &release.asset.name,
+                                                    config.download_cache_limit,
+                                                ) {
+                                                    Ok(removed) => {
+                                                        for archive in removed {
+                                                            let _ = diagnostics::write(
+                                                                &install_dir,
+                                                                diagnostics::LogLevel::Info,
+                                                                &format!(
+                                                                    "Removed cached archive {}.",
+                                                                    archive.display()
+                                                                ),
+                                                            );
+                                                        }
+                                                    }
+                                                    Err(error) => {
+                                                        let _ = diagnostics::write(
+                                                            &install_dir,
+                                                            diagnostics::LogLevel::Warn,
+                                                            &error,
+                                                        );
+                                                    }
+                                                }
                                                 let message = format!(
                                                     "Installed {}. Previous version: {}",
                                                     installed.active.version,

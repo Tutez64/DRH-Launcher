@@ -9,6 +9,8 @@ use crate::paths;
 pub struct LauncherConfig {
     pub install_dir: Option<PathBuf>,
     pub channel: ReleaseChannel,
+    #[serde(default = "default_download_cache_limit")]
+    pub download_cache_limit: usize,
     pub pre_launch_command: String,
     #[serde(default)]
     pub launch_arguments_mode: LaunchArgumentsMode,
@@ -20,11 +22,16 @@ impl Default for LauncherConfig {
         Self {
             install_dir: None,
             channel: ReleaseChannel::Stable,
+            download_cache_limit: default_download_cache_limit(),
             pre_launch_command: String::new(),
             launch_arguments_mode: LaunchArgumentsMode::Recommended,
             game_args: Vec::new(),
         }
     }
+}
+
+pub fn default_download_cache_limit() -> usize {
+    3
 }
 
 impl LauncherConfig {

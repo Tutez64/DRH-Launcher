@@ -244,12 +244,15 @@ Each downloadable artifact must have:
 
 The update flow should be defensive:
 
-1. Download to a cache/downloads directory.
-2. Verify SHA-256.
-3. Extract to a staging directory.
-4. Validate expected files.
-5. Replace the existing game directory.
-6. Keep enough state for rollback or recovery.
+1. Reuse a matching cached archive from `data/downloads/` when present.
+2. Download to `data/downloads/` when no valid cached archive exists.
+3. Verify size and SHA-256 before extraction.
+4. Extract to a staging directory.
+5. Validate expected files.
+6. Replace the existing game directory.
+7. Keep enough state for rollback or recovery.
+
+Downloaded archives are cache entries. DRH Launcher records recently used archives in `data/downloads/cache.txt` and prunes older entries according to `config.json.download_cache_limit`, which defaults to `3`.
 
 The launcher should not patch the running game process.
 

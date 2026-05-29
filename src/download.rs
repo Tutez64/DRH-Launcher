@@ -15,6 +15,7 @@ pub struct VerifiedDownload {
     pub path: PathBuf,
     pub sha256: String,
     pub size: u64,
+    pub reused: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,6 +28,7 @@ pub fn download_and_verify_with_progress(
     asset: &ReleaseAsset,
     install_dir: &Path,
     mut on_progress: impl FnMut(DownloadProgress),
+    mut on_cache_error: impl FnMut(String),
 ) -> Result<VerifiedDownload, String> {
     let expected_sha256 = expected_sha256(asset)?;
     let downloads_dir = paths::downloads_dir(install_dir);
@@ -39,6 +41,19 @@ pub fn download_and_verify_with_progress(
 
     let final_path = downloads_dir.join(&asset.name);
     let temp_path = downloads_dir.join(format!("{}.download", asset.name));
+
+    if final_path.exists() {
+        match verify_cached_archive(&final_path, asset, &expected_sha256) {
+            Ok(download) => return Ok(download),
+            Err(error) => {
+                on_cache_error(format!(
+                    "Discarding invalid cached archive {}: {error}",
+                    final_path.display()
+                ));
+                let _ = fs::remove_file(&final_path);
+            }
+        }
+    }
 
     let client = Client::builder()
         .timeout(Duration::from_secs(60))
@@ -112,7 +127,110 @@ pub fn download_and_verify_with_progress(
         path: final_path,
         sha256: actual_sha256,
         size: bytes_written,
+        reused: false,
     })
+}
+
+fn verify_cached_archive(
+    path: &Path,
+    asset: &ReleaseAsset,
+    expected_sha256: &str,
+) -> Result<VerifiedDownload, String> {
+    let metadata =
+        fs::metadata(path).map_err(|error| format!("Could not inspect cached archive: {error}"))?;
+    if metadata.len() != asset.size {
+        return Err(format!(
+            "size mismatch, expected {} bytes, got {} bytes",
+            asset.size,
+            metadata.len()
+        ));
+    }
+
+    let actual_sha256 =
+        sha256_file(path).map_err(|error| format!("Could not hash cached archive: {error}"))?;
+    if actual_sha256 != expected_sha256 {
+        return Err(format!(
+            "SHA-256 mismatch, expected {}, got {}",
+            expected_sha256, actual_sha256
+        ));
+    }
+
+    Ok(VerifiedDownload {
+        path: path.to_path_buf(),
+        sha256: actual_sha256,
+        size: metadata.len(),
+        reused: true,
+    })
+}
+
+pub fn update_download_cache(
+    install_dir: &Path,
+    archive_name: &str,
+    limit: usize,
+) -> Result<Vec<PathBuf>, String> {
+    let downloads_dir = paths::downloads_dir(install_dir);
+    fs::create_dir_all(&downloads_dir).map_err(|error| {
+        format!(
+            "Could not create downloads directory {}: {error}",
+            downloads_dir.display()
+        )
+    })?;
+
+    let mut cache = read_download_cache_index(install_dir);
+    cache.retain(|name| name != archive_name);
+    cache.insert(0, archive_name.to_string());
+    cache.truncate(limit);
+
+    let cache_file = paths::download_cache_index_file(install_dir);
+    fs::write(&cache_file, cache.join("\n"))
+        .map_err(|error| format!("Could not write {}: {error}", cache_file.display()))?;
+
+    prune_downloads_dir(&downloads_dir, &cache)
+}
+
+fn read_download_cache_index(install_dir: &Path) -> Vec<String> {
+    fs::read_to_string(paths::download_cache_index_file(install_dir))
+        .map(|contents| {
+            contents
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn prune_downloads_dir(downloads_dir: &Path, keep: &[String]) -> Result<Vec<PathBuf>, String> {
+    let mut removed = Vec::new();
+    let keep = keep.iter().map(String::as_str).collect::<Vec<_>>();
+    for entry in fs::read_dir(downloads_dir)
+        .map_err(|error| format!("Could not read {}: {error}", downloads_dir.display()))?
+    {
+        let entry =
+            entry.map_err(|error| format!("Could not read download cache entry: {error}"))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name == "cache.txt" || name.ends_with(".download") || keep.contains(&name) {
+            continue;
+        }
+
+        fs::remove_file(&path).map_err(|error| {
+            format!(
+                "Could not remove cached archive {}: {error}",
+                path.display()
+            )
+        })?;
+        removed.push(path);
+    }
+
+    Ok(removed)
 }
 
 pub fn expected_sha256(asset: &ReleaseAsset) -> Result<String, String> {
@@ -189,6 +307,48 @@ mod tests {
         assert_eq!(
             digest,
             "d7f08e6a07ee091d21cbbd9702c217f75dcb26418edd45ac3c7345f5ebc70686"
+        );
+    }
+
+    #[test]
+    fn verifies_matching_cached_archive() {
+        let temp = tempdir().unwrap();
+        let archive_path = temp.path().join("test.tar.gz");
+        fs::write(&archive_path, b"cached archive").unwrap();
+        let sha256 = sha256_file(&archive_path).unwrap();
+        let asset = test_asset(Some(&format!("sha256:{sha256}")), 14);
+
+        let verified = verify_cached_archive(&archive_path, &asset, &sha256).unwrap();
+
+        assert!(verified.reused);
+        assert_eq!(verified.path, archive_path);
+        assert_eq!(verified.sha256, sha256);
+        assert_eq!(verified.size, 14);
+    }
+
+    #[test]
+    fn prunes_download_cache_to_recent_archives() {
+        let temp = tempdir().unwrap();
+        let downloads_dir = paths::downloads_dir(temp.path());
+        fs::create_dir_all(&downloads_dir).unwrap();
+        fs::write(downloads_dir.join("A.tar.gz"), b"a").unwrap();
+        fs::write(downloads_dir.join("B.tar.gz"), b"b").unwrap();
+        fs::write(downloads_dir.join("C.tar.gz"), b"c").unwrap();
+        fs::write(
+            paths::download_cache_index_file(temp.path()),
+            "B.tar.gz\nC.tar.gz\n",
+        )
+        .unwrap();
+
+        let removed = update_download_cache(temp.path(), "A.tar.gz", 2).unwrap();
+
+        assert!(downloads_dir.join("A.tar.gz").exists());
+        assert!(downloads_dir.join("B.tar.gz").exists());
+        assert!(!downloads_dir.join("C.tar.gz").exists());
+        assert_eq!(removed, vec![downloads_dir.join("C.tar.gz")]);
+        assert_eq!(
+            fs::read_to_string(paths::download_cache_index_file(temp.path())).unwrap(),
+            "A.tar.gz\nB.tar.gz"
         );
     }
 
