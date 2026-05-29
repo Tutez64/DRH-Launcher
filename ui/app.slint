@@ -576,18 +576,17 @@ export component AppWindow inherits Window {
                     horizontal-stretch: 1;
                     vertical-stretch: 1;
 
-                    options-page-scroll := ScrollView {
-                        width: parent.width;
-                        height: parent.height;
-                        viewport-width: self.width;
-                        viewport-height: max(options-page-content.preferred-height, self.height);
+                    VerticalLayout {
+                        spacing: 16px;
 
-                        options-page-content := VerticalLayout {
-                            width: options-page-scroll.width;
-                            height: max(self.preferred-height, options-page-scroll.height);
-                            spacing: 16px;
+                        options-page-scroll := ScrollView {
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+                            viewport-width: self.width;
+                            viewport-height: options-page-content.preferred-height;
 
-                            VerticalLayout {
+                            options-page-content := VerticalLayout {
+                                width: options-page-scroll.width;
                                 spacing: 12px;
 
                                 LaunchTextField {
@@ -687,40 +686,35 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                        }
 
-                            Rectangle {
-                                vertical-stretch: 1;
-                            }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: end;
 
-                            HorizontalLayout {
-                                spacing: 10px;
-                                alignment: end;
-
-                                SecondaryButton {
-                                    text: "Cancel";
-                                    enabled: root.launch-options-dirty;
-                                    clicked => {
-                                        root.cancel-launch-options();
-                                    }
-                                }
-
-                                PrimaryButton {
-                                    text: root.launch-options-dirty ? "Save" : root.launch-options-save-text;
-                                    enabled: root.launch-options-dirty;
-                                    clicked => {
-                                        root.save-launch-options();
-                                    }
+                            SecondaryButton {
+                                text: "Cancel";
+                                enabled: root.launch-options-dirty;
+                                clicked => {
+                                    root.cancel-launch-options();
                                 }
                             }
 
-                            reset-save-button := Timer {
-                                interval: 2s;
-                                running: root.launch-options-save-text != "Save";
-                                triggered => {
-                                    root.launch-options-save-text = "Save";
+                            PrimaryButton {
+                                text: root.launch-options-dirty ? "Save" : root.launch-options-save-text;
+                                enabled: root.launch-options-dirty;
+                                clicked => {
+                                    root.save-launch-options();
                                 }
                             }
+                        }
 
+                        reset-save-button := Timer {
+                            interval: 2s;
+                            running: root.launch-options-save-text != "Save";
+                            triggered => {
+                                root.launch-options-save-text = "Save";
+                            }
                         }
                     }
                 }
