@@ -272,6 +272,9 @@ component LaunchOptionToggle inherits Rectangle {
 
 component InfoHint inherits Rectangle {
     in property <string> text;
+    property <bool> hovering: touch.has-hover;
+    callback show-tooltip(string, length, length);
+    callback hide-tooltip();
 
     z: 10;
     width: 20px;
@@ -290,26 +293,11 @@ component InfoHint inherits Rectangle {
         vertical-alignment: center;
     }
 
-    Rectangle {
-        z: 20;
-        x: -74px;
-        y: -1 * self.height - 14px;
-        width: 390px;
-        height: hint-text.preferred-height + 16px;
-        border-radius: 6px;
-        border-width: 1px;
-        border-color: #6d3327;
-        background: #20171a;
-        visible: touch.has-hover;
-
-        hint-text := Text {
-            x: 10px;
-            y: 8px;
-            width: parent.width - 20px;
-            text: root.text;
-            color: #ead8ca;
-            font-size: 12px;
-            wrap: word-wrap;
+    changed hovering => {
+        if (root.hovering) {
+            root.show-tooltip(root.text, root.absolute-position.x, root.absolute-position.y);
+        } else {
+            root.hide-tooltip();
         }
     }
 
@@ -401,6 +389,10 @@ export component AppWindow inherits Window {
     property <int> logs-scroll-ticks: 0;
     property <int> logs-restore-ticks: 0;
     in-out property <length> logs-viewport-y: 0px;
+    property <bool> info-tooltip-visible: false;
+    property <string> info-tooltip-text;
+    property <length> info-tooltip-anchor-x: 0px;
+    property <length> info-tooltip-anchor-y: 0px;
 
     callback install-or-play();
     callback check-updates();
@@ -609,6 +601,15 @@ export component AppWindow inherits Window {
 
                                         InfoHint {
                                             text: "These are original Dungeon Rampage launch options.\nGame defaults uses the game's own defaults.\nDRHL recommended is the launcher default.\nCustom lets you adjust known options manually.";
+                                            show-tooltip(text, x, y) => {
+                                                root.info-tooltip-text = text;
+                                                root.info-tooltip-anchor-x = x;
+                                                root.info-tooltip-anchor-y = y;
+                                                root.info-tooltip-visible = true;
+                                            }
+                                            hide-tooltip => {
+                                                root.info-tooltip-visible = false;
+                                            }
                                         }
                                     }
 
@@ -960,6 +961,29 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    Rectangle {
+        z: 1000;
+        visible: root.info-tooltip-visible;
+        width: min(390px, root.width - 16px);
+        height: info-tooltip-text.preferred-height + 16px;
+        x: min(max(root.info-tooltip-anchor-x - 74px, 8px), root.width - self.width - 8px);
+        y: max(root.info-tooltip-anchor-y - self.height - 14px, 8px);
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: #6d3327;
+        background: #20171a;
+
+        info-tooltip-text := Text {
+            x: 10px;
+            y: 8px;
+            width: parent.width - 20px;
+            text: root.info-tooltip-text;
+            color: #ead8ca;
+            font-size: 12px;
+            wrap: word-wrap;
         }
     }
 }
