@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use reqwest::blocking::Client;
 use reqwest::header::USER_AGENT;
 use sha2::{Digest, Sha256};
@@ -23,13 +21,6 @@ pub struct VerifiedDownload {
 pub struct DownloadProgress {
     pub downloaded: u64,
     pub total: u64,
-}
-
-pub fn download_and_verify(
-    asset: &ReleaseAsset,
-    install_dir: &Path,
-) -> Result<VerifiedDownload, String> {
-    download_and_verify_with_progress(asset, install_dir, |_| {})
 }
 
 pub fn download_and_verify_with_progress(

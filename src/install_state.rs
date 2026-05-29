@@ -1,4 +1,3 @@
-#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InstallState {
     NotInstalled,

@@ -227,11 +227,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = diagnostics::write(&install_dir, diagnostics::LogLevel::Info, &initial_message);
             ui.set_install_action_enabled(false);
             ui.set_update_check_enabled(false);
-            ui.set_install_action_text(if release.is_some() {
-                "Downloading...".into()
-            } else {
-                "Checking...".into()
-            });
+            ui.set_install_action_text(InstallState::Updating.primary_action().into());
 
             let ui = ui.as_weak();
             let config = config.clone();
@@ -262,7 +258,6 @@ fn main() -> Result<(), slint::PlatformError> {
                         report_background_activity(
                             &ui,
                             format!("Found {}. Preparing download...", release.version),
-                            Some("Downloading..."),
                         );
                         let mut last_percent = None::<u64>;
                         let mut last_logged_percent = None::<u64>;
@@ -280,7 +275,6 @@ fn main() -> Result<(), slint::PlatformError> {
                                     report_background_activity(
                                         &ui,
                                         format_download_progress(&release.asset.name, &progress),
-                                        Some("Downloading..."),
                                     );
                                 }
                                 if should_log_download_progress(percent, last_logged_percent) {
@@ -302,20 +296,25 @@ fn main() -> Result<(), slint::PlatformError> {
                                         diagnostics::LogLevel::Info,
                                         &message,
                                     );
-                                    report_background_activity(&ui, message, Some("Verifying..."));
+                                    report_background_activity(&ui, message);
                                 }
                             },
                         ) {
                             Ok(download) => {
+                                let verified_message = format!(
+                                    "Download verified: {} ({} bytes, sha256:{})",
+                                    download.path.display(),
+                                    download.size,
+                                    download.sha256
+                                );
                                 let _ = diagnostics::write(
                                     &install_dir,
                                     diagnostics::LogLevel::Info,
-                                    "Download verified. Extracting archive.",
+                                    &verified_message,
                                 );
                                 report_background_activity(
                                     &ui,
                                     "Download verified. Extracting archive...".to_string(),
-                                    Some("Extracting..."),
                                 );
                                 match extract_to_staging(&download, &install_dir) {
                                     Ok(extracted) => {
@@ -327,7 +326,6 @@ fn main() -> Result<(), slint::PlatformError> {
                                         report_background_activity(
                                             &ui,
                                             "Archive extracted. Installing files...".to_string(),
-                                            Some("Installing..."),
                                         );
                                         match install_extracted_archive(
                                             &extracted,
@@ -551,12 +549,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
             let config = config.borrow();
             let installed_launch_options = load_installed_launch_options(&config);
-            refresh_launch_options_view(
-                &ui,
-                &config,
-                installed_launch_options.as_ref(),
-                "Save",
-            );
+            refresh_launch_options_view(&ui, &config, installed_launch_options.as_ref(), "Save");
         });
     }
 
@@ -711,7 +704,21 @@ fn start_release_check(
                     installed_launch_options.as_ref(),
                     "Save",
                 );
-                home_view_state(&config, None, &message)
+                let mut state = home_view_state(&config, None, &message);
+                if matches!(
+                    inspect_install(config.install_dir.as_deref()).state,
+                    InstallState::Installed
+                ) {
+                    state.install_status =
+                        "DRH is launchable, but update status is unknown".to_string();
+                    state.install_action_text = InstallState::LaunchableButMaybeOutdated
+                        .primary_action()
+                        .to_string();
+                    state.home_support_text =
+                        "Could not check for updates; installed DRH can still be launched."
+                            .to_string();
+                }
+                state
             };
             apply_home_view_state(&ui, state);
         });
@@ -1105,22 +1112,14 @@ fn installed_version_needs_update(installed_version: Option<&str>, latest_versio
         .is_some_and(|installed_version| installed_version.trim() != latest_version.trim())
 }
 
-fn report_background_activity(
-    ui: &slint::Weak<AppWindow>,
-    message: String,
-    action_text: Option<&str>,
-) {
+fn report_background_activity(ui: &slint::Weak<AppWindow>, message: String) {
     let ui = ui.clone();
-    let action_text = action_text.map(str::to_string);
     let _ = slint::invoke_from_event_loop(move || {
         let Some(ui) = ui.upgrade() else {
             return;
         };
 
         set_status_message(&ui, &message);
-        if let Some(action_text) = action_text {
-            ui.set_install_action_text(action_text.into());
-        }
     });
 }
 
