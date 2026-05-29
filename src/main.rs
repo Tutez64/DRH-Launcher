@@ -257,7 +257,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         );
                         report_background_activity(
                             &ui,
-                            format!("Found {}. Preparing download...", release.version),
+                            format!("Preparing download for {}...", release.version),
                         );
                         let mut last_percent = None::<u64>;
                         let mut last_logged_percent = None::<u64>;
@@ -290,7 +290,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                     && progress.downloaded == progress.total
                                 {
                                     reported_verification = true;
-                                    let message = "Verifying download.".to_string();
+                                    let message = "Verifying download...".to_string();
                                     let _ = diagnostics::write(
                                         &install_dir,
                                         diagnostics::LogLevel::Info,
@@ -314,7 +314,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 );
                                 report_background_activity(
                                     &ui,
-                                    "Download verified. Extracting archive...".to_string(),
+                                    "Extracting archive...".to_string(),
                                 );
                                 match extract_to_staging(&download, &install_dir) {
                                     Ok(extracted) => {
@@ -325,7 +325,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                         );
                                         report_background_activity(
                                             &ui,
-                                            "Archive extracted. Installing files...".to_string(),
+                                            "Installing files...".to_string(),
                                         );
                                         match install_extracted_archive(
                                             &extracted,
@@ -1219,39 +1219,12 @@ fn set_status_message(ui: &AppWindow, message: &str) {
 }
 
 fn home_support_text(version_text: &str, message: &str) -> String {
-    if message.starts_with("Ready.")
-        || message.starts_with("DRH is running")
-        || message == "Install folder opened."
-        || message == "Logs folder opened."
-    {
+    if message.starts_with("Ready.") || message.starts_with("DRH is running.") {
         return version_text.to_string();
     }
 
-    if message.starts_with("Downloading ") {
+    if is_progress_message(message) {
         return message.to_string();
-    }
-
-    if message.starts_with("Verifying download ") {
-        return message.to_string();
-    }
-
-    if message.starts_with("Checking ") {
-        return "Checking for updates.".to_string();
-    }
-
-    if let Some(release_version) = message
-        .strip_prefix("Found ")
-        .and_then(|message| message.split_once('.').map(|(version, _)| version))
-    {
-        return format!("Preparing download for {release_version}.");
-    }
-
-    if message.starts_with("Download verified.") {
-        return "Download verified. Extracting archive.".to_string();
-    }
-
-    if message.starts_with("Archive extracted.") {
-        return "Archive extracted. Installing files.".to_string();
     }
 
     if let Some(installed_version) = message
@@ -1277,19 +1250,16 @@ fn home_support_text(version_text: &str, message: &str) -> String {
         return "Action failed. Check logs for details.".to_string();
     }
 
-    let first_line = message.lines().next().unwrap_or(message).trim();
-    const MAX_SUMMARY_CHARS: usize = 92;
-    if first_line.chars().count() <= MAX_SUMMARY_CHARS {
-        first_line.to_string()
-    } else {
-        format!(
-            "{}...",
-            first_line
-                .chars()
-                .take(MAX_SUMMARY_CHARS.saturating_sub(3))
-                .collect::<String>()
-        )
-    }
+    version_text.to_string()
+}
+
+fn is_progress_message(message: &str) -> bool {
+    message.starts_with("Checking ")
+        || message.starts_with("Preparing download ")
+        || message.starts_with("Downloading ")
+        || message.starts_with("Verifying download")
+        || message.starts_with("Extracting archive")
+        || message.starts_with("Installing files")
 }
 
 fn status_detail(message: &str) -> String {
