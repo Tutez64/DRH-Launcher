@@ -45,10 +45,6 @@ pub fn launch_game_with_recommended_args(
         .map_err(|error| format!("Could not launch DRH: {error}"))
 }
 
-pub fn launch_command_summary(config: &LauncherConfig) -> Result<String, String> {
-    launch_command_summary_with_recommended_args(config, &[])
-}
-
 pub fn launch_command_summary_with_recommended_args(
     config: &LauncherConfig,
     recommended_game_args: &[String],
@@ -213,7 +209,7 @@ mod tests {
             ..LauncherConfig::default()
         };
 
-        let summary = launch_command_summary(&config).unwrap();
+        let summary = launch_command_summary_with_recommended_args(&config, &[]).unwrap();
 
         assert!(summary.contains(&quote_command_part(&executable.display().to_string())));
         assert!(summary.contains("'Dungeon Rampage'"));

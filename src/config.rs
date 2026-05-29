@@ -84,10 +84,6 @@ impl LaunchArgumentsMode {
 }
 
 impl LauncherConfig {
-    pub fn effective_game_args(&self) -> Vec<String> {
-        self.effective_game_args_with_recommended(&[])
-    }
-
     pub fn effective_game_args_with_recommended(&self, recommended: &[String]) -> Vec<String> {
         match self.launch_arguments_mode {
             LaunchArgumentsMode::GameDefaults => self.game_args.clone(),
@@ -113,7 +109,7 @@ mod tests {
             config.launch_arguments_mode,
             LaunchArgumentsMode::Recommended
         );
-        assert!(config.effective_game_args().is_empty());
+        assert!(config.effective_game_args_with_recommended(&[]).is_empty());
     }
 
     #[test]
@@ -125,7 +121,7 @@ mod tests {
         };
 
         assert_eq!(
-            config.effective_game_args(),
+            config.effective_game_args_with_recommended(&[]),
             vec!["--want-zoom".to_string(), "true".to_string()]
         );
     }
