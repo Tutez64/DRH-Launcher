@@ -181,7 +181,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let config = config.clone();
                 let installed_launch_options = load_installed_launch_options(&config);
                 let recommended_game_args =
-                    release_recommended_game_args(installed_launch_options.as_ref());
+                    recommended_game_args_from_launch_options(installed_launch_options.as_ref());
                 match game_launch::launch_game_with_recommended_args(
                     &config,
                     &recommended_game_args,
@@ -312,21 +312,27 @@ fn main() -> Result<(), slint::PlatformError> {
                                     diagnostics::LogLevel::Info,
                                     &verified_message,
                                 );
-                                report_background_activity(
-                                    &ui,
-                                    "Extracting archive...".to_string(),
+                                let message = "Extracting archive...".to_string();
+                                let _ = diagnostics::write(
+                                    &install_dir,
+                                    diagnostics::LogLevel::Info,
+                                    &message,
                                 );
+                                report_background_activity(&ui, message);
                                 match extract_to_staging(&download, &install_dir) {
                                     Ok(extracted) => {
                                         let _ = diagnostics::write(
                                             &install_dir,
                                             diagnostics::LogLevel::Info,
-                                            "Archive extracted. Installing files.",
+                                            "Archive extracted.",
                                         );
-                                        report_background_activity(
-                                            &ui,
-                                            "Installing files...".to_string(),
+                                        let message = "Installing files...".to_string();
+                                        let _ = diagnostics::write(
+                                            &install_dir,
+                                            diagnostics::LogLevel::Info,
+                                            &message,
                                         );
+                                        report_background_activity(&ui, message);
                                         match install_extracted_archive(
                                             &extracted,
                                             &install_dir,
@@ -709,8 +715,9 @@ fn start_release_check(
                     inspect_install(config.install_dir.as_deref()).state,
                     InstallState::Installed
                 ) {
-                    state.install_status =
-                        "DRH is launchable, but update status is unknown".to_string();
+                    state.install_status = InstallState::LaunchableButMaybeOutdated
+                        .status_text()
+                        .to_string();
                     state.install_action_text = InstallState::LaunchableButMaybeOutdated
                         .primary_action()
                         .to_string();
@@ -758,7 +765,9 @@ fn load_installed_launch_options(config: &LauncherConfig) -> Option<ManifestLaun
         .and_then(|state| state.active.launch_options)
 }
 
-fn release_recommended_game_args(launch_options: Option<&ManifestLaunchOptions>) -> Vec<String> {
+fn recommended_game_args_from_launch_options(
+    launch_options: Option<&ManifestLaunchOptions>,
+) -> Vec<String> {
     launch_options
         .map(recommended_launch_option_args)
         .unwrap_or_default()
@@ -1260,6 +1269,44 @@ fn is_progress_message(message: &str) -> bool {
         || message.starts_with("Verifying download")
         || message.starts_with("Extracting archive")
         || message.starts_with("Installing files")
+}
+
+#[cfg(test)]
+mod home_support_text_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_durable_ready_state_on_version_text() {
+        assert_eq!(home_support_text("Version: V1", "Ready."), "Version: V1");
+        assert_eq!(
+            home_support_text("Version: V1", "Install folder opened."),
+            "Version: V1"
+        );
+    }
+
+    #[test]
+    fn shows_progress_messages() {
+        assert_eq!(
+            home_support_text("Version: V1", "Extracting archive..."),
+            "Extracting archive..."
+        );
+        assert_eq!(
+            home_support_text("Version: V1", "Installing files..."),
+            "Installing files..."
+        );
+    }
+
+    #[test]
+    fn summarizes_terminal_and_error_states() {
+        assert_eq!(
+            home_support_text("Version: V1", "Installed V2."),
+            "Installed V2."
+        );
+        assert_eq!(
+            home_support_text("Version: V1", "Could not open logs folder: denied"),
+            "Action failed. Check logs for details."
+        );
+    }
 }
 
 fn status_detail(message: &str) -> String {

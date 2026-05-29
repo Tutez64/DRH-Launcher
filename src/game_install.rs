@@ -23,17 +23,7 @@ impl InstallStatus {
     }
 
     pub fn status_text(&self) -> String {
-        match self.state {
-            InstallState::NotInstalled => "DRH is not installed".to_string(),
-            InstallState::Installed => "DRH is installed".to_string(),
-            InstallState::UpdateAvailable => "A DRH update is available".to_string(),
-            InstallState::Updating => "DRH is updating".to_string(),
-            InstallState::Playing => "DRH is running".to_string(),
-            InstallState::BrokenInstall => "DRH installation is incomplete".to_string(),
-            InstallState::LaunchableButMaybeOutdated => {
-                "DRH is launchable, but update status is unknown".to_string()
-            }
-        }
+        self.state.status_text().to_string()
     }
 
     pub fn version_text(&self) -> String {
