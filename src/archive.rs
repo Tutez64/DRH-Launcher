@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use flate2::read::GzDecoder;
 use std::fs::{self, File};
 use std::io;

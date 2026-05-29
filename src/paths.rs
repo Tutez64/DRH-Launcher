@@ -18,12 +18,10 @@ pub fn default_install_dir() -> PathBuf {
         .join("drh-launcher")
 }
 
-#[allow(dead_code)]
 pub fn downloads_dir(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("downloads")
 }
 
-#[allow(dead_code)]
 pub fn staging_dir(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("staging")
 }
