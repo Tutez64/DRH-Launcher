@@ -31,7 +31,7 @@ use download::{
     DownloadProgress, download_and_verify_with_progress, update_download_cache,
     verify_cached_archive_by_metadata,
 };
-use game_install::{game_executable_names, inspect_install, is_game_executable};
+use game_install::inspect_install;
 use github_releases::{
     PlatformRelease, ReleaseMetadataSource, discover_latest_platform_release,
     discover_latest_platform_release_for_install,
@@ -996,18 +996,7 @@ fn restore_previous_version_available(config: &LauncherConfig) -> bool {
 fn restore_previous_release_version(config: &LauncherConfig) -> Option<String> {
     let install_dir = config.install_dir.as_deref()?;
     let state = install_metadata::InstalledState::load(install_dir).ok()?;
-    let previous = state.previous?;
-    if is_launchable_game_dir(&paths::previous_game_dir(install_dir)) {
-        Some(previous.version)
-    } else {
-        None
-    }
-}
-
-fn is_launchable_game_dir(path: &Path) -> bool {
-    game_executable_names()
-        .iter()
-        .any(|name| is_game_executable(&path.join(name)))
+    state.previous.map(|previous| previous.version)
 }
 
 fn recommended_game_args_from_launch_options(
@@ -1636,6 +1625,25 @@ mod home_support_text_tests {
             &status,
             &test_release("V11")
         ));
+    }
+
+    #[test]
+    fn keeps_restore_visible_when_previous_directory_is_broken() {
+        let temp = tempdir().unwrap();
+        InstalledState {
+            active: test_installed_release("V9"),
+            previous: Some(test_installed_release("V10")),
+            blocked_update_version: None,
+        }
+        .save(temp.path())
+        .unwrap();
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().to_path_buf()),
+            ..LauncherConfig::default()
+        };
+
+        assert!(restore_previous_version_available(&config));
+        assert_eq!(restore_previous_version_text(&config), "Restore V10");
     }
 
     fn test_release(version: &str) -> PlatformRelease {

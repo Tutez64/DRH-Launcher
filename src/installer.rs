@@ -83,13 +83,6 @@ pub fn restore_previous_version(install_dir: &Path) -> Result<InstalledState, St
     let previous_game_dir = paths::previous_game_dir(install_dir);
     let swap_dir = paths::game_root_dir(install_dir).join(".restore-swap");
 
-    if !is_game_dir(&previous_game_dir) {
-        return Err(format!(
-            "Previous game directory is not launchable: {}",
-            previous_game_dir.display()
-        ));
-    }
-
     if swap_dir.exists() {
         return Err(format!(
             "Temporary restore directory already exists: {}",
@@ -357,10 +350,15 @@ mod tests {
     }
 
     #[test]
-    fn refuses_restore_when_previous_game_is_not_launchable() {
+    fn restores_previous_version_even_when_it_is_not_launchable() {
         let temp = tempdir().unwrap();
         let install_dir = temp.path().join("install");
-        fs::create_dir_all(paths::previous_game_dir(&install_dir)).unwrap();
+        let current_game = paths::game_dir(&install_dir);
+        let previous_game = paths::previous_game_dir(&install_dir);
+        fs::create_dir_all(&current_game).unwrap();
+        fs::create_dir_all(&previous_game).unwrap();
+        fs::write(current_game.join(primary_game_executable_name()), "current").unwrap();
+        fs::write(previous_game.join("broken.txt"), "broken").unwrap();
         InstalledState {
             active: test_installed_release("V9"),
             previous: Some(test_installed_release("V7")),
@@ -369,9 +367,12 @@ mod tests {
         .save(&install_dir)
         .unwrap();
 
-        let error = restore_previous_version(&install_dir).unwrap_err();
+        let restored = restore_previous_version(&install_dir).unwrap();
 
-        assert!(error.contains("Previous game directory is not launchable"));
+        assert_eq!(restored.active.version, "V7");
+        assert_eq!(restored.previous.unwrap().version, "V9");
+        assert!(current_game.join("broken.txt").exists());
+        assert!(previous_game.join(primary_game_executable_name()).exists());
     }
 
     #[test]
