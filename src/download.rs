@@ -131,17 +131,50 @@ pub fn download_and_verify_with_progress(
     })
 }
 
+pub fn verify_cached_archive_by_metadata(
+    install_dir: &Path,
+    archive_name: &str,
+    expected_size: u64,
+    expected_sha256: &str,
+) -> Result<VerifiedDownload, String> {
+    let expected_sha256 = normalize_sha256(expected_sha256);
+    if expected_size == 0 {
+        return Err("Cached archive size is unknown.".to_string());
+    }
+    if expected_sha256.is_empty() {
+        return Err("Cached archive SHA-256 is unknown.".to_string());
+    }
+
+    let archive_path = paths::downloads_dir(install_dir).join(archive_name);
+    if !archive_path.exists() {
+        return Err(format!(
+            "Cached archive is missing: {}",
+            archive_path.display()
+        ));
+    }
+
+    verify_cached_archive_values(&archive_path, expected_size, &expected_sha256)
+}
+
 fn verify_cached_archive(
     path: &Path,
     asset: &ReleaseAsset,
     expected_sha256: &str,
 ) -> Result<VerifiedDownload, String> {
+    verify_cached_archive_values(path, asset.size, expected_sha256)
+}
+
+fn verify_cached_archive_values(
+    path: &Path,
+    expected_size: u64,
+    expected_sha256: &str,
+) -> Result<VerifiedDownload, String> {
     let metadata =
         fs::metadata(path).map_err(|error| format!("Could not inspect cached archive: {error}"))?;
-    if metadata.len() != asset.size {
+    if metadata.len() != expected_size {
         return Err(format!(
             "size mismatch, expected {} bytes, got {} bytes",
-            asset.size,
+            expected_size,
             metadata.len()
         ));
     }

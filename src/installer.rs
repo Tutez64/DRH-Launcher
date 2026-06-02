@@ -144,6 +144,71 @@ pub fn restore_previous_version(install_dir: &Path) -> Result<InstalledState, St
     Ok(restored)
 }
 
+pub fn repair_active_install_from_extracted_archive(
+    extracted: &ExtractedArchive,
+    install_dir: &Path,
+) -> Result<InstalledState, String> {
+    let state = InstalledState::load(install_dir)?;
+    repair_extracted_archive_with_state(extracted, install_dir, state)
+}
+
+pub fn repair_release_from_extracted_archive(
+    extracted: &ExtractedArchive,
+    install_dir: &Path,
+    release: &PlatformRelease,
+    source: &ReleaseSource,
+) -> Result<InstalledState, String> {
+    let previous = InstalledState::load(install_dir)
+        .ok()
+        .and_then(|state| state.previous);
+    let state = InstalledState {
+        active: InstalledRelease::from_platform_release(release, source),
+        previous,
+        blocked_update_version: None,
+    };
+    repair_extracted_archive_with_state(extracted, install_dir, state)
+}
+
+fn repair_extracted_archive_with_state(
+    extracted: &ExtractedArchive,
+    install_dir: &Path,
+    state: InstalledState,
+) -> Result<InstalledState, String> {
+    let source_game_dir = find_extracted_game_dir(&extracted.path)?;
+    let game_dir = paths::game_dir(install_dir);
+    if let Some(parent) = game_dir.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Could not create game root directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    if game_dir.exists() {
+        fs::remove_dir_all(&game_dir).map_err(|error| {
+            format!(
+                "Could not remove broken game directory {}: {error}",
+                game_dir.display()
+            )
+        })?;
+    }
+
+    fs::rename(&source_game_dir, &game_dir).map_err(|error| {
+        format!(
+            "Could not move {} to {}: {error}",
+            source_game_dir.display(),
+            game_dir.display()
+        )
+    })?;
+
+    state
+        .save(install_dir)
+        .map_err(|error| format!("Could not write installed metadata: {error}"))?;
+
+    Ok(state)
+}
+
 pub fn find_extracted_game_dir(extracted_dir: &Path) -> Result<PathBuf, String> {
     if is_game_dir(extracted_dir) {
         return Ok(extracted_dir.to_path_buf());
@@ -310,6 +375,111 @@ mod tests {
     }
 
     #[test]
+    fn repairs_active_install_without_replacing_previous_version() {
+        let temp = tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let current_game = paths::game_dir(&install_dir);
+        let previous_game = paths::previous_game_dir(&install_dir);
+        fs::create_dir_all(&current_game).unwrap();
+        fs::create_dir_all(&previous_game).unwrap();
+        fs::write(current_game.join("broken.txt"), "broken").unwrap();
+        fs::write(
+            previous_game.join(primary_game_executable_name()),
+            "previous",
+        )
+        .unwrap();
+        InstalledState {
+            active: test_installed_release("V9"),
+            previous: Some(test_installed_release("V7")),
+            blocked_update_version: Some("V10".to_string()),
+        }
+        .save(&install_dir)
+        .unwrap();
+
+        let extracted_root = temp.path().join("extracted");
+        let extracted_game = extracted_root.join("game");
+        fs::create_dir_all(&extracted_game).unwrap();
+        fs::write(
+            extracted_game.join(primary_game_executable_name()),
+            "repaired",
+        )
+        .unwrap();
+        let extracted = ExtractedArchive {
+            path: extracted_root,
+        };
+
+        let repaired = repair_active_install_from_extracted_archive(&extracted, &install_dir)
+            .expect("repair should succeed");
+
+        assert_eq!(repaired.active.version, "V9");
+        assert_eq!(repaired.previous.unwrap().version, "V7");
+        assert_eq!(repaired.blocked_update_version.as_deref(), Some("V10"));
+        assert_eq!(
+            fs::read_to_string(current_game.join(primary_game_executable_name())).unwrap(),
+            "repaired"
+        );
+        assert_eq!(
+            fs::read_to_string(previous_game.join(primary_game_executable_name())).unwrap(),
+            "previous"
+        );
+    }
+
+    #[test]
+    fn repairs_with_release_without_replacing_previous_version() {
+        let temp = tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let current_game = paths::game_dir(&install_dir);
+        let previous_game = paths::previous_game_dir(&install_dir);
+        fs::create_dir_all(&current_game).unwrap();
+        fs::create_dir_all(&previous_game).unwrap();
+        fs::write(current_game.join("broken.txt"), "broken").unwrap();
+        fs::write(
+            previous_game.join(primary_game_executable_name()),
+            "previous",
+        )
+        .unwrap();
+        InstalledState {
+            active: test_installed_release("V9"),
+            previous: Some(test_installed_release("V7")),
+            blocked_update_version: Some("V10".to_string()),
+        }
+        .save(&install_dir)
+        .unwrap();
+
+        let extracted_root = temp.path().join("extracted-release");
+        let extracted_game = extracted_root.join("game");
+        fs::create_dir_all(&extracted_game).unwrap();
+        fs::write(
+            extracted_game.join(primary_game_executable_name()),
+            "release",
+        )
+        .unwrap();
+        let extracted = ExtractedArchive {
+            path: extracted_root,
+        };
+
+        let repaired = repair_release_from_extracted_archive(
+            &extracted,
+            &install_dir,
+            &test_release("V11"),
+            &ReleaseSource::fixtures(),
+        )
+        .expect("repair should succeed");
+
+        assert_eq!(repaired.active.version, "V11");
+        assert_eq!(repaired.previous.unwrap().version, "V7");
+        assert!(repaired.blocked_update_version.is_none());
+        assert_eq!(
+            fs::read_to_string(current_game.join(primary_game_executable_name())).unwrap(),
+            "release"
+        );
+        assert_eq!(
+            fs::read_to_string(previous_game.join(primary_game_executable_name())).unwrap(),
+            "previous"
+        );
+    }
+
+    #[test]
     fn does_not_treat_directory_named_like_executable_as_game_dir() {
         let temp = tempdir().unwrap();
         let archive_root = temp.path().join(primary_game_executable_name());
@@ -352,6 +522,7 @@ mod tests {
             release_url: format!("https://example.test/{version}"),
             archive: format!("archive-{version}.tar.gz"),
             archive_sha256: "abc123".to_string(),
+            archive_size: 123,
             installed_at: "unix:0".to_string(),
             launch_options: None,
         }

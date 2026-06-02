@@ -46,6 +46,7 @@ pub struct InstalledRelease {
     pub release_url: String,
     pub archive: String,
     pub archive_sha256: String,
+    pub archive_size: u64,
     pub installed_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch_options: Option<ManifestLaunchOptions>,
@@ -65,6 +66,7 @@ impl InstalledRelease {
                 .as_deref()
                 .map(normalize_sha256)
                 .unwrap_or_default(),
+            archive_size: release.asset.size,
             installed_at: current_timestamp(),
             launch_options: release.launch_options.clone(),
         }
@@ -127,6 +129,7 @@ mod tests {
         assert_eq!(metadata.source, "Tutez64/DRHL-Release-Fixtures");
         assert_eq!(metadata.archive, "Dungeon.Rampage.Haxe.V9.Linux.tar.gz");
         assert_eq!(metadata.archive_sha256, "abc123");
+        assert_eq!(metadata.archive_size, 123);
         assert!(metadata.launch_options.is_none());
     }
 
@@ -138,6 +141,7 @@ mod tests {
             release_url: format!("https://example.test/{version}"),
             archive: format!("archive-{version}.tar.gz"),
             archive_sha256: "abc123".to_string(),
+            archive_size: 123,
             installed_at: "unix:0".to_string(),
             launch_options: None,
         }

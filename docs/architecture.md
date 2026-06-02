@@ -105,6 +105,7 @@ LaunchableButMaybeOutdated
 `LaunchableButMaybeOutdated` means the installed game appears runnable, but the launcher cannot confirm that it is up to date or cannot update it automatically right now. Examples include offline mode, GitHub check failure, failed download, missing manifest data, or an older version that is still accepted. The primary action can remain `Play`, with a warning or secondary update action. The UI should expose the concrete reason when available, such as "Could not check GitHub releases" or "Download failed".
 
 `BrokenInstall` means the configured install directory exists but required files are missing or inconsistent.
+When active install metadata and a matching cached archive are available, `Repair` should first reinstall the active version from the verified cached archive. If local repair is not possible, the launcher may fall back to the latest compatible release flow.
 
 ## Main UI
 
@@ -376,6 +377,7 @@ Expected behavior:
 - partial or inconsistent installs should be reported as `BrokenInstall`
 
 The launcher should prefer a clear recovery action over silent repair when data loss or unexpected deletion is possible.
+Repairing a broken active install replaces only `Dungeon Rampage Haxe/current/` and preserves `Dungeon Rampage Haxe/previous/` when present, so an existing rollback target is not lost during repair.
 
 The initial rollback model is intentionally simple:
 
