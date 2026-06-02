@@ -386,7 +386,7 @@ Dungeon Rampage Haxe/previous/  previous version, if available
 
 For example, if a user updates from `V7` to `V9`, `Dungeon Rampage Haxe/previous/` should contain `V7`, and `installed.json.previous` should record that it is `V7`. This allows the launcher to offer a clear rollback target even if an intermediate release such as `V8` was skipped or known bad.
 
-The UI can later expose `Restore previous version` when `Dungeon Rampage Haxe/previous/` exists. Full multi-version management can be added later if there is a real need.
+The UI exposes `Restore previous version` when `Dungeon Rampage Haxe/previous/` exists and matches installed metadata. Restoring swaps `current/` and `previous/`, so the version being replaced remains available as the next rollback target. The replaced version is also recorded as `blocked_update_version`: if the user restores from `V10` to `V9`, `V10` should not be proposed again automatically, but a later release such as `V11` should be offered normally. Full multi-version management can be added later if there is a real need.
 
 Destructive or potentially surprising actions should require confirmation, including:
 

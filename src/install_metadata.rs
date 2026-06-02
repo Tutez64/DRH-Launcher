@@ -14,6 +14,8 @@ pub struct InstalledState {
     pub active: InstalledRelease,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous: Option<InstalledRelease>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_update_version: Option<String>,
 }
 
 impl InstalledState {
@@ -89,6 +91,7 @@ mod tests {
         let state = InstalledState {
             active: test_installed_release("V2"),
             previous: Some(test_installed_release("V1")),
+            blocked_update_version: Some("V3".to_string()),
         };
 
         state.save(temp.path()).unwrap();
@@ -96,6 +99,7 @@ mod tests {
 
         assert_eq!(loaded.active.version, "V2");
         assert_eq!(loaded.previous.unwrap().version, "V1");
+        assert_eq!(loaded.blocked_update_version.as_deref(), Some("V3"));
     }
 
     #[test]

@@ -28,13 +28,13 @@ use std::time::Duration;
 use archive::extract_to_staging;
 use config::{LaunchArgumentsMode, LauncherConfig};
 use download::{DownloadProgress, download_and_verify_with_progress, update_download_cache};
-use game_install::inspect_install;
+use game_install::{game_executable_names, inspect_install, is_game_executable};
 use github_releases::{
     PlatformRelease, ReleaseMetadataSource, discover_latest_platform_release,
     discover_latest_platform_release_for_install,
 };
 use install_state::InstallState;
-use installer::install_extracted_archive;
+use installer::{install_extracted_archive, restore_previous_version};
 use platform::Platform;
 use release_manifest::ManifestLaunchOptions;
 use release_source::ReleaseSource;
@@ -52,6 +52,8 @@ struct HomeViewState {
     update_check_enabled: bool,
     open_install_folder_enabled: bool,
     open_logs_folder_enabled: bool,
+    restore_previous_enabled: bool,
+    restore_previous_text: String,
     status_detail: String,
     log_lines: Vec<LogLineView>,
 }
@@ -166,12 +168,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 .expect("latest release lock poisoned")
                 .clone();
             let install_status = inspect_install(Some(&install_dir));
-            let update_available = release.as_ref().is_some_and(|release| {
-                installed_version_needs_update(
-                    install_status.installed_version.as_deref(),
-                    &release.version,
-                )
-            });
+            let update_available = release
+                .as_ref()
+                .is_some_and(|release| release_update_available(&config, &install_status, release));
 
             if matches!(
                 install_status.state,
@@ -227,6 +226,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let _ = diagnostics::write(&install_dir, diagnostics::LogLevel::Info, &initial_message);
             ui.set_install_action_enabled(false);
             ui.set_update_check_enabled(false);
+            ui.set_restore_previous_enabled(false);
             ui.set_install_action_text(InstallState::Updating.primary_action().into());
 
             let ui = ui.as_weak();
@@ -457,6 +457,59 @@ fn main() -> Result<(), slint::PlatformError> {
                 Arc::clone(&latest_release),
                 release_source.clone(),
             );
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let game_process = Rc::clone(&game_process);
+        ui.unwrap().on_restore_previous_version(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if process_is_running(&game_process) {
+                let message = "Stop DRH before restoring the previous version.";
+                log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
+                refresh_home_state(&ui, &config.borrow(), message);
+                return;
+            }
+
+            let Some(install_dir) = config.borrow().install_dir.clone() else {
+                let message = "No install directory selected.";
+                log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
+                refresh_home_state(&ui, &config.borrow(), message);
+                return;
+            };
+
+            match restore_previous_version(&install_dir) {
+                Ok(restored) => {
+                    let message = format!(
+                        "Restored previous version {}. Rollback target is now {}.",
+                        restored.active.version,
+                        restored
+                            .previous
+                            .as_ref()
+                            .map(|previous| previous.version.as_str())
+                            .unwrap_or("none")
+                    );
+                    log_for_config(&config.borrow(), diagnostics::LogLevel::Info, &message);
+                    let installed_launch_options = load_installed_launch_options(&config.borrow());
+                    refresh_launch_options_view(
+                        &ui,
+                        &config.borrow(),
+                        installed_launch_options.as_ref(),
+                        "Save",
+                    );
+                    refresh_home_state(&ui, &config.borrow(), &message);
+                }
+                Err(error) => {
+                    let message = format!("Could not restore previous version: {error}");
+                    log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &message);
+                    refresh_home_state(&ui, &config.borrow(), &message);
+                }
+            }
         });
     }
 
@@ -806,6 +859,33 @@ fn load_installed_launch_options(config: &LauncherConfig) -> Option<ManifestLaun
         .and_then(|state| state.active.launch_options)
 }
 
+fn restore_previous_version_text(config: &LauncherConfig) -> String {
+    restore_previous_release_version(config)
+        .map(|version| format!("Restore {version}"))
+        .unwrap_or_else(|| "Restore previous".to_string())
+}
+
+fn restore_previous_version_available(config: &LauncherConfig) -> bool {
+    restore_previous_release_version(config).is_some()
+}
+
+fn restore_previous_release_version(config: &LauncherConfig) -> Option<String> {
+    let install_dir = config.install_dir.as_deref()?;
+    let state = install_metadata::InstalledState::load(install_dir).ok()?;
+    let previous = state.previous?;
+    if is_launchable_game_dir(&paths::previous_game_dir(install_dir)) {
+        Some(previous.version)
+    } else {
+        None
+    }
+}
+
+fn is_launchable_game_dir(path: &Path) -> bool {
+    game_executable_names()
+        .iter()
+        .any(|name| is_game_executable(&path.join(name)))
+}
+
 fn recommended_game_args_from_launch_options(
     launch_options: Option<&ManifestLaunchOptions>,
 ) -> Vec<String> {
@@ -1058,12 +1138,14 @@ fn home_view_state(
         update_check_enabled: true,
         open_install_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
         open_logs_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
+        restore_previous_enabled: restore_previous_version_available(config),
+        restore_previous_text: restore_previous_version_text(config),
         status_detail: status_detail(activity_message),
         log_lines: log_lines(config),
     };
 
     if let Some(release) = latest_release {
-        apply_release_to_home_view_state(&mut state, &status, release);
+        apply_release_to_home_view_state(&mut state, config, &status, release);
     }
 
     state
@@ -1071,23 +1153,28 @@ fn home_view_state(
 
 fn apply_release_to_home_view_state(
     state: &mut HomeViewState,
+    config: &LauncherConfig,
     status: &game_install::InstallStatus,
     release: &PlatformRelease,
 ) {
     match status.state {
         InstallState::Installed | InstallState::LaunchableButMaybeOutdated => {
             match status.installed_version.as_deref() {
-                Some(installed_version)
-                    if installed_version_needs_update(
-                        Some(installed_version),
-                        &release.version,
-                    ) =>
-                {
+                Some(installed_version) if release_update_available(config, status, release) => {
                     state.install_status = "A DRH update is available".to_string();
                     state.install_action_text =
                         InstallState::UpdateAvailable.primary_action().to_string();
                     state.home_support_text = format!(
                         "Update available: installed {installed_version}, latest {}.",
+                        release.version
+                    );
+                }
+                Some(installed_version)
+                    if rollback_blocked_update_version(config).as_deref()
+                        == Some(release.version.as_str()) =>
+                {
+                    state.home_support_text = format!(
+                        "You restored {installed_version}. Update {} is skipped until a newer release is available.",
                         release.version
                     );
                 }
@@ -1125,6 +1212,8 @@ fn apply_home_view_state(ui: &AppWindow, state: HomeViewState) {
     ui.set_update_check_enabled(state.update_check_enabled);
     ui.set_open_install_folder_enabled(state.open_install_folder_enabled);
     ui.set_open_logs_folder_enabled(state.open_logs_folder_enabled);
+    ui.set_restore_previous_enabled(state.restore_previous_enabled);
+    ui.set_restore_previous_text(state.restore_previous_text.into());
     ui.set_status_detail(state.status_detail.into());
     ui.set_log_lines(ModelRc::new(VecModel::from(state.log_lines)));
 }
@@ -1178,6 +1267,22 @@ fn is_error_message(message: &str) -> bool {
         || message.starts_with("No ")
         || message.contains(" failed")
         || message.contains(" missing")
+}
+
+fn release_update_available(
+    config: &LauncherConfig,
+    status: &game_install::InstallStatus,
+    release: &PlatformRelease,
+) -> bool {
+    installed_version_needs_update(status.installed_version.as_deref(), &release.version)
+        && rollback_blocked_update_version(config).as_deref() != Some(release.version.as_str())
+}
+
+fn rollback_blocked_update_version(config: &LauncherConfig) -> Option<String> {
+    let install_dir = config.install_dir.as_deref()?;
+    install_metadata::InstalledState::load(install_dir)
+        .ok()
+        .and_then(|state| state.blocked_update_version)
 }
 
 fn installed_version_needs_update(installed_version: Option<&str>, latest_version: &str) -> bool {
@@ -1249,6 +1354,7 @@ fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str)
     ui.set_version_status(status.version_text().into());
     ui.set_open_install_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
     ui.set_open_logs_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
+    ui.set_restore_previous_enabled(false);
     refresh_logs_view(ui, config);
     set_status_message(ui, message);
 }
@@ -1338,6 +1444,9 @@ fn is_progress_message(message: &str) -> bool {
 #[cfg(test)]
 mod home_support_text_tests {
     use super::*;
+    use crate::github_releases::{ReleaseAsset, ReleaseMetadataSource};
+    use crate::install_metadata::{InstalledRelease, InstalledState};
+    use tempfile::tempdir;
 
     #[test]
     fn keeps_durable_ready_state_on_version_text() {
@@ -1370,6 +1479,69 @@ mod home_support_text_tests {
             home_support_text("Version: V1", "Could not open logs folder: denied"),
             "Action failed. Check logs for details."
         );
+    }
+
+    #[test]
+    fn skips_rollback_blocked_update_until_a_newer_release_exists() {
+        let temp = tempdir().unwrap();
+        InstalledState {
+            active: test_installed_release("V9"),
+            previous: Some(test_installed_release("V10")),
+            blocked_update_version: Some("V10".to_string()),
+        }
+        .save(temp.path())
+        .unwrap();
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().to_path_buf()),
+            ..LauncherConfig::default()
+        };
+        let status = game_install::InstallStatus {
+            state: InstallState::Installed,
+            install_dir: Some(temp.path().to_path_buf()),
+            installed_version: Some("V9".to_string()),
+            reason: None,
+        };
+
+        assert!(!release_update_available(
+            &config,
+            &status,
+            &test_release("V10")
+        ));
+        assert!(release_update_available(
+            &config,
+            &status,
+            &test_release("V11")
+        ));
+    }
+
+    fn test_release(version: &str) -> PlatformRelease {
+        PlatformRelease {
+            version: version.to_string(),
+            name: format!("Dungeon Rampage Haxe {version}"),
+            html_url: format!("https://example.test/{version}"),
+            metadata_source: ReleaseMetadataSource::GitHubAssetFallback,
+            launch_options: None,
+            asset: ReleaseAsset {
+                platform_id: "linux-x64".to_string(),
+                name: format!("Dungeon.Rampage.Haxe.{version}.Linux.tar.gz"),
+                download_url: "https://example.test/archive.tar.gz".to_string(),
+                size: 123,
+                digest: Some("sha256:abc123".to_string()),
+            },
+        }
+    }
+
+    fn test_installed_release(version: &str) -> InstalledRelease {
+        InstalledRelease {
+            version: version.to_string(),
+            platform: "linux-x64".to_string(),
+            source: "Tutez64/DRHL-Release-Fixtures".to_string(),
+            release_url: format!("https://example.test/{version}"),
+            archive: format!("archive-{version}.tar.gz"),
+            archive_sha256: "abc123".to_string(),
+            installed_at: "unix:0".to_string(),
+            launch_options: None,
+        }
     }
 }
 
@@ -1425,6 +1597,21 @@ fn start_game_monitor(
             refresh_home_state(&ui, &config, &message);
         }
     });
+}
+
+fn process_is_running(game_process: &Rc<RefCell<Option<Child>>>) -> bool {
+    let mut process = game_process.borrow_mut();
+    let Some(child) = process.as_mut() else {
+        return false;
+    };
+
+    match child.try_wait() {
+        Ok(None) => true,
+        Ok(Some(_)) | Err(_) => {
+            process.take();
+            false
+        }
+    }
 }
 
 fn stop_game(game_process: &Rc<RefCell<Option<Child>>>) -> String {

@@ -389,6 +389,8 @@ export component AppWindow inherits Window {
         || root.custom-game-args != root.saved-custom-game-args;
     in property <bool> open-install-folder-enabled: false;
     in property <bool> open-logs-folder-enabled: false;
+    in property <bool> restore-previous-enabled: false;
+    in property <string> restore-previous-text: "Restore previous";
     in-out property <int> active-page: 0;
     in-out property <int> settings-page: 0;
     property <int> logs-scroll-ticks: 0;
@@ -405,6 +407,7 @@ export component AppWindow inherits Window {
     callback open-install-folder();
     callback open-logs-folder();
     callback refresh-logs();
+    callback restore-previous-version();
     callback save-launch-options();
     callback select-launch-arguments-mode(int);
     callback toggle-launch-option(int, bool);
@@ -548,9 +551,12 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            SecondaryButton {
-                                text: "Repair";
-                                enabled: false;
+                            if root.restore-previous-enabled : SecondaryButton {
+                                text: root.restore-previous-text;
+                                enabled: root.restore-previous-enabled;
+                                clicked => {
+                                    root.restore-previous-version();
+                                }
                             }
 
                             SecondaryButton {

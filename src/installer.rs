@@ -63,12 +63,85 @@ pub fn install_extracted_archive(
     let installed = InstalledState {
         active: InstalledRelease::from_platform_release(release, source),
         previous: previous_metadata,
+        blocked_update_version: None,
     };
     installed
         .save(install_dir)
         .map_err(|error| format!("Could not write installed metadata: {error}"))?;
 
     Ok(installed)
+}
+
+pub fn restore_previous_version(install_dir: &Path) -> Result<InstalledState, String> {
+    let state = InstalledState::load(install_dir)?;
+    let previous_metadata = state
+        .previous
+        .clone()
+        .ok_or_else(|| "No previous version metadata is available.".to_string())?;
+    let blocked_update_version = state.active.version.clone();
+    let game_dir = paths::game_dir(install_dir);
+    let previous_game_dir = paths::previous_game_dir(install_dir);
+    let swap_dir = paths::game_root_dir(install_dir).join(".restore-swap");
+
+    if !is_game_dir(&previous_game_dir) {
+        return Err(format!(
+            "Previous game directory is not launchable: {}",
+            previous_game_dir.display()
+        ));
+    }
+
+    if swap_dir.exists() {
+        return Err(format!(
+            "Temporary restore directory already exists: {}",
+            swap_dir.display()
+        ));
+    }
+
+    let had_current_game_dir = game_dir.exists();
+    if had_current_game_dir {
+        fs::rename(&game_dir, &swap_dir).map_err(|error| {
+            format!(
+                "Could not move {} to {}: {error}",
+                game_dir.display(),
+                swap_dir.display()
+            )
+        })?;
+    }
+
+    if let Err(error) = fs::rename(&previous_game_dir, &game_dir) {
+        if had_current_game_dir {
+            let _ = fs::rename(&swap_dir, &game_dir);
+        }
+        return Err(format!(
+            "Could not move {} to {}: {error}",
+            previous_game_dir.display(),
+            game_dir.display()
+        ));
+    }
+
+    let previous = if had_current_game_dir {
+        match fs::rename(&swap_dir, &previous_game_dir) {
+            Ok(()) => Some(state.active),
+            Err(error) => {
+                return Err(format!(
+                    "Restored previous version, but could not preserve old current version: {error}"
+                ));
+            }
+        }
+    } else {
+        None
+    };
+
+    let restored = InstalledState {
+        active: previous_metadata,
+        previous,
+        blocked_update_version: Some(blocked_update_version),
+    };
+    restored
+        .save(install_dir)
+        .map_err(|error| format!("Could not write installed metadata: {error}"))?;
+
+    Ok(restored)
 }
 
 pub fn find_extracted_game_dir(extracted_dir: &Path) -> Result<PathBuf, String> {
@@ -143,6 +216,7 @@ mod tests {
         let previous = InstalledState {
             active: test_installed_release("V7"),
             previous: None,
+            blocked_update_version: None,
         };
         previous.save(&install_dir).unwrap();
 
@@ -174,6 +248,65 @@ mod tests {
                 .join(primary_game_executable_name())
                 .exists()
         );
+    }
+
+    #[test]
+    fn restores_previous_version_and_keeps_old_current_as_previous() {
+        let temp = tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let current_game = paths::game_dir(&install_dir);
+        let previous_game = paths::previous_game_dir(&install_dir);
+        fs::create_dir_all(&current_game).unwrap();
+        fs::create_dir_all(&previous_game).unwrap();
+        fs::write(current_game.join(primary_game_executable_name()), "current").unwrap();
+        fs::write(
+            previous_game.join(primary_game_executable_name()),
+            "previous",
+        )
+        .unwrap();
+        InstalledState {
+            active: test_installed_release("V9"),
+            previous: Some(test_installed_release("V7")),
+            blocked_update_version: None,
+        }
+        .save(&install_dir)
+        .unwrap();
+
+        let restored = restore_previous_version(&install_dir).unwrap();
+
+        assert_eq!(restored.active.version, "V7");
+        assert_eq!(restored.previous.unwrap().version, "V9");
+        assert_eq!(restored.blocked_update_version.as_deref(), Some("V9"));
+        assert_eq!(
+            fs::read_to_string(current_game.join(primary_game_executable_name())).unwrap(),
+            "previous"
+        );
+        assert_eq!(
+            fs::read_to_string(previous_game.join(primary_game_executable_name())).unwrap(),
+            "current"
+        );
+        let metadata = InstalledState::load(&install_dir).unwrap();
+        assert_eq!(metadata.active.version, "V7");
+        assert_eq!(metadata.previous.unwrap().version, "V9");
+        assert_eq!(metadata.blocked_update_version.as_deref(), Some("V9"));
+    }
+
+    #[test]
+    fn refuses_restore_when_previous_game_is_not_launchable() {
+        let temp = tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        fs::create_dir_all(paths::previous_game_dir(&install_dir)).unwrap();
+        InstalledState {
+            active: test_installed_release("V9"),
+            previous: Some(test_installed_release("V7")),
+            blocked_update_version: None,
+        }
+        .save(&install_dir)
+        .unwrap();
+
+        let error = restore_previous_version(&install_dir).unwrap_err();
+
+        assert!(error.contains("Previous game directory is not launchable"));
     }
 
     #[test]
