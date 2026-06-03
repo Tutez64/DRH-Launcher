@@ -481,11 +481,10 @@ The game may need explicit support to load mods cleanly. Until then, the launche
 
 `General` should include:
 
-- install directory
-- config file path
-- release channel
-- reinstall or uninstall DRH
-- uninstall guidance for DRH Launcher
+- the install directory, described as the folder that contains launcher data, downloads, logs and `Dungeon Rampage Haxe/`
+- an action to open the install directory
+- `download_cache_limit`, with clear help text explaining that it controls how many verified release archives are kept in `data/downloads/` for faster reinstalls, repairs and rollbacks
+- an advanced section, collapsed by default, for diagnostics-only details such as the `config.json` location
 
 `Logs` should include:
 

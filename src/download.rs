@@ -221,6 +221,25 @@ pub fn update_download_cache(
     prune_downloads_dir(&downloads_dir, &cache)
 }
 
+pub fn prune_download_cache(install_dir: &Path, limit: usize) -> Result<Vec<PathBuf>, String> {
+    let downloads_dir = paths::downloads_dir(install_dir);
+    fs::create_dir_all(&downloads_dir).map_err(|error| {
+        format!(
+            "Could not create downloads directory {}: {error}",
+            downloads_dir.display()
+        )
+    })?;
+
+    let mut cache = read_download_cache_index(install_dir);
+    cache.truncate(limit);
+
+    let cache_file = paths::download_cache_index_file(install_dir);
+    fs::write(&cache_file, cache.join("\n"))
+        .map_err(|error| format!("Could not write {}: {error}", cache_file.display()))?;
+
+    prune_downloads_dir(&downloads_dir, &cache)
+}
+
 fn read_download_cache_index(install_dir: &Path) -> Vec<String> {
     fs::read_to_string(paths::download_cache_index_file(install_dir))
         .map(|contents| {
@@ -382,6 +401,39 @@ mod tests {
         assert_eq!(
             fs::read_to_string(paths::download_cache_index_file(temp.path())).unwrap(),
             "A.tar.gz\nB.tar.gz"
+        );
+    }
+
+    #[test]
+    fn prunes_existing_download_cache_to_new_limit() {
+        let temp = tempdir().unwrap();
+        let downloads_dir = paths::downloads_dir(temp.path());
+        fs::create_dir_all(&downloads_dir).unwrap();
+        fs::write(downloads_dir.join("A.tar.gz"), b"a").unwrap();
+        fs::write(downloads_dir.join("B.tar.gz"), b"b").unwrap();
+        fs::write(downloads_dir.join("C.tar.gz"), b"c").unwrap();
+        fs::write(
+            paths::download_cache_index_file(temp.path()),
+            "A.tar.gz\nB.tar.gz\nC.tar.gz\n",
+        )
+        .unwrap();
+
+        let mut removed = prune_download_cache(temp.path(), 1).unwrap();
+        removed.sort();
+
+        assert!(downloads_dir.join("A.tar.gz").exists());
+        assert!(!downloads_dir.join("B.tar.gz").exists());
+        assert!(!downloads_dir.join("C.tar.gz").exists());
+        assert_eq!(
+            removed,
+            vec![
+                downloads_dir.join("B.tar.gz"),
+                downloads_dir.join("C.tar.gz")
+            ]
+        );
+        assert_eq!(
+            fs::read_to_string(paths::download_cache_index_file(temp.path())).unwrap(),
+            "A.tar.gz"
         );
     }
 

@@ -28,8 +28,8 @@ use std::time::Duration;
 use archive::extract_to_staging;
 use config::{LaunchArgumentsMode, LauncherConfig};
 use download::{
-    DownloadProgress, download_and_verify_with_progress, update_download_cache,
-    verify_cached_archive_by_metadata,
+    DownloadProgress, download_and_verify_with_progress, prune_download_cache,
+    update_download_cache, verify_cached_archive_by_metadata,
 };
 use game_install::inspect_install;
 use github_releases::{
@@ -78,6 +78,7 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
     ui.set_release_source_label(release_source.label().into());
     ui.set_config_path(paths::config_file().display().to_string().into());
+    refresh_settings_view(&ui, &config.borrow(), "Save");
     let installed_launch_options = load_installed_launch_options(&config.borrow());
     refresh_launch_options_view(
         &ui,
@@ -160,6 +161,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     );
                     return;
                 }
+                refresh_settings_view(&ui, &config, "Save");
             }
 
             let Some(install_dir) = config.install_dir.clone() else {
@@ -461,20 +463,137 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
-        ui.unwrap().on_open_settings(move || {
+        ui.unwrap().on_open_config_folder(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
 
-            let config_path = paths::config_file();
-            refresh_home_state(
-                &ui,
-                &config.borrow(),
-                &format!(
-                    "Settings UI is not available yet. Config: {}",
-                    config_path.display()
-                ),
-            );
+            match open_config_folder() {
+                Ok(()) => set_status_message(&ui, "Config folder opened."),
+                Err(error) => {
+                    log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
+                    set_status_message(&ui, &format!("Could not open config folder: {error}"));
+                }
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_increment_download_cache_limit(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let limit = ui_download_cache_limit(&ui)
+                .unwrap_or_else(|_| config.borrow().download_cache_limit);
+            ui.set_download_cache_limit((limit.saturating_add(1)).to_string().into());
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_decrement_download_cache_limit(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let limit = ui_download_cache_limit(&ui)
+                .unwrap_or_else(|_| config.borrow().download_cache_limit);
+            ui.set_download_cache_limit(limit.saturating_sub(1).to_string().into());
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_save_general_settings(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let Ok(limit) = ui_download_cache_limit(&ui) else {
+                ui.set_download_cache_limit_error(
+                    "Use a non-negative whole number, for example 0, 1, or 3.".into(),
+                );
+                set_status_message(
+                    &ui,
+                    "Download cache limit must be a non-negative whole number.",
+                );
+                return;
+            };
+
+            let mut config = config.borrow_mut();
+            config.download_cache_limit = limit;
+            match config.save() {
+                Ok(()) => {
+                    log_for_config(
+                        &config,
+                        diagnostics::LogLevel::Info,
+                        &format!("Download cache limit saved: {limit}."),
+                    );
+                    let prune_result = config
+                        .install_dir
+                        .as_deref()
+                        .map(|install_dir| prune_download_cache(install_dir, limit));
+                    match prune_result {
+                        Some(Ok(removed)) => {
+                            for archive in &removed {
+                                log_for_config(
+                                    &config,
+                                    diagnostics::LogLevel::Info,
+                                    &format!("Removed cached archive {}.", archive.display()),
+                                );
+                            }
+                            refresh_settings_view(&ui, &config, "Saved successfully");
+                            if removed.is_empty() {
+                                set_status_message(&ui, "Download cache limit saved.");
+                            } else {
+                                set_status_message(
+                                    &ui,
+                                    &format!(
+                                        "Download cache limit saved. Removed {} cached archive(s).",
+                                        removed.len()
+                                    ),
+                                );
+                            }
+                        }
+                        Some(Err(error)) => {
+                            log_for_config(&config, diagnostics::LogLevel::Error, &error);
+                            refresh_settings_view(&ui, &config, "Saved successfully");
+                            set_status_message(
+                                &ui,
+                                &format!(
+                                    "Download cache limit saved, but cache pruning failed: {error}"
+                                ),
+                            );
+                        }
+                        None => {
+                            refresh_settings_view(&ui, &config, "Saved successfully");
+                            set_status_message(&ui, "Download cache limit saved.");
+                        }
+                    }
+                }
+                Err(error) => {
+                    let message = format!("Could not save download cache limit: {error}");
+                    log_for_config(&config, diagnostics::LogLevel::Error, &message);
+                    set_status_message(&ui, &message);
+                }
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_cancel_general_settings(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            refresh_settings_view(&ui, &config.borrow(), "Save");
         });
     }
 
@@ -1425,6 +1544,32 @@ fn apply_home_view_state(ui: &AppWindow, state: HomeViewState) {
     ui.set_log_lines(ModelRc::new(VecModel::from(state.log_lines)));
 }
 
+fn refresh_settings_view(ui: &AppWindow, config: &LauncherConfig, save_text: &str) {
+    ui.set_install_folder_path(install_folder_path_text(config).into());
+    let cache_limit = config.download_cache_limit.to_string();
+    ui.set_download_cache_limit(cache_limit.clone().into());
+    ui.set_saved_download_cache_limit(cache_limit.into());
+    ui.set_download_cache_save_text(save_text.into());
+    ui.set_download_cache_limit_error("".into());
+}
+
+fn install_folder_path_text(config: &LauncherConfig) -> String {
+    match config.install_dir.as_deref() {
+        Some(path) => path.display().to_string(),
+        None => format!(
+            "No install folder selected yet. First install will use {}.",
+            paths::default_install_dir().display()
+        ),
+    }
+}
+
+fn ui_download_cache_limit(ui: &AppWindow) -> Result<usize, ()> {
+    ui.get_download_cache_limit()
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| ())
+}
+
 fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
     ui.set_log_lines(ModelRc::new(VecModel::from(log_lines(config))));
 }
@@ -1598,6 +1743,20 @@ fn open_logs_folder(install_dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(&logs_dir)
         .map_err(|error| format!("Could not create {}: {error}", logs_dir.display()))?;
     open_folder(&logs_dir)
+}
+
+fn open_config_folder() -> Result<(), String> {
+    let config_file = paths::config_file();
+    let Some(config_dir) = config_file.parent() else {
+        return Err(format!(
+            "Could not determine config folder for {}",
+            config_file.display()
+        ));
+    };
+
+    std::fs::create_dir_all(config_dir)
+        .map_err(|error| format!("Could not create {}: {error}", config_dir.display()))?;
+    open_folder(config_dir)
 }
 
 fn set_status_message(ui: &AppWindow, message: &str) {

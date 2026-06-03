@@ -68,6 +68,33 @@ component SecondaryButton inherits Rectangle {
     }
 }
 
+component StepperButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.accent-warm : Theme.border-accent-muted;
+    background: touch.pressed ? Theme.surface-pressed : touch.has-hover ? Theme.surface-accent : Theme.surface-raised;
+
+    Text {
+        text: root.text;
+        color: Theme.text-primary;
+        font-size: 18px;
+        font-weight: 800;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 component HelpMenuButton inherits Rectangle {
     in property <bool> active;
     callback clicked();
@@ -195,6 +222,37 @@ component MetricBlock inherits Rectangle {
             color: Theme.text-body;
             wrap: word-wrap;
         }
+    }
+}
+
+component SettingsCard inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    background: Theme.surface;
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 8px;
+
+        Text {
+            text: root.title;
+            font-size: 14px;
+            font-weight: 800;
+            color: Theme.accent-warm;
+        }
+
+        Text {
+            text: root.description;
+            font-size: 13px;
+            color: Theme.text-muted;
+            wrap: word-wrap;
+        }
+
+        @children
     }
 }
 
@@ -378,6 +436,31 @@ component AppLineEdit inherits Rectangle {
     }
 }
 
+component NumericTextField inherits Rectangle {
+    in-out property <string> value;
+
+    width: 48px;
+    height: 34px;
+    border-radius: 6px;
+    border-width: input.has-focus ? 2px : 1px;
+    border-color: input.has-focus ? Theme.focus : Theme.border-accent-muted;
+    background: Theme.surface-raised;
+
+    input := TextInput {
+        x: 6px;
+        y: 0px;
+        width: parent.width - 12px;
+        height: parent.height;
+        text <=> root.value;
+        single-line: true;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: Theme.text-primary;
+        font-size: 14px;
+        font-weight: 700;
+    }
+}
+
 component LaunchTextField inherits Rectangle {
     in property <string> label;
     in property <string> placeholder;
@@ -416,6 +499,13 @@ export component AppWindow inherits Window {
     in property <string> launcher-version;
     in property <string> release-source-label;
     in property <string> config-path;
+    in property <string> install-folder-path;
+    in-out property <string> download-cache-limit;
+    in-out property <string> saved-download-cache-limit;
+    in-out property <string> download-cache-save-text: "Save";
+    in-out property <string> download-cache-limit-error;
+    property <bool> download-cache-limit-dirty: root.download-cache-limit != root.saved-download-cache-limit;
+    property <bool> general-settings-dirty: root.download-cache-limit-dirty;
     in-out property <string> pre-launch-command;
     in-out property <int> launch-arguments-mode: 1;
     in-out property <string> custom-game-args;
@@ -440,6 +530,7 @@ export component AppWindow inherits Window {
     in property <string> reinstall-current-text: "Reinstall current";
     in-out property <int> active-page: 0;
     in-out property <int> settings-page: 0;
+    in-out property <bool> advanced-settings-open: false;
     in-out property <bool> help-menu-open: false;
     property <int> logs-scroll-ticks: 0;
     property <int> logs-restore-ticks: 0;
@@ -451,10 +542,14 @@ export component AppWindow inherits Window {
 
     callback install-or-play();
     callback check-updates();
-    callback open-settings();
+    callback open-config-folder();
     callback open-install-folder();
     callback open-logs-folder();
     callback refresh-logs();
+    callback increment-download-cache-limit();
+    callback decrement-download-cache-limit();
+    callback save-general-settings();
+    callback cancel-general-settings();
     callback restore-previous-version();
     callback reinstall-current-version();
     callback save-launch-options();
@@ -462,6 +557,10 @@ export component AppWindow inherits Window {
     callback toggle-launch-option(int, bool);
     callback launch-option-width-measured(float);
     callback cancel-launch-options();
+
+    changed download-cache-limit => {
+        root.download-cache-limit-error = "";
+    }
 
     title: "DRH Launcher";
     preferred-width: 1280px;
@@ -908,37 +1007,132 @@ export component AppWindow inherits Window {
                             spacing: 16px;
                             vertical-stretch: 1;
 
-                            MetricBlock {
-                                label: "Install folder";
-                                value: "Current launcher configuration.";
-                            }
+                            general-page-scroll := ScrollView {
+                                horizontal-stretch: 1;
+                                vertical-stretch: 1;
+                                viewport-width: self.width;
+                                viewport-height: general-page-content.preferred-height;
 
-                            MetricBlock {
-                                label: "Config file";
-                                value: root.config-path;
+                                general-page-content := VerticalLayout {
+                                    width: general-page-scroll.width;
+                                    spacing: 12px;
+
+                                    SettingsCard {
+                                        title: "Installation";
+                                        description: "Contains launcher data, downloaded archives, logs, and Dungeon Rampage Haxe.";
+
+                                        Text {
+                                            text: root.install-folder-path;
+                                            font-size: 13px;
+                                            color: Theme.text-body;
+                                            wrap: word-wrap;
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            alignment: start;
+
+                                            SecondaryButton {
+                                                text: "Open folder";
+                                                enabled: root.open-install-folder-enabled;
+                                                clicked => {
+                                                    root.open-install-folder();
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    SettingsCard {
+                                        title: "Download cache";
+                                        description: "Keeps this many verified release archives in data/downloads. Cached archives can speed up reinstalls, repairs, and rollbacks, but use disk space. Set 0 to avoid keeping completed archives.";
+
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+
+                                            StepperButton {
+                                                text: "-";
+                                                clicked => {
+                                                    root.decrement-download-cache-limit();
+                                                }
+                                            }
+
+                                            NumericTextField {
+                                                value <=> root.download-cache-limit;
+                                            }
+
+                                            StepperButton {
+                                                text: "+";
+                                                clicked => {
+                                                    root.increment-download-cache-limit();
+                                                }
+                                            }
+                                        }
+
+                                        if root.download-cache-limit-error != "" : Text {
+                                            text: root.download-cache-limit-error;
+                                            font-size: 13px;
+                                            color: Theme.accent-primary-hover;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+
+                                    VerticalLayout {
+                                        spacing: 8px;
+
+                                        SecondaryButton {
+                                            text: root.advanced-settings-open ? "Hide advanced settings" : "Advanced settings";
+                                            clicked => {
+                                                root.advanced-settings-open = !root.advanced-settings-open;
+                                            }
+                                        }
+
+                                        if root.advanced-settings-open : SettingsCard {
+                                            title: "Config file";
+                                            description: "Manual edits are usually not needed. Use this only for diagnostics or unsupported changes.";
+
+                                            Text {
+                                                text: root.config-path;
+                                                font-size: 13px;
+                                                color: Theme.text-body;
+                                                wrap: word-wrap;
+                                            }
+
+                                            HorizontalLayout {
+                                                spacing: 10px;
+                                                alignment: start;
+
+                                                SecondaryButton {
+                                                    text: "Open config folder";
+                                                    clicked => {
+                                                        root.open-config-folder();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             HorizontalLayout {
                                 spacing: 10px;
+                                alignment: end;
 
                                 SecondaryButton {
-                                    text: "Open install folder";
-                                    enabled: root.open-install-folder-enabled;
+                                    text: "Cancel";
+                                    enabled: root.general-settings-dirty;
                                     clicked => {
-                                        root.open-install-folder();
+                                        root.cancel-general-settings();
                                     }
                                 }
 
-                                SecondaryButton {
-                                    text: "Open config";
+                                PrimaryButton {
+                                    text: root.general-settings-dirty ? "Save" : root.download-cache-save-text;
+                                    enabled: root.general-settings-dirty;
                                     clicked => {
-                                        root.open-settings();
+                                        root.save-general-settings();
                                     }
                                 }
-                            }
-
-                            Rectangle {
-                                vertical-stretch: 1;
                             }
                         }
 
@@ -1075,6 +1269,14 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    reset-cache-save-button := Timer {
+        interval: 2s;
+        running: root.download-cache-save-text != "Save" && !root.download-cache-limit-dirty;
+        triggered => {
+            root.download-cache-save-text = "Save";
         }
     }
 
