@@ -1,4 +1,5 @@
 import { LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
 
 export struct LaunchOptionView {
     name: string,
@@ -19,11 +20,11 @@ component PrimaryButton inherits Rectangle {
     min-width: 168px;
     min-height: 42px;
     border-radius: 6px;
-    background: !root.enabled ? #5b2723 : touch.pressed ? #9f241c : touch.has-hover ? #e1502f : #c73325;
+    background: !root.enabled ? Theme.accent-disabled : touch.pressed ? Theme.accent-primary-pressed : touch.has-hover ? Theme.accent-primary-hover : Theme.accent-primary;
 
     Text {
         text: root.text;
-        color: root.enabled ? #fff7ed : #a9948d;
+        color: root.enabled ? Theme.text-on-accent : Theme.text-disabled-on-accent;
         font-size: 15px;
         font-weight: 700;
         horizontal-alignment: center;
@@ -47,12 +48,12 @@ component SecondaryButton inherits Rectangle {
     min-height: 38px;
     border-radius: 6px;
     border-width: 1px;
-    border-color: !root.enabled ? #3f302d : touch.has-hover ? #f07a37 : #6d3327;
-    background: !root.enabled ? #18171a : touch.pressed ? #3a1c18 : touch.has-hover ? #2b1816 : #20171a;
+    border-color: !root.enabled ? Theme.border-disabled : touch.has-hover ? Theme.accent-warm : Theme.border-accent-muted;
+    background: !root.enabled ? Theme.surface : touch.pressed ? Theme.surface-pressed : touch.has-hover ? Theme.surface-accent : Theme.surface-raised;
 
     Text {
         text: root.text;
-        color: root.enabled ? #f3d8c4 : #776b66;
+        color: root.enabled ? Theme.text-primary : Theme.text-disabled;
         font-size: 14px;
         font-weight: 600;
         horizontal-alignment: center;
@@ -75,13 +76,13 @@ component HelpMenuButton inherits Rectangle {
     min-height: 38px;
     border-radius: 6px;
     border-width: 1px;
-    border-color: root.active ? #f07a37 : touch.has-hover ? #f07a37 : #6d3327;
-    background: root.active ? #2b1816 : touch.pressed ? #3a1c18 : touch.has-hover ? #2b1816 : #20171a;
+    border-color: root.active ? Theme.accent-warm : touch.has-hover ? Theme.accent-warm : Theme.border-accent-muted;
+    background: root.active ? Theme.surface-accent : touch.pressed ? Theme.surface-pressed : touch.has-hover ? Theme.surface-accent : Theme.surface-raised;
 
     Text {
         text: "Help";
         width: parent.width;
-        color: #f3d8c4;
+        color: Theme.text-primary;
         font-size: 14px;
         font-weight: 600;
         horizontal-alignment: center;
@@ -96,7 +97,7 @@ component HelpMenuButton inherits Rectangle {
         viewbox-width: 10;
         viewbox-height: 10;
         commands: root.active ? "M 1 7 L 5 3 L 9 7" : "M 1 3 L 5 7 L 9 3";
-        stroke: #f3d8c4;
+        stroke: Theme.text-primary;
         stroke-width: 1.8px;
         stroke-line-cap: round;
         stroke-line-join: round;
@@ -117,13 +118,13 @@ component NavButton inherits Rectangle {
 
     height: 42px;
     border-radius: 6px;
-    background: root.active ? #3a1f1b : touch.has-hover ? #211b1e : transparent;
+    background: root.active ? Theme.surface-selected : touch.has-hover ? Theme.surface-hover : transparent;
     border-width: root.active ? 1px : 0px;
-    border-color: #743325;
+    border-color: Theme.border-accent;
 
     Text {
         text: root.text;
-        color: root.active ? #fff1dd : #cbb8ab;
+        color: root.active ? Theme.text-primary : Theme.text-muted;
         font-size: 14px;
         font-weight: root.active ? 700 : 600;
         horizontal-alignment: left;
@@ -148,12 +149,12 @@ component TabButton inherits Rectangle {
     height: 36px;
     border-radius: 6px;
     border-width: 1px;
-    border-color: root.active ? #743325 : #342724;
-    background: root.active ? #3a1f1b : touch.has-hover ? #211b1e : #151419;
+    border-color: root.active ? Theme.border-accent : Theme.border-muted;
+    background: root.active ? Theme.surface-selected : touch.has-hover ? Theme.surface-hover : Theme.panel-background;
 
     Text {
         text: root.text;
-        color: root.active ? #fff1dd : #cbb8ab;
+        color: root.active ? Theme.text-primary : Theme.text-muted;
         font-size: 13px;
         font-weight: root.active ? 700 : 600;
         horizontal-alignment: center;
@@ -174,8 +175,8 @@ component MetricBlock inherits Rectangle {
     min-height: 78px;
     border-radius: 6px;
     border-width: 1px;
-    border-color: #3c2a26;
-    background: #17151a;
+    border-color: Theme.border-subtle;
+    background: Theme.surface;
 
     VerticalLayout {
         padding: 12px;
@@ -185,13 +186,13 @@ component MetricBlock inherits Rectangle {
             text: root.label;
             font-size: 12px;
             font-weight: 700;
-            color: #f07a37;
+            color: Theme.accent-warm;
         }
 
         Text {
             text: root.value;
             font-size: 15px;
-            color: #ead8ca;
+            color: Theme.text-body;
             wrap: word-wrap;
         }
     }
@@ -203,7 +204,7 @@ component SectionTitle inherits Text {
     text: root.title;
     font-size: 18px;
     font-weight: 700;
-    color: #fff0dc;
+    color: Theme.text-strong;
 }
 
 component SmallLabel inherits Text {
@@ -212,7 +213,7 @@ component SmallLabel inherits Text {
     text: root.label;
     font-size: 12px;
     font-weight: 700;
-    color: #c48a66;
+    color: Theme.text-secondary;
 }
 
 component SegmentedButton inherits Rectangle {
@@ -223,12 +224,12 @@ component SegmentedButton inherits Rectangle {
     min-width: 132px;
     height: 34px;
     border-width: 1px;
-    border-color: root.active ? #f07a37 : #342724;
-    background: root.active ? #3a1f1b : touch.has-hover ? #211b1e : #151419;
+    border-color: root.active ? Theme.accent-warm : Theme.border-muted;
+    background: root.active ? Theme.surface-selected : touch.has-hover ? Theme.surface-hover : Theme.panel-background;
 
     Text {
         text: root.text;
-        color: root.active ? #fff1dd : #cbb8ab;
+        color: root.active ? Theme.text-primary : Theme.text-muted;
         font-size: 13px;
         font-weight: root.active ? 700 : 600;
         horizontal-alignment: center;
@@ -264,8 +265,8 @@ component LaunchOptionToggle inherits Rectangle {
     min-width: root.measured-min-width-px * 1px;
     border-radius: 6px;
     border-width: 1px;
-    border-color: root.checked ? #f07a37 : touch.has-hover ? #6d3327 : #342724;
-    background: root.checked ? #2a1c18 : touch.has-hover ? #211b1e : #151419;
+    border-color: root.checked ? Theme.accent-warm : touch.has-hover ? Theme.border-accent-muted : Theme.border-muted;
+    background: root.checked ? Theme.surface-checked : touch.has-hover ? Theme.surface-hover : Theme.panel-background;
 
     measurement := Text {
         text: root.text;
@@ -284,13 +285,13 @@ component LaunchOptionToggle inherits Rectangle {
         height: 18px;
         border-radius: 3px;
         border-width: 2px;
-        border-color: root.checked ? #f07a37 : #8a7568;
-        background: root.checked ? #c73325 : transparent;
+        border-color: root.checked ? Theme.accent-warm : Theme.border-neutral;
+        background: root.checked ? Theme.accent-primary : transparent;
 
         Text {
             visible: root.checked;
             text: "✓";
-            color: #fff7ed;
+            color: Theme.text-on-accent;
             font-size: 13px;
             font-weight: 800;
             horizontal-alignment: center;
@@ -302,7 +303,7 @@ component LaunchOptionToggle inherits Rectangle {
         x: root.label-left-padding;
         width: parent.width - root.label-left-padding - root.label-right-padding;
         text: root.text;
-        color: root.checked ? #fff1dd : #cbb8ab;
+        color: root.checked ? Theme.text-primary : Theme.text-muted;
         font-size: 13px;
         font-weight: root.checked ? 700 : 600;
         letter-spacing: 0px;
@@ -329,12 +330,12 @@ component InfoHint inherits Rectangle {
     height: 20px;
     border-radius: 10px;
     border-width: 1px;
-    border-color: #6d3327;
-    background: touch.has-hover ? #2b1816 : #151419;
+    border-color: Theme.border-accent-muted;
+    background: touch.has-hover ? Theme.surface-accent : Theme.panel-background;
 
     Text {
         text: "i";
-        color: #f3d8c4;
+        color: Theme.text-primary;
         font-size: 12px;
         font-weight: 700;
         horizontal-alignment: center;
@@ -373,7 +374,7 @@ component AppLineEdit inherits Rectangle {
         height: input.height;
         border-radius: 4px;
         border-width: 2px;
-        border-color: #e1502f;
+        border-color: Theme.focus;
     }
 }
 
@@ -467,7 +468,7 @@ export component AppWindow inherits Window {
     preferred-height: 720px;
     min-width: 820px;
     min-height: 520px;
-    background: #0f1014;
+    background: Theme.app-background;
 
     HorizontalLayout {
         padding: 0px;
@@ -475,7 +476,7 @@ export component AppWindow inherits Window {
 
         Rectangle {
             width: 188px;
-            background: #121116;
+            background: Theme.sidebar-background;
 
             VerticalLayout {
                 padding: 18px;
@@ -483,7 +484,7 @@ export component AppWindow inherits Window {
 
                 Text {
                     text: "Dungeon Rampage Haxe";
-                    color: #ffe6c5;
+                    color: Theme.text-title;
                     font-size: 14px;
                     font-weight: 800;
                     wrap: word-wrap;
@@ -534,12 +535,12 @@ export component AppWindow inherits Window {
 
         Rectangle {
             width: 1px;
-            background: #30231f;
+            background: Theme.divider;
         }
 
         Rectangle {
             horizontal-stretch: 1;
-            background: #0f1014;
+            background: Theme.app-background;
 
             VerticalLayout {
                 padding: 26px;
@@ -575,7 +576,7 @@ export component AppWindow inherits Window {
                             Text {
                                 text: root.home-support-text;
                                 font-size: 13px;
-                                color: #a99b91;
+                                color: Theme.text-support;
                                 horizontal-alignment: center;
                             }
                         }
@@ -620,11 +621,11 @@ export component AppWindow inherits Window {
                                 min-height: 58px;
                                 border-radius: 6px;
                                 border-width: 1px;
-                                border-color: #6d3327;
-                                background: #17151a;
+                                border-color: Theme.border-accent-muted;
+                                background: Theme.surface;
                                 drop-shadow-blur: 10px;
                                 drop-shadow-offset-y: 3px;
-                                drop-shadow-color: #00000080;
+                                drop-shadow-color: Theme.shadow-strong;
 
                                 HorizontalLayout {
                                     padding-left: 12px;
@@ -780,7 +781,7 @@ export component AppWindow inherits Window {
 
                                     if root.launch-options.length == 0 : Text {
                                         text: "No known launch options loaded from the release manifest.";
-                                        color: #a99b91;
+                                        color: Theme.text-support;
                                         font-size: 13px;
                                     }
 
@@ -949,8 +950,8 @@ export component AppWindow inherits Window {
                                 vertical-stretch: 1;
                                 border-radius: 6px;
                                 border-width: 1px;
-                                border-color: #342724;
-                                background: #151419;
+                                border-color: Theme.border-muted;
+                                background: Theme.panel-background;
 
                                 VerticalLayout {
                                     padding: 12px;
@@ -1086,15 +1087,15 @@ export component AppWindow inherits Window {
         y: max(root.info-tooltip-anchor-y - self.height - 14px, 8px);
         border-radius: 6px;
         border-width: 1px;
-        border-color: #6d3327;
-        background: #20171a;
+        border-color: Theme.border-accent-muted;
+        background: Theme.surface-raised;
 
         info-tooltip-text := Text {
             x: 10px;
             y: 8px;
             width: parent.width - 20px;
             text: root.info-tooltip-text;
-            color: #ead8ca;
+            color: Theme.text-body;
             font-size: 12px;
             wrap: word-wrap;
         }

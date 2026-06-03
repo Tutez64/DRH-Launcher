@@ -111,6 +111,8 @@ When active install metadata and a matching cached archive are available, `Repai
 
 The default visual direction is a dark theme with orange and red accents, matching the broad color mood of Dungeon Rampage Haxe.
 
+Slint UI colors should be defined in `ui/theme.slint` through the exported `Theme` global, then referenced by semantic names from `ui/app.slint`. New Slint components should not introduce raw color literals unless they are deliberately adding a new palette entry.
+
 Future versions may add more custom visual elements inspired by the game, but this is not a priority for the first implementation. The UI should stay clear, readable and practical before becoming more decorative.
 
 An optional light theme can be added later if Slint makes it straightforward to maintain both themes without duplicating too much UI code.
