@@ -139,10 +139,9 @@ Discord and GitHub links can live in `Settings > About` or another secondary loc
 
 Useful secondary actions:
 
-- go to launch options
 - check for updates
-- verify or repair the installed game
-- open recent logs
+- go to options
+- open a compact Help menu for recovery actions such as restore, reinstall and logs
 
 The home UI state should be derived from a small view model rather than scattered direct widget updates. This keeps installed state, latest-release state, process state and temporary progress messages easier to reason about as the launcher grows.
 
@@ -377,7 +376,7 @@ Expected behavior:
 - partial or inconsistent installs should be reported as `BrokenInstall`
 
 The launcher should prefer a clear recovery action over silent repair when data loss or unexpected deletion is possible.
-Repairing a broken active install replaces only `Dungeon Rampage Haxe/current/` and preserves `Dungeon Rampage Haxe/previous/` when present, so an existing rollback target is not lost during repair.
+Repairing or reinstalling the active install replaces only `Dungeon Rampage Haxe/current/` and preserves `Dungeon Rampage Haxe/previous/` when present, so an existing rollback target is not lost during recovery.
 
 The initial rollback model is intentionally simple:
 

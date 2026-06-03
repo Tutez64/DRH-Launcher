@@ -58,8 +58,11 @@ struct HomeViewState {
     update_check_enabled: bool,
     open_install_folder_enabled: bool,
     open_logs_folder_enabled: bool,
+    restore_previous_visible: bool,
     restore_previous_enabled: bool,
     restore_previous_text: String,
+    reinstall_current_enabled: bool,
+    reinstall_current_text: String,
     status_detail: String,
     log_lines: Vec<LogLineView>,
 }
@@ -235,6 +238,7 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_install_action_enabled(false);
             ui.set_update_check_enabled(false);
             ui.set_restore_previous_enabled(false);
+            ui.set_reinstall_current_enabled(false);
             ui.set_install_action_text(InstallState::Updating.primary_action().into());
 
             let ui = ui.as_weak();
@@ -384,6 +388,73 @@ fn main() -> Result<(), slint::PlatformError> {
                     refresh_home_state(&ui, &config.borrow(), &message);
                 }
             }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let game_process = Rc::clone(&game_process);
+        ui.unwrap().on_reinstall_current_version(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if process_is_running(&game_process) {
+                let message = "Stop DRH before reinstalling the current version.";
+                log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
+                refresh_home_state(&ui, &config.borrow(), message);
+                return;
+            }
+
+            let Some(install_dir) = config.borrow().install_dir.clone() else {
+                let message = "No install directory selected.";
+                log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
+                refresh_home_state(&ui, &config.borrow(), message);
+                return;
+            };
+
+            let config = config.borrow().clone();
+            refresh_home_state(&ui, &config, "Reinstalling current version...");
+            ui.set_install_action_enabled(false);
+            ui.set_update_check_enabled(false);
+            ui.set_restore_previous_enabled(false);
+            ui.set_reinstall_current_enabled(false);
+            ui.set_install_action_text(InstallState::Updating.primary_action().into());
+
+            let ui = ui.as_weak();
+            thread::spawn(move || {
+                let message = repair_from_cached_active_archive(
+                    &ui,
+                    &install_dir,
+                    config.download_cache_limit,
+                )
+                .unwrap_or_else(|error| format!("Could not reinstall current version: {error}"));
+                let level = if is_error_message(&message) {
+                    diagnostics::LogLevel::Error
+                } else {
+                    diagnostics::LogLevel::Info
+                };
+                let _ = diagnostics::write(&install_dir, level, &message);
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui.upgrade() else {
+                        return;
+                    };
+
+                    let installed_launch_options = load_installed_launch_options(&config);
+                    refresh_launch_options_view(
+                        &ui,
+                        &config,
+                        installed_launch_options.as_ref(),
+                        "Save",
+                    );
+                    refresh_home_state(&ui, &config, &message);
+                    ui.set_install_action_enabled(true);
+                    ui.set_update_check_enabled(true);
+                    ui.set_update_check_text("Check for updates".into());
+                });
+            });
         });
     }
 
@@ -999,6 +1070,23 @@ fn restore_previous_release_version(config: &LauncherConfig) -> Option<String> {
     state.previous.map(|previous| previous.version)
 }
 
+fn reinstall_current_version_text(config: &LauncherConfig) -> String {
+    installed_active_release_version(config)
+        .map(|version| format!("Reinstall {version}"))
+        .unwrap_or_else(|| "Reinstall current".to_string())
+}
+
+fn reinstall_current_version_available(config: &LauncherConfig) -> bool {
+    installed_active_release_version(config).is_some()
+}
+
+fn installed_active_release_version(config: &LauncherConfig) -> Option<String> {
+    let install_dir = config.install_dir.as_deref()?;
+    install_metadata::InstalledState::load(install_dir)
+        .ok()
+        .map(|state| state.active.version)
+}
+
 fn recommended_game_args_from_launch_options(
     launch_options: Option<&ManifestLaunchOptions>,
 ) -> Vec<String> {
@@ -1251,8 +1339,11 @@ fn home_view_state(
         update_check_enabled: true,
         open_install_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
         open_logs_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
+        restore_previous_visible: restore_previous_version_available(config),
         restore_previous_enabled: restore_previous_version_available(config),
         restore_previous_text: restore_previous_version_text(config),
+        reinstall_current_enabled: reinstall_current_version_available(config),
+        reinstall_current_text: reinstall_current_version_text(config),
         status_detail: status_detail(activity_message),
         log_lines: log_lines(config),
     };
@@ -1325,8 +1416,11 @@ fn apply_home_view_state(ui: &AppWindow, state: HomeViewState) {
     ui.set_update_check_enabled(state.update_check_enabled);
     ui.set_open_install_folder_enabled(state.open_install_folder_enabled);
     ui.set_open_logs_folder_enabled(state.open_logs_folder_enabled);
+    ui.set_restore_previous_visible(state.restore_previous_visible);
     ui.set_restore_previous_enabled(state.restore_previous_enabled);
     ui.set_restore_previous_text(state.restore_previous_text.into());
+    ui.set_reinstall_current_enabled(state.reinstall_current_enabled);
+    ui.set_reinstall_current_text(state.reinstall_current_text.into());
     ui.set_status_detail(state.status_detail.into());
     ui.set_log_lines(ModelRc::new(VecModel::from(state.log_lines)));
 }
@@ -1467,7 +1561,9 @@ fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str)
     ui.set_version_status(status.version_text().into());
     ui.set_open_install_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
     ui.set_open_logs_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
+    ui.set_restore_previous_visible(restore_previous_version_available(config));
     ui.set_restore_previous_enabled(false);
+    ui.set_reinstall_current_enabled(false);
     refresh_logs_view(ui, config);
     set_status_message(ui, message);
 }

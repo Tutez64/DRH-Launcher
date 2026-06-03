@@ -67,6 +67,49 @@ component SecondaryButton inherits Rectangle {
     }
 }
 
+component HelpMenuButton inherits Rectangle {
+    in property <bool> active;
+    callback clicked();
+
+    min-width: 142px;
+    min-height: 38px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.active ? #f07a37 : touch.has-hover ? #f07a37 : #6d3327;
+    background: root.active ? #2b1816 : touch.pressed ? #3a1c18 : touch.has-hover ? #2b1816 : #20171a;
+
+    Text {
+        text: "Help";
+        width: parent.width;
+        color: #f3d8c4;
+        font-size: 14px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    Path {
+        width: 14px;
+        height: 14px;
+        x: parent.width - self.width - 18px;
+        y: (parent.height - self.height) / 2;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        commands: root.active ? "M 1 7 L 5 3 L 9 7" : "M 1 3 L 5 7 L 9 3";
+        stroke: #f3d8c4;
+        stroke-width: 1.8px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        fill: transparent;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 component NavButton inherits Rectangle {
     in property <string> text;
     in property <bool> active;
@@ -389,10 +432,14 @@ export component AppWindow inherits Window {
         || root.custom-game-args != root.saved-custom-game-args;
     in property <bool> open-install-folder-enabled: false;
     in property <bool> open-logs-folder-enabled: false;
+    in property <bool> restore-previous-visible: false;
     in property <bool> restore-previous-enabled: false;
     in property <string> restore-previous-text: "Restore previous";
+    in property <bool> reinstall-current-enabled: false;
+    in property <string> reinstall-current-text: "Reinstall current";
     in-out property <int> active-page: 0;
     in-out property <int> settings-page: 0;
+    in-out property <bool> help-menu-open: false;
     property <int> logs-scroll-ticks: 0;
     property <int> logs-restore-ticks: 0;
     in-out property <length> logs-viewport-y: 0px;
@@ -408,6 +455,7 @@ export component AppWindow inherits Window {
     callback open-logs-folder();
     callback refresh-logs();
     callback restore-previous-version();
+    callback reinstall-current-version();
     callback save-launch-options();
     callback select-launch-arguments-mode(int);
     callback toggle-launch-option(int, bool);
@@ -540,6 +588,7 @@ export component AppWindow inherits Window {
                                 text: root.update-check-text;
                                 enabled: root.update-check-enabled;
                                 clicked => {
+                                    root.help-menu-open = false;
                                     root.check-updates();
                                 }
                             }
@@ -547,24 +596,71 @@ export component AppWindow inherits Window {
                             SecondaryButton {
                                 text: "Options";
                                 clicked => {
+                                    root.help-menu-open = false;
                                     root.active-page = 1;
                                 }
                             }
 
-                            if root.restore-previous-enabled : SecondaryButton {
-                                text: root.restore-previous-text;
-                                enabled: root.restore-previous-enabled;
+                            HelpMenuButton {
+                                active: root.help-menu-open;
                                 clicked => {
-                                    root.restore-previous-version();
+                                    root.help-menu-open = !root.help-menu-open;
                                 }
                             }
 
-                            SecondaryButton {
-                                text: "Logs";
-                                clicked => {
-                                    root.logs-restore-ticks = 0;
-                                    root.active-page = 3;
-                                    root.settings-page = 1;
+                        }
+
+                        if root.help-menu-open : HorizontalLayout {
+                            horizontal-stretch: 1;
+                            min-height: 74px;
+                            alignment: center;
+
+                            Rectangle {
+                                width: 520px;
+                                min-height: 58px;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: #6d3327;
+                                background: #17151a;
+                                drop-shadow-blur: 10px;
+                                drop-shadow-offset-y: 3px;
+                                drop-shadow-color: #00000080;
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    padding-top: 10px;
+                                    padding-bottom: 10px;
+                                    alignment: center;
+                                    spacing: 10px;
+
+                                    if root.restore-previous-visible : SecondaryButton {
+                                        text: root.restore-previous-text;
+                                        enabled: root.restore-previous-enabled;
+                                        clicked => {
+                                            root.help-menu-open = false;
+                                            root.restore-previous-version();
+                                        }
+                                    }
+
+                                    SecondaryButton {
+                                        text: root.reinstall-current-text;
+                                        enabled: root.reinstall-current-enabled;
+                                        clicked => {
+                                            root.help-menu-open = false;
+                                            root.reinstall-current-version();
+                                        }
+                                    }
+
+                                    SecondaryButton {
+                                        text: "Open logs";
+                                        clicked => {
+                                            root.help-menu-open = false;
+                                            root.logs-restore-ticks = 0;
+                                            root.active-page = 3;
+                                            root.settings-page = 1;
+                                        }
+                                    }
                                 }
                             }
                         }
