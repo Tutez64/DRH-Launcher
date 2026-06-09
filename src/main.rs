@@ -48,6 +48,11 @@ use slint::{Brush, Color, Model, ModelRc, Timer, TimerMode, VecModel};
 
 slint::include_modules!();
 
+const DISCORD_URL: &str = "https://discord.gg/SSwUQ8fmcb";
+const DRH_GITHUB_URL: &str = "https://github.com/Tutez64/Dungeon-Rampage-Haxe";
+const DRHL_GITHUB_URL: &str = "https://github.com/Tutez64/DRH-Launcher";
+const AX4_GITHUB_URL: &str = "https://github.com/Tutez64/ax4";
+
 struct HomeViewState {
     install_status: String,
     install_action_text: String,
@@ -76,7 +81,6 @@ fn main() -> Result<(), slint::PlatformError> {
     let release_source = ReleaseSource::from_environment();
 
     ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
-    ui.set_release_source_label(release_source.label().into());
     ui.set_config_path(paths::config_file().display().to_string().into());
     refresh_settings_view(&ui, &config.borrow(), "Save");
     let installed_launch_options = load_installed_launch_options(&config.borrow());
@@ -688,6 +692,32 @@ fn main() -> Result<(), slint::PlatformError> {
 
     {
         let ui = ui.as_weak();
+        ui.unwrap().on_drhl_metric_width_measured(move |width| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if width > ui.get_drhl_metric_min_width_px() {
+                ui.set_drhl_metric_min_width_px(width);
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        ui.unwrap().on_link_button_width_measured(move |width| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if width > ui.get_link_button_min_width_px() {
+                ui.set_link_button_min_width_px(width);
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
         ui.unwrap().on_toggle_launch_option(move |index, checked| {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -780,6 +810,54 @@ fn main() -> Result<(), slint::PlatformError> {
                     set_status_message(&ui, &format!("Could not open logs folder: {error}"))
                 }
             }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_open_discord_link(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            open_external_link_from_ui(&ui, &config.borrow(), "Discord", DISCORD_URL);
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_open_drh_github_link(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            open_external_link_from_ui(&ui, &config.borrow(), "DRH GitHub", DRH_GITHUB_URL);
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_open_drhl_github_link(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            open_external_link_from_ui(&ui, &config.borrow(), "DRHL GitHub", DRHL_GITHUB_URL);
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_open_ax4_github_link(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            open_external_link_from_ui(&ui, &config.borrow(), "ax4 GitHub", AX4_GITHUB_URL);
         });
     }
 
@@ -1729,6 +1807,45 @@ fn open_folder(path: &Path) -> Result<(), String> {
     } else {
         let mut command = Command::new("xdg-open");
         command.arg(path);
+        command
+    };
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn open_external_link_from_ui(ui: &AppWindow, config: &LauncherConfig, label: &str, url: &str) {
+    match open_url(url) {
+        Ok(()) => {
+            log_for_config(
+                config,
+                diagnostics::LogLevel::Info,
+                &format!("{label} link opened."),
+            );
+            set_status_message(ui, &format!("{label} link opened."));
+        }
+        Err(error) => {
+            let message = format!("Could not open {label} link: {error}");
+            log_for_config(config, diagnostics::LogLevel::Error, &message);
+            set_status_message(ui, &message);
+        }
+    }
+}
+
+fn open_url(url: &str) -> Result<(), String> {
+    let mut command = if cfg!(target_os = "windows") {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    } else if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
         command
     };
 

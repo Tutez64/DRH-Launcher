@@ -495,7 +495,6 @@ The game may need explicit support to load mods cleanly. Until then, the launche
 `About` should include:
 
 - DRH Launcher version
-- active release source
 - Discord and GitHub links
 - license information
 - technology credits
@@ -534,4 +533,3 @@ The `Settings > About` page should include:
 - license information
 - technology credits
 - DRH Launcher version
-- active release source

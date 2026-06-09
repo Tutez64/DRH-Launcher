@@ -225,6 +225,141 @@ component MetricBlock inherits Rectangle {
     }
 }
 
+component CompactMetricBlock inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    property <length> horizontal-padding: 20px;
+    out property <float> measured-min-width-px:
+        max(96px, max(label-measurement.preferred-width, value-measurement.preferred-width) + root.horizontal-padding) / 1px;
+    callback width-measured(float);
+
+    init => {
+        root.width-measured(root.measured-min-width-px);
+    }
+
+    changed measured-min-width-px => {
+        root.width-measured(root.measured-min-width-px);
+    }
+
+    min-width: root.measured-min-width-px * 1px;
+    min-height: 52px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    background: Theme.panel-background;
+
+    label-measurement := Text {
+        text: root.label;
+        font-size: 11px;
+        font-weight: 700;
+        visible: false;
+    }
+
+    value-measurement := Text {
+        text: root.value;
+        font-size: 13px;
+        visible: false;
+    }
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 3px;
+
+        Text {
+            text: root.label;
+            font-size: 11px;
+            font-weight: 700;
+            color: Theme.accent-warm;
+        }
+
+        Text {
+            text: root.value;
+            font-size: 13px;
+            color: Theme.text-body;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component LinkButton inherits Rectangle {
+    in property <string> text;
+    in property <int> icon-kind;
+    property <length> label-left-padding: 48px;
+    property <length> label-right-padding: 16px;
+    out property <float> measured-min-width-px:
+        max(120px, link-label-measurement.preferred-width + root.label-left-padding + root.label-right-padding) / 1px;
+    callback clicked();
+    callback width-measured(float);
+
+    init => {
+        root.width-measured(root.measured-min-width-px);
+    }
+
+    changed measured-min-width-px => {
+        root.width-measured(root.measured-min-width-px);
+    }
+
+    min-width: root.measured-min-width-px * 1px;
+    min-height: 40px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.accent-warm : Theme.border-accent-muted;
+    background: touch.pressed ? Theme.surface-pressed : touch.has-hover ? Theme.surface-accent : Theme.surface-raised;
+
+    link-label-measurement := Text {
+        text: root.text;
+        font-size: 14px;
+        font-weight: 600;
+        visible: false;
+    }
+
+    HorizontalLayout {
+        y: (parent.height - self.height) / 2;
+        height: 32px;
+        width: parent.width;
+        padding-left: 14px;
+        padding-right: 16px;
+        spacing: 9px;
+        alignment: center;
+
+        Rectangle {
+            width: 32px;
+            height: 32px;
+
+            if root.icon-kind == 0 : Image {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                height: 24px;
+                source: @image-url("icons/discord.svg");
+                image-fit: contain;
+            }
+
+            if root.icon-kind == 1 : Image {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                height: 24px;
+                source: @image-url("icons/github.svg");
+                image-fit: contain;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: Theme.text-primary;
+            font-size: 14px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 component SettingsCard inherits Rectangle {
     in property <string> title;
     in property <string> description;
@@ -497,7 +632,6 @@ export component AppWindow inherits Window {
     in property <string> status-detail;
     in property <[LogLineView]> log-lines;
     in property <string> launcher-version;
-    in property <string> release-source-label;
     in property <string> config-path;
     in property <string> install-folder-path;
     in-out property <string> download-cache-limit;
@@ -515,6 +649,8 @@ export component AppWindow inherits Window {
     in-out property <string> launch-options-save-text: "Save";
     in property <[LaunchOptionView]> launch-options;
     in property <float> launch-option-min-width-px: 210;
+    in property <float> drhl-metric-min-width-px: 96;
+    in property <float> link-button-min-width-px: 120;
     in-out property <string> launch-options-state;
     in-out property <string> saved-launch-options-state;
     property <bool> launch-options-dirty: root.pre-launch-command != root.saved-pre-launch-command
@@ -545,6 +681,10 @@ export component AppWindow inherits Window {
     callback open-config-folder();
     callback open-install-folder();
     callback open-logs-folder();
+    callback open-discord-link();
+    callback open-drh-github-link();
+    callback open-drhl-github-link();
+    callback open-ax4-github-link();
     callback refresh-logs();
     callback increment-download-cache-limit();
     callback decrement-download-cache-limit();
@@ -556,6 +696,8 @@ export component AppWindow inherits Window {
     callback select-launch-arguments-mode(int);
     callback toggle-launch-option(int, bool);
     callback launch-option-width-measured(float);
+    callback drhl-metric-width-measured(float);
+    callback link-button-width-measured(float);
     callback cancel-launch-options();
 
     changed download-cache-limit => {
@@ -1237,33 +1379,174 @@ export component AppWindow inherits Window {
                             spacing: 16px;
                             vertical-stretch: 1;
 
-                            MetricBlock {
-                                label: "DRH Launcher";
-                                value: root.launcher-version;
-                            }
-
-                            MetricBlock {
-                                label: "Release source";
-                                value: root.release-source-label;
-                            }
-
-                            MetricBlock {
-                                label: "License";
-                                value: "GPL-3.0-or-later";
-                            }
-
-                            SecondaryButton {
-                                text: "GitHub";
-                                enabled: false;
-                            }
-
-                            SecondaryButton {
-                                text: "Discord";
-                                enabled: false;
-                            }
-
-                            Rectangle {
+                            about-page-scroll := ScrollView {
+                                horizontal-stretch: 1;
                                 vertical-stretch: 1;
+                                viewport-width: self.width;
+                                viewport-height: about-page-content.preferred-height;
+
+                                about-page-content := VerticalLayout {
+                                    width: about-page-scroll.width;
+                                    spacing: 12px;
+
+                                    SettingsCard {
+                                        title: "Dungeon Rampage Haxe";
+                                        description: "A Haxe & OpenFL port of Dungeon Rampage, intended as a higher-performance, responsive version of the original game, for a smoother experience.";
+
+                                        SmallLabel {
+                                            label: "Technologies";
+                                        }
+
+                                        Text {
+                                            text: "Haxe, ax4, and forks of OpenFL, Lime, HXCPP, SWF and SteamWrap. ax4 is my ActionScript 3 to Haxe converter; it also provides DRH's runtime compatibility layer.";
+                                            font-size: 13px;
+                                            color: Theme.text-body;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+
+                                    SettingsCard {
+                                        title: "DRH Launcher";
+                                        description: "The recommended way to install, update, configure, and play Dungeon Rampage Haxe.";
+
+                                        drhl-metrics-area := Rectangle {
+                                            horizontal-stretch: 1;
+                                            height: drhl-metrics-grid.preferred-height;
+
+                                            drhl-metrics-grid := GridLayout {
+                                                width: parent.width;
+                                                property <length> available-width: drhl-metrics-area.width;
+                                                property <int> columns:
+                                                    drhl-metrics-grid.available-width >= root.drhl-metric-min-width-px * 3px + 12px ? 3
+                                                    : drhl-metrics-grid.available-width >= root.drhl-metric-min-width-px * 2px + 6px ? 2
+                                                    : 1;
+                                                spacing: 6px;
+
+                                                CompactMetricBlock {
+                                                    min-width: root.drhl-metric-min-width-px * 1px;
+                                                    row: 0;
+                                                    col: 0;
+                                                    label: "Version";
+                                                    value: root.launcher-version;
+                                                    width-measured(width) => {
+                                                        root.drhl-metric-width-measured(width);
+                                                    }
+                                                }
+
+                                                CompactMetricBlock {
+                                                    min-width: root.drhl-metric-min-width-px * 1px;
+                                                    row: 0 / drhl-metrics-grid.columns;
+                                                    col: Math.mod(1, drhl-metrics-grid.columns);
+                                                    label: "Technologies";
+                                                    value: "Rust and Slint";
+                                                    width-measured(width) => {
+                                                        root.drhl-metric-width-measured(width);
+                                                    }
+                                                }
+
+                                                CompactMetricBlock {
+                                                    min-width: root.drhl-metric-min-width-px * 1px;
+                                                    row: 2 / drhl-metrics-grid.columns;
+                                                    col: Math.mod(2, drhl-metrics-grid.columns);
+                                                    label: "License";
+                                                    value: "GPL-3.0-or-later";
+                                                    width-measured(width) => {
+                                                        root.drhl-metric-width-measured(width);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    SettingsCard {
+                                        title: "Project and rights";
+                                        description: "DRH, DRH Launcher and ax4 are maintained by Tutez and developed with public source repositories.";
+
+                                        Text {
+                                            text: "DRH Launcher and ax4 are free software under GPL-3.0-or-later and MIT respectively. DRH source code is publicly available, but parts of DRH derive from the original game and include original assets or third-party libraries, so their original rights and licenses still apply.";
+                                            font-size: 13px;
+                                            color: Theme.text-body;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+
+                                    SettingsCard {
+                                        title: "Links";
+                                        description: "Community and source repositories. If you appreciate my work, starring the GitHub repositories helps support the projects.";
+
+                                        link-buttons-area := Rectangle {
+                                            horizontal-stretch: 1;
+                                            height: link-buttons-grid.preferred-height;
+
+                                            link-buttons-grid := GridLayout {
+                                                width: parent.width;
+                                                property <length> available-width: link-buttons-area.width;
+                                                property <int> columns:
+                                                    link-buttons-grid.available-width >= root.link-button-min-width-px * 4px + 30px ? 4
+                                                    : link-buttons-grid.available-width >= root.link-button-min-width-px * 3px + 20px ? 3
+                                                    : link-buttons-grid.available-width >= root.link-button-min-width-px * 2px + 10px ? 2
+                                                    : 1;
+                                                spacing: 10px;
+
+                                                LinkButton {
+                                                    min-width: root.link-button-min-width-px * 1px;
+                                                    row: 0;
+                                                    col: 0;
+                                                    text: "Discord";
+                                                    icon-kind: 0;
+                                                    clicked => {
+                                                        root.open-discord-link();
+                                                    }
+                                                    width-measured(width) => {
+                                                        root.link-button-width-measured(width);
+                                                    }
+                                                }
+
+                                                LinkButton {
+                                                    min-width: root.link-button-min-width-px * 1px;
+                                                    row: 1 / link-buttons-grid.columns;
+                                                    col: Math.mod(1, link-buttons-grid.columns);
+                                                    text: "DRH GitHub";
+                                                    icon-kind: 1;
+                                                    clicked => {
+                                                        root.open-drh-github-link();
+                                                    }
+                                                    width-measured(width) => {
+                                                        root.link-button-width-measured(width);
+                                                    }
+                                                }
+
+                                                LinkButton {
+                                                    min-width: root.link-button-min-width-px * 1px;
+                                                    row: 2 / link-buttons-grid.columns;
+                                                    col: Math.mod(2, link-buttons-grid.columns);
+                                                    text: "DRHL GitHub";
+                                                    icon-kind: 1;
+                                                    clicked => {
+                                                        root.open-drhl-github-link();
+                                                    }
+                                                    width-measured(width) => {
+                                                        root.link-button-width-measured(width);
+                                                    }
+                                                }
+
+                                                LinkButton {
+                                                    min-width: root.link-button-min-width-px * 1px;
+                                                    row: 3 / link-buttons-grid.columns;
+                                                    col: Math.mod(3, link-buttons-grid.columns);
+                                                    text: "ax4 GitHub";
+                                                    icon-kind: 1;
+                                                    clicked => {
+                                                        root.open-ax4-github-link();
+                                                    }
+                                                    width-measured(width) => {
+                                                        root.link-button-width-measured(width);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
