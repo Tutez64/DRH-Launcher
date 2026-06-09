@@ -49,9 +49,21 @@ use slint::{Brush, Color, Model, ModelRc, Timer, TimerMode, VecModel};
 slint::include_modules!();
 
 const DISCORD_URL: &str = "https://discord.gg/SSwUQ8fmcb";
-const DRH_GITHUB_URL: &str = "https://github.com/Tutez64/Dungeon-Rampage-Haxe";
-const DRHL_GITHUB_URL: &str = "https://github.com/Tutez64/DRH-Launcher";
-const AX4_GITHUB_URL: &str = "https://github.com/Tutez64/ax4";
+const DRH_GITHUB_URL: &str = concat!(
+    "https://github.com/Tutez64/Dungeon-Rampage-Haxe",
+    "?utm_source=drh_launcher&utm_medium=about_page",
+    "&utm_campaign=project_links&utm_content=drh_github",
+);
+const DRHL_GITHUB_URL: &str = concat!(
+    "https://github.com/Tutez64/DRH-Launcher",
+    "?utm_source=drh_launcher&utm_medium=about_page",
+    "&utm_campaign=project_links&utm_content=drhl_github",
+);
+const AX4_GITHUB_URL: &str = concat!(
+    "https://github.com/Tutez64/ax4",
+    "?utm_source=drh_launcher&utm_medium=about_page",
+    "&utm_campaign=project_links&utm_content=ax4_github",
+);
 
 struct HomeViewState {
     install_status: String,
@@ -1836,8 +1848,8 @@ fn open_external_link_from_ui(ui: &AppWindow, config: &LauncherConfig, label: &s
 
 fn open_url(url: &str) -> Result<(), String> {
     let mut command = if cfg!(target_os = "windows") {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", url]);
+        let mut command = Command::new("rundll32");
+        command.args(["url.dll,FileProtocolHandler", url]);
         command
     } else if cfg!(target_os = "macos") {
         let mut command = Command::new("open");
