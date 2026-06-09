@@ -723,12 +723,23 @@ export component AppWindow inherits Window {
                 padding: 18px;
                 spacing: 10px;
 
-                Text {
-                    text: "Dungeon Rampage Haxe";
-                    color: Theme.text-title;
-                    font-size: 14px;
-                    font-weight: 800;
-                    wrap: word-wrap;
+                VerticalLayout {
+                    spacing: 2px;
+
+                    Text {
+                        text: "DRH Launcher";
+                        color: Theme.text-title;
+                        font-size: 15px;
+                        font-weight: 800;
+                    }
+
+                    Text {
+                        text: "Dungeon Rampage Haxe";
+                        color: Theme.text-secondary;
+                        font-size: 11px;
+                        font-weight: 700;
+                        wrap: word-wrap;
+                    }
                 }
 
                 Rectangle {
