@@ -64,6 +64,7 @@ const AX4_GITHUB_URL: &str = concat!(
     "?utm_source=drh_launcher&utm_medium=about_page",
     "&utm_campaign=project_links&utm_content=ax4_github",
 );
+const XDG_APP_ID: &str = "io.github.Tutez64.DRHLauncher";
 
 struct HomeViewState {
     install_status: String,
@@ -86,6 +87,8 @@ struct HomeViewState {
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
+    slint::set_xdg_app_id(XDG_APP_ID)?;
+
     let config = Rc::new(RefCell::new(LauncherConfig::load()));
     let latest_release = Arc::new(Mutex::new(None::<PlatformRelease>));
     let game_process = Rc::new(RefCell::new(None::<Child>));

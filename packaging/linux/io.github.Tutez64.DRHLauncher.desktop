@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=DRH Launcher
+Comment=Install, update, configure, and play Dungeon Rampage Haxe
+Exec=DRH-Launcher
+Icon=io.github.Tutez64.DRHLauncher
+Terminal=false
+Categories=Game;
+StartupNotify=true
+StartupWMClass=io.github.Tutez64.DRHLauncher

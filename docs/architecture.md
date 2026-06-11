@@ -44,6 +44,7 @@ These identifiers should be used consistently in manifests, logs, update decisio
 - Executable: `DRH-Launcher`
 - Window title: `DRH Launcher`
 - User-facing launcher name: `DRH Launcher`
+- Linux desktop app ID: `io.github.Tutez64.DRHLauncher`
 - Steam entry for playing: `Dungeon Rampage Haxe`
 
 Steam should point to the launcher, not directly to the game executable.
