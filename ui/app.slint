@@ -865,6 +865,9 @@ export component AppWindow inherits Window {
     in-out property <int> settings-page: 0;
     in-out property <bool> advanced-settings-open: false;
     in-out property <bool> help-menu-open: false;
+    in-out property <bool> close-confirmation-visible: false;
+    in-out property <bool> close-confirmation-busy: false;
+    in-out property <string> close-confirmation-error;
     property <bool> info-tooltip-visible: false;
     property <string> info-tooltip-text;
     property <length> info-tooltip-anchor-x: 0px;
@@ -897,6 +900,8 @@ export component AppWindow inherits Window {
     callback drhl-metric-width-measured(float);
     callback link-button-width-measured(float);
     callback cancel-launch-options();
+    callback cancel-close();
+    callback confirm-close();
 
     changed download-cache-limit => {
         root.download-cache-limit-error = "";
@@ -1823,6 +1828,78 @@ export component AppWindow inherits Window {
             color: Theme.text-body;
             font-size: 12px;
             wrap: word-wrap;
+        }
+    }
+
+    if root.close-confirmation-visible : Rectangle {
+        z: 2000;
+        background: Theme.modal-scrim;
+
+        TouchArea {}
+
+        Rectangle {
+            width: min(500px, parent.width - 32px);
+            height: close-dialog-content.preferred-height + 48px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border-accent-muted;
+            background: Theme.surface-raised;
+            drop-shadow-blur: 18px;
+            drop-shadow-offset-y: 6px;
+            drop-shadow-color: Theme.shadow-strong;
+
+            close-dialog-content := VerticalLayout {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                height: parent.height - 48px;
+                spacing: 16px;
+
+                Text {
+                    text: "Quit DRH Launcher?";
+                    color: Theme.text-title;
+                    font-size: 19px;
+                    font-weight: 800;
+                }
+
+                Text {
+                    text: "Dungeon Rampage Haxe is still running. DRHL will stop the game, then quit.";
+                    color: Theme.text-body;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+
+                if root.close-confirmation-error != "" : Text {
+                    text: root.close-confirmation-error;
+                    color: Theme.accent-warm;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    min-height: 42px;
+                    spacing: 10px;
+                    alignment: end;
+
+                    SecondaryButton {
+                        text: "Cancel";
+                        enabled: !root.close-confirmation-busy;
+                        clicked => {
+                            root.cancel-close();
+                        }
+                    }
+
+                    PrimaryButton {
+                        text: root.close-confirmation-busy ? "Stopping DRH..." : "Stop DRH and quit";
+                        enabled: !root.close-confirmation-busy;
+                        clicked => {
+                            root.confirm-close();
+                        }
+                    }
+                }
+            }
         }
     }
 }

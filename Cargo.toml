@@ -21,6 +21,15 @@ tar = "0.4.46"
 zip = { version = "9.0.0-pre2", default-features = false, features = ["deflate"] }
 zstd = "0.13.3"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.186"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [build-dependencies]
 slint-build = "1.16.1"
 

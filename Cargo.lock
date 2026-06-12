@@ -1181,6 +1181,7 @@ version = "0.1.0"
 dependencies = [
  "directories",
  "flate2",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
@@ -1189,6 +1190,7 @@ dependencies = [
  "slint-build",
  "tar",
  "tempfile",
+ "windows-sys 0.61.2",
  "zip",
  "zstd",
 ]

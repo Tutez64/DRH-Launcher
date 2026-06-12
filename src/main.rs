@@ -25,7 +25,7 @@ use std::process::Command;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use archive::extract_to_staging;
 use config::{LaunchArgumentsMode, LauncherConfig};
@@ -46,7 +46,7 @@ use installer::{
 use platform::Platform;
 use release_manifest::ManifestLaunchOptions;
 use release_source::ReleaseSource;
-use slint::{Brush, Color, Model, ModelRc, Timer, TimerMode, VecModel};
+use slint::{Brush, CloseRequestResponse, Color, Model, ModelRc, Timer, TimerMode, VecModel};
 
 slint::include_modules!();
 
@@ -100,6 +100,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let latest_release = Arc::new(Mutex::new(None::<PlatformRelease>));
     let game_process = Rc::new(RefCell::new(None::<game_launch::RunningGame>));
     let game_monitor = Rc::new(Timer::default());
+    let game_stop_timer = Rc::new(Timer::default());
     let game_log_positions = Rc::new(RefCell::new(HashMap::<String, LogViewportPosition>::new()));
     let release_source = ReleaseSource::from_environment();
 
@@ -135,6 +136,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let latest_release = Arc::clone(&latest_release);
         let game_process = Rc::clone(&game_process);
         let game_monitor = Rc::clone(&game_monitor);
+        let game_stop_timer = Rc::clone(&game_stop_timer);
         let release_source = release_source.clone();
         ui.unwrap().on_install_or_play(move || {
             let Some(ui) = ui.upgrade() else {
@@ -164,10 +166,17 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(process_error) = process_error {
                 match process_error {
                     Ok(()) => {
-                        let message = stop_game(&game_process);
-                        log_for_config(&config, diagnostics::LogLevel::Info, &message);
                         game_monitor.stop();
-                        refresh_home_state(&ui, &config, &message);
+                        refresh_playing_state(&ui, &config, "Stopping DRH...");
+                        ui.set_install_action_enabled(false);
+                        begin_game_stop(
+                            Rc::clone(&game_stop_timer),
+                            ui.as_weak(),
+                            config.clone(),
+                            Rc::clone(&game_process),
+                            Rc::clone(&game_monitor),
+                            false,
+                        );
                     }
                     Err(error) => refresh_playing_state(
                         &ui,
@@ -1041,6 +1050,74 @@ fn main() -> Result<(), slint::PlatformError> {
                     set_status_message(&ui, &error);
                 }
             }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let game_process = Rc::clone(&game_process);
+        ui.unwrap().window().on_close_requested(move || {
+            let Some(ui) = ui.upgrade() else {
+                return CloseRequestResponse::HideWindow;
+            };
+
+            if ui.get_close_confirmation_visible() {
+                return CloseRequestResponse::KeepWindowShown;
+            }
+
+            if !process_is_running(&game_process) {
+                return CloseRequestResponse::HideWindow;
+            }
+
+            ui.set_close_confirmation_error("".into());
+            ui.set_close_confirmation_busy(false);
+            ui.set_close_confirmation_visible(true);
+            CloseRequestResponse::KeepWindowShown
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        ui.unwrap().on_cancel_close(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if ui.get_close_confirmation_busy() {
+                return;
+            }
+
+            ui.set_close_confirmation_visible(false);
+            ui.set_close_confirmation_error("".into());
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let game_process = Rc::clone(&game_process);
+        let game_monitor = Rc::clone(&game_monitor);
+        let game_stop_timer = Rc::clone(&game_stop_timer);
+        ui.unwrap().on_confirm_close(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if ui.get_close_confirmation_busy() {
+                return;
+            }
+
+            ui.set_close_confirmation_busy(true);
+            ui.set_close_confirmation_error("".into());
+            game_monitor.stop();
+            begin_game_stop(
+                Rc::clone(&game_stop_timer),
+                ui.as_weak(),
+                config.borrow().clone(),
+                Rc::clone(&game_process),
+                Rc::clone(&game_monitor),
+                true,
+            );
         });
     }
 
@@ -2354,6 +2431,10 @@ fn start_game_monitor(
         timer_handle.stop();
         log_for_config(&config, level, &message);
         if let Some(ui) = ui.upgrade() {
+            if ui.get_close_confirmation_visible() {
+                let _ = ui.window().hide();
+                return;
+            }
             refresh_home_state(&ui, &config, &message);
             refresh_logs_view(&ui, &config);
         }
@@ -2377,24 +2458,158 @@ fn process_is_running(game_process: &Rc<RefCell<Option<game_launch::RunningGame>
     }
 }
 
-fn stop_game(game_process: &Rc<RefCell<Option<game_launch::RunningGame>>>) -> String {
-    let mut process = game_process.borrow_mut();
-    let Some(mut game) = process.take() else {
-        return "DRH is not running.".to_string();
+fn begin_game_stop(
+    timer: Rc<Timer>,
+    ui: slint::Weak<AppWindow>,
+    config: LauncherConfig,
+    game_process: Rc<RefCell<Option<game_launch::RunningGame>>>,
+    game_monitor: Rc<Timer>,
+    quit_when_finished: bool,
+) {
+    const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(3);
+
+    let graceful_error = {
+        let process = game_process.borrow();
+        process
+            .as_ref()
+            .map(|game| game_launch::request_graceful_shutdown(&game.child))
+            .transpose()
+            .err()
+    };
+    let started_at = Instant::now();
+    let mut forced = false;
+    let mut forced_reason =
+        graceful_error.map(|error| format!("graceful shutdown request failed: {error}"));
+    let timer_handle = Rc::clone(&timer);
+
+    timer.start(TimerMode::Repeated, Duration::from_millis(100), move || {
+        let mut failure = None;
+        let finished = {
+            let mut process = game_process.borrow_mut();
+            let Some(game) = process.as_mut() else {
+                timer_handle.stop();
+                finish_game_stop(
+                    &ui,
+                    &config,
+                    &game_process,
+                    &game_monitor,
+                    quit_when_finished,
+                    Ok("DRH is not running.".to_string()),
+                );
+                return;
+            };
+
+            match game.child.try_wait() {
+                Ok(Some(status)) => {
+                    let game = process.take().expect("running game disappeared");
+                    Some((game, status))
+                }
+                Ok(None) => {
+                    if !forced
+                        && forced_reason.is_none()
+                        && started_at.elapsed() >= GRACEFUL_STOP_TIMEOUT
+                    {
+                        forced_reason = Some("graceful shutdown timed out".to_string());
+                    }
+                    if !forced && forced_reason.is_some() {
+                        match game.child.kill() {
+                            Ok(()) => forced = true,
+                            Err(error) => {
+                                failure = Some(format!("Could not stop DRH: {error}"));
+                            }
+                        }
+                    }
+                    None
+                }
+                Err(error) => {
+                    failure = Some(format!("Could not inspect DRH process: {error}"));
+                    None
+                }
+            }
+        };
+
+        if let Some(error) = failure {
+            timer_handle.stop();
+            finish_game_stop(
+                &ui,
+                &config,
+                &game_process,
+                &game_monitor,
+                quit_when_finished,
+                Err(error),
+            );
+            return;
+        }
+
+        let Some((game, status)) = finished else {
+            return;
+        };
+
+        timer_handle.stop();
+        let stop_kind = if forced {
+            format!(
+                "Force-stopped after {}",
+                forced_reason
+                    .as_deref()
+                    .unwrap_or("graceful shutdown failed")
+            )
+        } else {
+            "Exited after graceful shutdown request".to_string()
+        };
+        let result = format!("{stop_kind} with status: {status}");
+        let finish_result = game_logs::finish(&game.session_log, &result)
+            .map(|_| "DRH stopped.".to_string())
+            .map_err(|error| {
+                format!("DRH stopped, but its session log could not be finished: {error}")
+            });
+        finish_game_stop(
+            &ui,
+            &config,
+            &game_process,
+            &game_monitor,
+            quit_when_finished,
+            finish_result,
+        );
+    });
+}
+
+fn finish_game_stop(
+    ui: &slint::Weak<AppWindow>,
+    config: &LauncherConfig,
+    game_process: &Rc<RefCell<Option<game_launch::RunningGame>>>,
+    game_monitor: &Rc<Timer>,
+    quit_when_finished: bool,
+    result: Result<String, String>,
+) {
+    let Some(ui) = ui.upgrade() else {
+        return;
     };
 
-    match game.child.kill() {
-        Ok(()) => {
-            let status = game.child.wait().ok();
-            let result = status
-                .map(|status| format!("Stopped by user with status: {status}"))
-                .unwrap_or_else(|| "Stopped by user".to_string());
-            let _ = game_logs::finish(&game.session_log, &result);
-            "DRH stopped.".to_string()
+    match result {
+        Ok(message) => {
+            log_for_config(config, diagnostics::LogLevel::Info, &message);
+            if quit_when_finished {
+                let _ = ui.window().hide();
+            } else {
+                refresh_home_state(&ui, config, &message);
+                refresh_logs_view(&ui, config);
+            }
         }
         Err(error) => {
-            process.replace(game);
-            format!("Could not stop DRH: {error}")
+            log_for_config(config, diagnostics::LogLevel::Error, &error);
+            if process_is_running(game_process) {
+                refresh_playing_state(&ui, config, &error);
+                start_game_monitor(
+                    Rc::clone(game_monitor),
+                    ui.as_weak(),
+                    config.clone(),
+                    Rc::clone(game_process),
+                );
+            } else {
+                refresh_home_state(&ui, config, &error);
+            }
+            ui.set_close_confirmation_busy(false);
+            ui.set_close_confirmation_error(error.into());
         }
     }
 }

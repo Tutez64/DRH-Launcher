@@ -10,6 +10,61 @@ pub struct RunningGame {
     pub session_log: game_logs::GameSessionLog,
 }
 
+#[cfg(unix)]
+pub fn request_graceful_shutdown(child: &Child) -> Result<(), String> {
+    let result = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "Could not send SIGTERM to DRH: {}",
+            std::io::Error::last_os_error()
+        ))
+    }
+}
+
+#[cfg(windows)]
+pub fn request_graceful_shutdown(child: &Child) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE,
+    };
+
+    struct WindowSearch {
+        process_id: u32,
+        close_sent: bool,
+    }
+
+    unsafe extern "system" fn close_process_window(window: HWND, data: LPARAM) -> i32 {
+        let search = unsafe { &mut *(data as *mut WindowSearch) };
+        let mut process_id = 0;
+        unsafe {
+            GetWindowThreadProcessId(window, &mut process_id);
+        }
+        if process_id == search.process_id && unsafe { PostMessageW(window, WM_CLOSE, 0, 0) } != 0 {
+            search.close_sent = true;
+        }
+        1
+    }
+
+    let mut search = WindowSearch {
+        process_id: child.id(),
+        close_sent: false,
+    };
+    unsafe {
+        EnumWindows(
+            Some(close_process_window),
+            (&mut search as *mut WindowSearch) as LPARAM,
+        );
+    }
+
+    if search.close_sent {
+        Ok(())
+    } else {
+        Err("Could not find a DRH window to close.".to_string())
+    }
+}
+
 pub fn launch_game_with_recommended_args(
     config: &LauncherConfig,
     recommended_game_args: &[String],

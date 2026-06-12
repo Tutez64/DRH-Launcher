@@ -166,6 +166,13 @@ DRH-Launcher --play
 
 When DRH is launched from the launcher UI, DRH Launcher keeps the child process handle and uses it to prevent multiple launches from the same launcher instance. If the process exits normally, the UI returns to the installed state. If the user presses `Stop`, DRH Launcher terminates the tracked process and returns to the installed state.
 
+Closing DRH Launcher while its tracked DRH process is still running requires
+confirmation. Confirming first requests a normal application shutdown, then
+falls back to forced termination after a short timeout. DRHL waits for the
+process to exit, finalizes and compresses the game-session log, then closes. If
+stopping DRH or finalizing the session fails, the launcher remains open and
+reports the error.
+
 This tracking only covers processes started by the current launcher instance. Detecting a DRH process launched directly by the user or by another launcher instance can be added later if it proves useful, but it should be treated carefully to avoid killing an unrelated process by mistake.
 
 ## Launch Options
