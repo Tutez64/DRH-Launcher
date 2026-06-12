@@ -256,6 +256,9 @@ component LogViewer inherits Rectangle {
     property <int> reported-wrap-columns: 0;
     property <length> reported-viewport-y: 0px;
 
+    min-width: 0px;
+    preferred-width: 0px;
+    horizontal-stretch: 1;
     border-radius: 6px;
     border-width: 1px;
     border-color: Theme.border-muted;
@@ -263,6 +266,13 @@ component LogViewer inherits Rectangle {
 
     changed position-key => {
         root.scroll-ticks = 0;
+    }
+
+    character-measurement := Text {
+        text: "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
+        font-family: "Hack";
+        font-size: 13px;
+        visible: false;
     }
 
     VerticalLayout {
@@ -276,14 +286,9 @@ component LogViewer inherits Rectangle {
             font-weight: 700;
         }
 
-        character-measurement := Text {
-            text: "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
-            font-family: "Hack";
-            font-size: 13px;
-            visible: false;
-        }
-
         log-list := ListView {
+            min-width: 0px;
+            preferred-width: 0px;
             horizontal-stretch: 1;
             vertical-stretch: 1;
             opacity: root.reported-wrap-columns > 0 ? 1 : 0;
