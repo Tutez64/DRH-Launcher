@@ -896,19 +896,27 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
-        ui.unwrap().on_log_wrap_columns_measured(move |columns| {
-            let Some(ui) = ui.upgrade() else {
-                return;
-            };
+        ui.unwrap()
+            .on_log_wrap_columns_measured(move |source, columns| {
+                let Some(ui) = ui.upgrade() else {
+                    return;
+                };
 
-            let columns = columns.max(20);
-            if ui.get_log_wrap_columns() == columns {
-                return;
-            }
+                let columns = columns.max(20);
+                match source {
+                    0 if ui.get_launcher_log_wrap_columns() != columns => {
+                        ui.set_launcher_log_wrap_columns(columns);
+                    }
+                    1 if ui.get_game_log_wrap_columns() != columns => {
+                        ui.set_game_log_wrap_columns(columns);
+                    }
+                    _ => return,
+                }
 
-            ui.set_log_wrap_columns(columns);
-            refresh_logs_view(&ui, &config.borrow());
-        });
+                if ui.get_log_source() == source {
+                    refresh_logs_view(&ui, &config.borrow());
+                }
+            });
     }
 
     {
@@ -1800,17 +1808,22 @@ fn ui_download_cache_limit(ui: &AppWindow) -> Result<usize, ()> {
 }
 
 fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
-    let wrap_columns = ui.get_log_wrap_columns().max(20) as usize;
+    let wrap_columns = if ui.get_log_source() == 0 {
+        ui.get_launcher_log_wrap_columns()
+    } else {
+        ui.get_game_log_wrap_columns()
+    }
+    .max(20) as usize;
     let Some(install_dir) = config.install_dir.as_deref() else {
         ui.set_game_log_sessions(ModelRc::new(VecModel::from(Vec::new())));
         ui.set_selected_game_log_index(-1);
         ui.set_selected_game_log_enabled(false);
         ui.set_selected_game_log_title("No game session selected".into());
         ui.set_selected_game_log_id("".into());
-        ui.set_log_lines(ModelRc::new(VecModel::from(log_lines_from_text(
-            "No install directory selected.",
-            wrap_columns,
-        ))));
+        set_log_lines_if_changed(
+            ui,
+            log_lines_from_text("No install directory selected.", wrap_columns),
+        );
         return;
     };
 
@@ -1827,7 +1840,7 @@ fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
             } else {
                 log_lines_from_text(&error, wrap_columns)
             };
-            ui.set_log_lines(ModelRc::new(VecModel::from(lines)));
+            set_log_lines_if_changed(ui, lines);
             return;
         }
     };
@@ -1842,10 +1855,7 @@ fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
 
     if ui.get_log_source() == 0 {
         ui.set_selected_game_log_enabled(!sessions.is_empty());
-        ui.set_log_lines(ModelRc::new(VecModel::from(log_lines(
-            config,
-            wrap_columns,
-        ))));
+        set_log_lines_if_changed(ui, log_lines(config, wrap_columns));
         return;
     }
 
@@ -1859,10 +1869,13 @@ fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
         ui.set_selected_game_log_enabled(false);
         ui.set_selected_game_log_title("No game sessions yet".into());
         ui.set_selected_game_log_id("".into());
-        ui.set_log_lines(ModelRc::new(VecModel::from(log_lines_from_text(
-            "Game session logs will appear here after launching DRH.",
-            wrap_columns,
-        ))));
+        set_log_lines_if_changed(
+            ui,
+            log_lines_from_text(
+                "Game session logs will appear here after launching DRH.",
+                wrap_columns,
+            ),
+        );
         return;
     };
 
@@ -1873,10 +1886,20 @@ fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
     ui.set_selected_game_log_enabled(true);
     ui.set_selected_game_log_title(session.title.clone().into());
     ui.set_selected_game_log_id(game_log_session_id(&session.path).into());
-    ui.set_log_lines(ModelRc::new(VecModel::from(log_lines_from_text(
-        &content,
-        wrap_columns,
-    ))));
+    set_log_lines_if_changed(ui, log_lines_from_text(&content, wrap_columns));
+}
+
+fn set_log_lines_if_changed(ui: &AppWindow, lines: Vec<LogLineView>) {
+    let current = ui.get_log_lines();
+    let unchanged = current.row_count() == lines.len()
+        && lines.iter().enumerate().all(|(index, line)| {
+            current
+                .row_data(index)
+                .is_some_and(|current| current.text == line.text && current.color == line.color)
+        });
+    if !unchanged {
+        ui.set_log_lines(ModelRc::new(VecModel::from(lines)));
+    }
 }
 
 fn game_log_session_id(path: &Path) -> String {

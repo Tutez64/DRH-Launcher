@@ -249,12 +249,18 @@ component LogViewer inherits Rectangle {
     in property <bool> default-scroll-to-end;
     in property <bool> saved-position-known;
     in property <length> saved-viewport-y;
+    in property <bool> saved-at-end;
     in property <int> position-key;
     callback wrap-columns-measured(int);
-    callback viewport-position-changed(length);
-    property <int> scroll-ticks: 0;
+    callback viewport-position-changed(length, bool);
     property <int> reported-wrap-columns: 0;
-    property <length> reported-viewport-y: 0px;
+    property <bool> restoring-position: true;
+    property <int> stable-restore-ticks: 0;
+    property <length> last-restore-target: 1px;
+    property <length> current-viewport-y: log-list.viewport-y;
+    property <length> content-height: root.lines.length * 20px;
+    property <length> end-viewport-y: min(0px, log-list.visible-height - root.content-height);
+    property <bool> at-end: log-list.viewport-y <= root.end-viewport-y + 1px;
 
     min-width: 0px;
     preferred-width: 0px;
@@ -265,7 +271,19 @@ component LogViewer inherits Rectangle {
     background: Theme.panel-background;
 
     changed position-key => {
-        root.scroll-ticks = 0;
+        root.restoring-position = true;
+        root.stable-restore-ticks = 0;
+    }
+
+    changed lines => {
+        root.restoring-position = true;
+        root.stable-restore-ticks = 0;
+    }
+
+    changed current-viewport-y => {
+        if (!root.restoring-position) {
+            root.viewport-position-changed(root.current-viewport-y, root.at-end);
+        }
     }
 
     character-measurement := Text {
@@ -291,7 +309,7 @@ component LogViewer inherits Rectangle {
             preferred-width: 0px;
             horizontal-stretch: 1;
             vertical-stretch: 1;
-            opacity: root.reported-wrap-columns > 0 ? 1 : 0;
+            opacity: root.reported-wrap-columns > 0 && !root.restoring-position ? 1 : 0;
 
             for line in root.lines: Rectangle {
                 height: 20px;
@@ -310,16 +328,31 @@ component LogViewer inherits Rectangle {
             }
         }
 
-        scroll-log-to-end := Timer {
-            interval: 1ms;
-            running: root.reported-wrap-columns > 0 && root.scroll-ticks < 2;
+        restore-scroll-position := Timer {
+            interval: 16ms;
+            running: root.restoring-position;
 
             triggered => {
-                log-list.viewport-y = root.saved-position-known
-                    ? root.saved-viewport-y
-                    : root.default-scroll-to-end ? -100000px : 0px;
-                root.reported-viewport-y = log-list.viewport-y;
-                root.scroll-ticks += 1;
+                if (log-list.visible-width <= 0px || log-list.visible-height <= 0px) {
+                    return;
+                }
+
+                let target = root.saved-position-known
+                    ? root.saved-at-end ? root.end-viewport-y : root.saved-viewport-y
+                    : root.default-scroll-to-end ? root.end-viewport-y : 0px;
+                log-list.viewport-y = target;
+
+                if (target == root.last-restore-target && log-list.viewport-y == target) {
+                    root.stable-restore-ticks += 1;
+                } else {
+                    root.last-restore-target = target;
+                    root.stable-restore-ticks = 0;
+                }
+
+                if (root.stable-restore-ticks >= 3) {
+                    root.restoring-position = false;
+                    root.viewport-position-changed(log-list.viewport-y, root.at-end);
+                }
             }
         }
 
@@ -342,19 +375,6 @@ component LogViewer inherits Rectangle {
             }
         }
 
-        report-viewport-position := Timer {
-            interval: 100ms;
-            running: root.scroll-ticks >= 2;
-
-            triggered => {
-                if (log-list.viewport-y != root.reported-viewport-y) {
-                    root.reported-viewport-y = log-list.viewport-y;
-                    root.viewport-position-changed(root.reported-viewport-y);
-                } else if (!root.saved-position-known) {
-                    root.viewport-position-changed(root.reported-viewport-y);
-                }
-            }
-        }
     }
 }
 
@@ -795,11 +815,13 @@ export component AppWindow inherits Window {
     in property <string> status-detail;
     in property <[LogLineView]> log-lines;
     in property <[GameSessionView]> game-log-sessions;
-    in-out property <int> log-wrap-columns: 120;
+    in-out property <int> launcher-log-wrap-columns: 120;
+    in-out property <int> game-log-wrap-columns: 120;
     in-out property <int> log-source: 0;
     in-out property <int> selected-game-log-index: -1;
     in-out property <length> launcher-log-viewport-y: 0px;
     in-out property <bool> launcher-log-position-known: false;
+    in-out property <bool> launcher-log-at-end: false;
     in-out property <length> game-log-viewport-y: 0px;
     in-out property <bool> game-log-position-known: false;
     in property <string> selected-game-log-id;
@@ -860,7 +882,7 @@ export component AppWindow inherits Window {
     callback refresh-logs();
     callback select-log-source(int);
     callback select-game-log(int);
-    callback log-wrap-columns-measured(int);
+    callback log-wrap-columns-measured(int, int);
     callback increment-download-cache-limit();
     callback decrement-download-cache-limit();
     callback save-general-settings();
@@ -1492,14 +1514,16 @@ export component AppWindow inherits Window {
                                 default-scroll-to-end: true;
                                 saved-position-known: root.launcher-log-position-known;
                                 saved-viewport-y: root.launcher-log-viewport-y;
+                                saved-at-end: root.launcher-log-at-end;
                                 position-key: 0;
                                 horizontal-stretch: 1;
                                 vertical-stretch: 1;
                                 wrap-columns-measured(columns) => {
-                                    root.log-wrap-columns-measured(columns);
+                                    root.log-wrap-columns-measured(0, columns);
                                 }
-                                viewport-position-changed(position) => {
+                                viewport-position-changed(position, at-end) => {
                                     root.launcher-log-viewport-y = position;
+                                    root.launcher-log-at-end = at-end;
                                     root.launcher-log-position-known = true;
                                 }
                             }
@@ -1545,13 +1569,14 @@ export component AppWindow inherits Window {
                                     default-scroll-to-end: false;
                                     saved-position-known: root.game-log-position-known;
                                     saved-viewport-y: root.game-log-viewport-y;
+                                    saved-at-end: false;
                                     position-key: root.selected-game-log-index;
                                     horizontal-stretch: 1;
                                     vertical-stretch: 1;
                                     wrap-columns-measured(columns) => {
-                                        root.log-wrap-columns-measured(columns);
+                                        root.log-wrap-columns-measured(1, columns);
                                     }
-                                    viewport-position-changed(position) => {
+                                    viewport-position-changed(position, _) => {
                                         root.game-log-viewport-y = position;
                                         root.game-log-position-known = true;
                                     }
@@ -1585,6 +1610,7 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+
                         }
 
                         if root.settings-page == 2 : VerticalLayout {
