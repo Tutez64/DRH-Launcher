@@ -86,6 +86,12 @@ struct HomeViewState {
     status_detail: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LogViewportPosition {
+    y: f32,
+    at_end: bool,
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     slint::set_xdg_app_id(XDG_APP_ID)?;
@@ -94,7 +100,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let latest_release = Arc::new(Mutex::new(None::<PlatformRelease>));
     let game_process = Rc::new(RefCell::new(None::<game_launch::RunningGame>));
     let game_monitor = Rc::new(Timer::default());
-    let game_log_positions = Rc::new(RefCell::new(HashMap::<String, f32>::new()));
+    let game_log_positions = Rc::new(RefCell::new(HashMap::<String, LogViewportPosition>::new()));
     let release_source = ReleaseSource::from_environment();
 
     ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
@@ -948,6 +954,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_selected_game_log_index(index);
                 ui.set_game_log_viewport_y(0.0);
                 ui.set_game_log_position_known(false);
+                ui.set_game_log_at_end(false);
                 refresh_logs_view(&ui, &config.borrow());
                 return;
             };
@@ -963,6 +970,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     &mut game_log_positions.borrow_mut(),
                     current_session_id,
                     ui.get_game_log_viewport_y(),
+                    ui.get_game_log_at_end(),
                 );
             }
 
@@ -974,10 +982,12 @@ fn main() -> Result<(), slint::PlatformError> {
                     saved_game_log_position(&game_log_positions.borrow(), &session_id)
                 });
             if let Some(position) = restored_position {
-                ui.set_game_log_viewport_y(position);
+                ui.set_game_log_viewport_y(position.y);
+                ui.set_game_log_at_end(position.at_end);
                 ui.set_game_log_position_known(true);
             } else {
                 ui.set_game_log_viewport_y(0.0);
+                ui.set_game_log_at_end(false);
                 ui.set_game_log_position_known(false);
             }
 
@@ -1914,14 +1924,18 @@ fn game_log_session_id(path: &Path) -> String {
 }
 
 fn remember_game_log_position(
-    positions: &mut HashMap<String, f32>,
+    positions: &mut HashMap<String, LogViewportPosition>,
     session_id: String,
-    position: f32,
+    y: f32,
+    at_end: bool,
 ) {
-    positions.insert(session_id, position);
+    positions.insert(session_id, LogViewportPosition { y, at_end });
 }
 
-fn saved_game_log_position(positions: &HashMap<String, f32>, session_id: &str) -> Option<f32> {
+fn saved_game_log_position(
+    positions: &HashMap<String, LogViewportPosition>,
+    session_id: &str,
+) -> Option<LogViewportPosition> {
     positions.get(session_id).copied()
 }
 
@@ -2381,16 +2395,22 @@ mod home_support_text_tests {
     #[test]
     fn remembers_scroll_positions_for_each_game_log_file() {
         let mut positions = HashMap::new();
-        remember_game_log_position(&mut positions, "session-a.log".to_string(), -120.0);
-        remember_game_log_position(&mut positions, "session-b.log".to_string(), -340.0);
+        remember_game_log_position(&mut positions, "session-a.log".to_string(), -120.0, false);
+        remember_game_log_position(&mut positions, "session-b.log".to_string(), -340.0, true);
 
         assert_eq!(
             saved_game_log_position(&positions, "session-a.log"),
-            Some(-120.0)
+            Some(LogViewportPosition {
+                y: -120.0,
+                at_end: false,
+            })
         );
         assert_eq!(
             saved_game_log_position(&positions, "session-b.log"),
-            Some(-340.0)
+            Some(LogViewportPosition {
+                y: -340.0,
+                at_end: true,
+            })
         );
         assert_eq!(saved_game_log_position(&positions, "session-c.log"), None);
         assert_eq!(

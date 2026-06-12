@@ -824,6 +824,7 @@ export component AppWindow inherits Window {
     in-out property <bool> launcher-log-at-end: false;
     in-out property <length> game-log-viewport-y: 0px;
     in-out property <bool> game-log-position-known: false;
+    in-out property <bool> game-log-at-end: false;
     in property <string> selected-game-log-id;
     in property <string> selected-game-log-title: "No game session selected";
     in property <bool> selected-game-log-enabled: false;
@@ -1569,15 +1570,16 @@ export component AppWindow inherits Window {
                                     default-scroll-to-end: false;
                                     saved-position-known: root.game-log-position-known;
                                     saved-viewport-y: root.game-log-viewport-y;
-                                    saved-at-end: false;
+                                    saved-at-end: root.game-log-at-end;
                                     position-key: root.selected-game-log-index;
                                     horizontal-stretch: 1;
                                     vertical-stretch: 1;
                                     wrap-columns-measured(columns) => {
                                         root.log-wrap-columns-measured(1, columns);
                                     }
-                                    viewport-position-changed(position, _) => {
+                                    viewport-position-changed(position, at-end) => {
                                         root.game-log-viewport-y = position;
+                                        root.game-log-at-end = at-end;
                                         root.game-log-position-known = true;
                                     }
                                 }
