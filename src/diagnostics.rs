@@ -76,10 +76,10 @@ pub fn read_recent(install_dir: &Path) -> Result<String, String> {
     file.read_to_string(&mut contents)
         .map_err(|error| format!("Could not read {}: {error}", log_file.display()))?;
 
-    if len > MAX_BYTES as u64 {
-        if let Some((_, rest)) = contents.split_once('\n') {
-            contents = rest.to_string();
-        }
+    if len > MAX_BYTES as u64
+        && let Some((_, rest)) = contents.split_once('\n')
+    {
+        contents = rest.to_string();
     }
 
     if contents.trim().is_empty() {

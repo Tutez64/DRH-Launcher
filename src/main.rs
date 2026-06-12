@@ -1481,12 +1481,7 @@ fn launch_options_view_state(
     manifest_options: Option<&ManifestLaunchOptions>,
 ) -> (Vec<LaunchOptionView>, String) {
     let Some(manifest_options) = manifest_options else {
-        let extra_args = if matches!(config.launch_arguments_mode, LaunchArgumentsMode::Custom) {
-            config.game_args.join(" ")
-        } else {
-            config.game_args.join(" ")
-        };
-        return (Vec::new(), extra_args);
+        return (Vec::new(), config.game_args.join(" "));
     };
 
     let (values, extra_args) = match config.launch_arguments_mode {
@@ -2302,6 +2297,108 @@ fn is_progress_message(message: &str) -> bool {
         || message.starts_with("Installing files")
 }
 
+fn status_detail(message: &str) -> String {
+    if message == "Ready." {
+        "No operation in progress.".to_string()
+    } else {
+        message.to_string()
+    }
+}
+
+fn start_game_monitor(
+    timer: Rc<Timer>,
+    ui: slint::Weak<AppWindow>,
+    config: LauncherConfig,
+    game_process: Rc<RefCell<Option<game_launch::RunningGame>>>,
+) {
+    let timer_handle = Rc::clone(&timer);
+    timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
+        let finished = {
+            let mut process = game_process.borrow_mut();
+            let Some(game) = process.as_mut() else {
+                timer_handle.stop();
+                return;
+            };
+
+            match game.child.try_wait() {
+                Ok(Some(status)) => {
+                    let game = process.take().expect("running game disappeared");
+                    let _ = game_logs::finish(
+                        &game.session_log,
+                        &format!("Exited with status: {status}"),
+                    );
+                    Some((
+                        diagnostics::LogLevel::Info,
+                        format!("DRH exited with status: {status}"),
+                    ))
+                }
+                Ok(None) => None,
+                Err(error) => {
+                    let game = process.take().expect("running game disappeared");
+                    let _ = game_logs::finish(
+                        &game.session_log,
+                        &format!("Process inspection failed: {error}"),
+                    );
+                    Some((
+                        diagnostics::LogLevel::Error,
+                        format!("Could not inspect DRH process: {error}"),
+                    ))
+                }
+            }
+        };
+
+        let Some((level, message)) = finished else {
+            return;
+        };
+
+        timer_handle.stop();
+        log_for_config(&config, level, &message);
+        if let Some(ui) = ui.upgrade() {
+            refresh_home_state(&ui, &config, &message);
+            refresh_logs_view(&ui, &config);
+        }
+    });
+}
+
+fn process_is_running(game_process: &Rc<RefCell<Option<game_launch::RunningGame>>>) -> bool {
+    let mut process = game_process.borrow_mut();
+    let Some(game) = process.as_mut() else {
+        return false;
+    };
+
+    match game.child.try_wait() {
+        Ok(None) => true,
+        Ok(Some(status)) => {
+            let game = process.take().expect("running game disappeared");
+            let _ = game_logs::finish(&game.session_log, &format!("Exited with status: {status}"));
+            false
+        }
+        Err(_) => true,
+    }
+}
+
+fn stop_game(game_process: &Rc<RefCell<Option<game_launch::RunningGame>>>) -> String {
+    let mut process = game_process.borrow_mut();
+    let Some(mut game) = process.take() else {
+        return "DRH is not running.".to_string();
+    };
+
+    match game.child.kill() {
+        Ok(()) => {
+            let status = game.child.wait().ok();
+            let result = status
+                .map(|status| format!("Stopped by user with status: {status}"))
+                .unwrap_or_else(|| "Stopped by user".to_string());
+            let _ = game_logs::finish(&game.session_log, &result);
+            "DRH stopped.".to_string()
+        }
+        Err(error) => {
+            process.replace(game);
+            format!("Could not stop DRH: {error}")
+        }
+    }
+}
+
 #[cfg(test)]
 mod home_support_text_tests {
     use super::*;
@@ -2499,108 +2596,6 @@ mod home_support_text_tests {
             archive_size: 123,
             installed_at: "unix:0".to_string(),
             launch_options: None,
-        }
-    }
-}
-
-fn status_detail(message: &str) -> String {
-    if message == "Ready." {
-        "No operation in progress.".to_string()
-    } else {
-        message.to_string()
-    }
-}
-
-fn start_game_monitor(
-    timer: Rc<Timer>,
-    ui: slint::Weak<AppWindow>,
-    config: LauncherConfig,
-    game_process: Rc<RefCell<Option<game_launch::RunningGame>>>,
-) {
-    let timer_handle = Rc::clone(&timer);
-    timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
-        let finished = {
-            let mut process = game_process.borrow_mut();
-            let Some(game) = process.as_mut() else {
-                timer_handle.stop();
-                return;
-            };
-
-            match game.child.try_wait() {
-                Ok(Some(status)) => {
-                    let game = process.take().expect("running game disappeared");
-                    let _ = game_logs::finish(
-                        &game.session_log,
-                        &format!("Exited with status: {status}"),
-                    );
-                    Some((
-                        diagnostics::LogLevel::Info,
-                        format!("DRH exited with status: {status}"),
-                    ))
-                }
-                Ok(None) => None,
-                Err(error) => {
-                    let game = process.take().expect("running game disappeared");
-                    let _ = game_logs::finish(
-                        &game.session_log,
-                        &format!("Process inspection failed: {error}"),
-                    );
-                    Some((
-                        diagnostics::LogLevel::Error,
-                        format!("Could not inspect DRH process: {error}"),
-                    ))
-                }
-            }
-        };
-
-        let Some((level, message)) = finished else {
-            return;
-        };
-
-        timer_handle.stop();
-        log_for_config(&config, level, &message);
-        if let Some(ui) = ui.upgrade() {
-            refresh_home_state(&ui, &config, &message);
-            refresh_logs_view(&ui, &config);
-        }
-    });
-}
-
-fn process_is_running(game_process: &Rc<RefCell<Option<game_launch::RunningGame>>>) -> bool {
-    let mut process = game_process.borrow_mut();
-    let Some(game) = process.as_mut() else {
-        return false;
-    };
-
-    match game.child.try_wait() {
-        Ok(None) => true,
-        Ok(Some(status)) => {
-            let game = process.take().expect("running game disappeared");
-            let _ = game_logs::finish(&game.session_log, &format!("Exited with status: {status}"));
-            false
-        }
-        Err(_) => true,
-    }
-}
-
-fn stop_game(game_process: &Rc<RefCell<Option<game_launch::RunningGame>>>) -> String {
-    let mut process = game_process.borrow_mut();
-    let Some(mut game) = process.take() else {
-        return "DRH is not running.".to_string();
-    };
-
-    match game.child.kill() {
-        Ok(()) => {
-            let status = game.child.wait().ok();
-            let result = status
-                .map(|status| format!("Stopped by user with status: {status}"))
-                .unwrap_or_else(|| "Stopped by user".to_string());
-            let _ = game_logs::finish(&game.session_log, &result);
-            "DRH stopped.".to_string()
-        }
-        Err(error) => {
-            process.replace(game);
-            format!("Could not stop DRH: {error}")
         }
     }
 }
