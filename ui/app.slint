@@ -1,5 +1,6 @@
-import { LineEdit, ScrollView } from "std-widgets.slint";
+import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+import "../assets/fonts/Hack-Regular.ttf";
 
 export struct LaunchOptionView {
     name: string,
@@ -10,6 +11,11 @@ export struct LaunchOptionView {
 export struct LogLineView {
     text: string,
     color: brush,
+}
+
+export struct GameSessionView {
+    title: string,
+    detail: string,
 }
 
 component PrimaryButton inherits Rectangle {
@@ -191,6 +197,138 @@ component TabButton inherits Rectangle {
     touch := TouchArea {
         clicked => {
             root.clicked();
+        }
+    }
+}
+
+component GameSessionButton inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> active;
+    callback clicked();
+
+    height: 58px;
+    border-radius: 6px;
+    border-width: root.active ? 1px : 0px;
+    border-color: Theme.border-accent;
+    background: root.active ? Theme.surface-selected : touch.has-hover ? Theme.surface-hover : transparent;
+
+    VerticalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 7px;
+        padding-bottom: 7px;
+        spacing: 3px;
+
+        Text {
+            text: root.title;
+            color: Theme.text-primary;
+            font-size: 12px;
+            font-weight: root.active ? 700 : 600;
+            overflow: elide;
+        }
+
+        Text {
+            text: root.detail;
+            color: Theme.text-support;
+            font-size: 11px;
+            overflow: elide;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component LogViewer inherits Rectangle {
+    in property <string> title;
+    in property <[LogLineView]> lines;
+    in property <bool> scroll-to-end;
+    callback wrap-columns-measured(int);
+    property <int> scroll-ticks: 0;
+    property <int> line-count: root.lines.length;
+    property <int> reported-wrap-columns: 0;
+
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.border-muted;
+    background: Theme.panel-background;
+
+    changed line-count => {
+        root.scroll-ticks = 0;
+        log-list.viewport-y = root.scroll-to-end ? -100000px : 0px;
+    }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        Text {
+            text: root.title;
+            color: Theme.text-secondary;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        character-measurement := Text {
+            text: "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM";
+            font-family: "Hack";
+            font-size: 13px;
+            visible: false;
+        }
+
+        log-list := ListView {
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
+            opacity: root.reported-wrap-columns > 0 ? 1 : 0;
+
+            for line in root.lines: Rectangle {
+                height: 20px;
+
+                Text {
+                    width: parent.width;
+                    height: parent.height;
+                    text: line.text;
+                    font-family: "Hack";
+                    font-size: 13px;
+                    color: line.color;
+                    wrap: no-wrap;
+                    overflow: clip;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        scroll-log-to-end := Timer {
+            interval: 1ms;
+            running: root.scroll-to-end && root.scroll-ticks < 2;
+
+            triggered => {
+                log-list.viewport-y = -100000px;
+                root.scroll-ticks += 1;
+            }
+        }
+
+        report-wrap-columns := Timer {
+            interval: 100ms;
+            running: true;
+
+            triggered => {
+                let character-width-px = character-measurement.preferred-width / 64px;
+                if (character-width-px > 0) {
+                    let columns = max(
+                        20,
+                        floor(log-list.visible-width / 1px / character-width-px),
+                    );
+                    if (columns != root.reported-wrap-columns) {
+                        root.reported-wrap-columns = columns;
+                        root.wrap-columns-measured(root.reported-wrap-columns);
+                    }
+                }
+            }
         }
     }
 }
@@ -631,6 +769,12 @@ export component AppWindow inherits Window {
     in property <string> home-support-text;
     in property <string> status-detail;
     in property <[LogLineView]> log-lines;
+    in property <[GameSessionView]> game-log-sessions;
+    in-out property <int> log-wrap-columns: 120;
+    in-out property <int> log-source: 0;
+    in-out property <int> selected-game-log-index: -1;
+    in property <string> selected-game-log-title: "No game session selected";
+    in property <bool> selected-game-log-enabled: false;
     in property <string> launcher-version;
     in property <string> config-path;
     in property <string> install-folder-path;
@@ -668,9 +812,6 @@ export component AppWindow inherits Window {
     in-out property <int> settings-page: 0;
     in-out property <bool> advanced-settings-open: false;
     in-out property <bool> help-menu-open: false;
-    property <int> logs-scroll-ticks: 0;
-    property <int> logs-restore-ticks: 0;
-    in-out property <length> logs-viewport-y: 0px;
     property <bool> info-tooltip-visible: false;
     property <string> info-tooltip-text;
     property <length> info-tooltip-anchor-x: 0px;
@@ -681,11 +822,15 @@ export component AppWindow inherits Window {
     callback open-config-folder();
     callback open-install-folder();
     callback open-logs-folder();
+    callback open-selected-game-log();
     callback open-discord-link();
     callback open-drh-github-link();
     callback open-drhl-github-link();
     callback open-ax4-github-link();
     callback refresh-logs();
+    callback select-log-source(int);
+    callback select-game-log(int);
+    callback log-wrap-columns-measured(int);
     callback increment-download-cache-limit();
     callback decrement-download-cache-limit();
     callback save-general-settings();
@@ -779,7 +924,6 @@ export component AppWindow inherits Window {
                     text: "Settings";
                     active: root.active-page == 3;
                     clicked => {
-                        root.logs-restore-ticks = 0;
                         root.active-page = 3;
                     }
                 }
@@ -910,7 +1054,6 @@ export component AppWindow inherits Window {
                                         text: "Open logs";
                                         clicked => {
                                             root.help-menu-open = false;
-                                            root.logs-restore-ticks = 0;
                                             root.active-page = 3;
                                             root.settings-page = 1;
                                         }
@@ -1143,7 +1286,6 @@ export component AppWindow inherits Window {
                                 text: "Logs";
                                 active: root.settings-page == 1;
                                 clicked => {
-                                    root.logs-restore-ticks = 0;
                                     root.settings-page = 1;
                                 }
                             }
@@ -1291,74 +1433,83 @@ export component AppWindow inherits Window {
                         }
 
                         if root.settings-page == 1 : VerticalLayout {
-                            spacing: 16px;
+                            spacing: 12px;
                             vertical-stretch: 1;
 
-                            Rectangle {
+                            HorizontalLayout {
+                                spacing: 8px;
+
+                                TabButton {
+                                    text: "Launcher";
+                                    active: root.log-source == 0;
+                                    clicked => {
+                                        root.select-log-source(0);
+                                    }
+                                }
+
+                                TabButton {
+                                    text: "Game sessions";
+                                    active: root.log-source == 1;
+                                    clicked => {
+                                        root.select-log-source(1);
+                                    }
+                                }
+                            }
+
+                            if root.log-source == 0 : LogViewer {
+                                title: "Recent launcher log";
+                                lines: root.log-lines;
+                                scroll-to-end: true;
+                                horizontal-stretch: 1;
                                 vertical-stretch: 1;
-                                border-radius: 6px;
-                                border-width: 1px;
-                                border-color: Theme.border-muted;
-                                background: Theme.panel-background;
+                                wrap-columns-measured(columns) => {
+                                    root.log-wrap-columns-measured(columns);
+                                }
+                            }
 
-                                VerticalLayout {
-                                    padding: 12px;
-                                    spacing: 8px;
+                            if root.log-source == 1 : HorizontalLayout {
+                                spacing: 12px;
+                                vertical-stretch: 1;
 
-                                    SmallLabel {
-                                        label: "Recent launcher log";
-                                    }
+                                Rectangle {
+                                    width: 200px;
+                                    border-radius: 6px;
+                                    border-width: 1px;
+                                    border-color: Theme.border-muted;
+                                    background: Theme.panel-background;
 
-                                    log-scroll := ScrollView {
-                                        visible: root.logs-scroll-ticks > 0 && root.logs-restore-ticks > 0;
-                                        horizontal-stretch: 1;
-                                        vertical-stretch: 1;
-                                        viewport-width: self.width;
-                                        viewport-height: log-lines-layout.preferred-height;
+                                    VerticalLayout {
+                                        padding: 10px;
+                                        spacing: 8px;
 
-                                        changed viewport-y => {
-                                            if (root.logs-scroll-ticks >= 2 && root.logs-restore-ticks > 0) {
-                                                root.logs-viewport-y = self.viewport-y;
-                                            }
+                                        SmallLabel {
+                                            label: "Game sessions";
                                         }
 
-                                        log-lines-layout := VerticalLayout {
-                                            width: parent.viewport-width;
-                                            min-width: 0px;
-                                            spacing: 2px;
+                                        session-list := ListView {
+                                            horizontal-stretch: 1;
+                                            vertical-stretch: 1;
 
-                                            for line in root.log-lines: Text {
-                                                text: line.text;
-                                                width: parent.width;
-                                                font-size: 13px;
-                                                color: line.color;
-                                                wrap: word-wrap;
-                                            }
-                                        }
-                                    }
-
-                                    scroll-logs-to-end := Timer {
-                                        interval: 1ms;
-                                        running: root.active-page == 3 && root.settings-page == 1 && root.logs-scroll-ticks < 2;
-
-                                        triggered => {
-                                            log-scroll.viewport-y = -100000px;
-                                            root.logs-scroll-ticks += 1;
-                                            if (root.logs-scroll-ticks >= 2) {
-                                                root.logs-viewport-y = Math.min(0px, log-scroll.height - log-lines-layout.preferred-height);
-                                                root.logs-restore-ticks = 1;
+                                            for session[index] in root.game-log-sessions: GameSessionButton {
+                                                title: session.title;
+                                                detail: session.detail;
+                                                active: root.selected-game-log-index == index;
+                                                clicked => {
+                                                    root.select-game-log(index);
+                                                }
                                             }
                                         }
                                     }
+                                }
 
-                                    restore-logs-position := Timer {
-                                        interval: 1ms;
-                                        running: root.active-page == 3 && root.settings-page == 1 && root.logs-scroll-ticks >= 2 && root.logs-restore-ticks < 1;
-
-                                        triggered => {
-                                            log-scroll.viewport-y = root.logs-viewport-y;
-                                            root.logs-restore-ticks += 1;
-                                        }
+                                LogViewer {
+                                    title: root.selected-game-log-title;
+                                    lines: root.log-lines;
+                                    scroll-to-end: false;
+                                    horizontal-stretch: 1;
+                                    vertical-stretch: 1;
+                                    wrap-columns-measured(columns) => {
+                                        root.log-wrap-columns-measured(columns);
                                     }
                                 }
                             }
@@ -1374,13 +1525,18 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
+                                if root.log-source == 1 : SecondaryButton {
+                                    text: "Open selected file";
+                                    enabled: root.selected-game-log-enabled;
+                                    clicked => {
+                                        root.open-selected-game-log();
+                                    }
+                                }
+
                                 SecondaryButton {
                                     text: "Refresh";
                                     enabled: root.open-logs-folder-enabled;
                                     clicked => {
-                                        root.logs-scroll-ticks = 0;
-                                        root.logs-restore-ticks = 0;
-                                        root.logs-viewport-y = 0px;
                                         root.refresh-logs();
                                     }
                                 }

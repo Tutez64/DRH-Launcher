@@ -1,20 +1,27 @@
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 
 use crate::config::LauncherConfig;
 use crate::game_install::{game_executable_names, is_game_executable};
-use crate::paths;
+use crate::{game_logs, paths, platform::Platform};
+
+pub struct RunningGame {
+    pub child: Child,
+    pub session_log: game_logs::GameSessionLog,
+}
 
 pub fn launch_game_with_recommended_args(
     config: &LauncherConfig,
     recommended_game_args: &[String],
-) -> Result<Child, String> {
+    installed_version: Option<&str>,
+) -> Result<RunningGame, String> {
     let install_dir = config
         .install_dir
         .as_deref()
         .ok_or_else(|| "No install directory selected.".to_string())?;
     let game_dir = paths::game_dir(install_dir);
     let executable = find_game_executable(&game_dir)?;
+    let launch_executable = resolve_launch_executable(&executable)?;
 
     let pre_launch_command = parse_command_line(&config.pre_launch_command)
         .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
@@ -23,26 +30,40 @@ pub fn launch_game_with_recommended_args(
     let mut command = if !pre_launch_command.is_empty() {
         let mut command = Command::new(&pre_launch_command[0]);
         command.args(&pre_launch_command[1..]);
-        command.arg(&executable);
+        command.arg(&launch_executable);
         command.args(&game_args);
         command
-    } else if cfg!(target_os = "macos") && executable.is_dir() {
-        let mut command = Command::new("open");
-        command.arg(&executable);
-        if !game_args.is_empty() {
-            command.arg("--args").args(&game_args);
-        }
-        command
     } else {
-        let mut command = Command::new(&executable);
+        let mut command = Command::new(&launch_executable);
         command.args(&game_args);
         command
     };
 
+    let command_summary =
+        launch_command_summary_with_recommended_args(config, recommended_game_args)?;
+    let (log_file, session_log) = game_logs::create(
+        install_dir,
+        installed_version,
+        Platform::current().id(),
+        &command_summary,
+    )?;
+    let stderr_file = log_file.try_clone().map_err(|error| {
+        let _ = game_logs::finish(
+            &session_log,
+            &format!("Could not prepare stderr capture: {error}"),
+        );
+        format!("Could not prepare game log: {error}")
+    })?;
+
     command.current_dir(&game_dir);
-    command
-        .spawn()
-        .map_err(|error| format!("Could not launch DRH: {error}"))
+    command.stdout(Stdio::from(log_file));
+    command.stderr(Stdio::from(stderr_file));
+    let child = command.spawn().map_err(|error| {
+        let _ = game_logs::finish(&session_log, &format!("Launch failed: {error}"));
+        format!("Could not launch DRH: {error}")
+    })?;
+
+    Ok(RunningGame { child, session_log })
 }
 
 pub fn launch_command_summary_with_recommended_args(
@@ -55,6 +76,7 @@ pub fn launch_command_summary_with_recommended_args(
         .ok_or_else(|| "No install directory selected.".to_string())?;
     let game_dir = paths::game_dir(install_dir);
     let executable = find_game_executable(&game_dir)?;
+    let launch_executable = resolve_launch_executable(&executable)?;
     let pre_launch_command = parse_command_line(&config.pre_launch_command)
         .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
     let game_args = config.effective_game_args_with_recommended(recommended_game_args);
@@ -62,17 +84,10 @@ pub fn launch_command_summary_with_recommended_args(
     let mut parts = Vec::new();
     if !pre_launch_command.is_empty() {
         parts.extend(pre_launch_command);
-        parts.push(executable.display().to_string());
+        parts.push(launch_executable.display().to_string());
         parts.extend(game_args);
-    } else if cfg!(target_os = "macos") && executable.is_dir() {
-        parts.push("open".to_string());
-        parts.push(executable.display().to_string());
-        if !game_args.is_empty() {
-            parts.push("--args".to_string());
-            parts.extend(game_args);
-        }
     } else {
-        parts.push(executable.display().to_string());
+        parts.push(launch_executable.display().to_string());
         parts.extend(game_args);
     }
 
@@ -131,6 +146,28 @@ pub fn find_game_executable(game_dir: &Path) -> Result<PathBuf, String> {
                 game_executable_names().join(", ")
             )
         })
+}
+
+fn resolve_launch_executable(executable: &Path) -> Result<PathBuf, String> {
+    if !cfg!(target_os = "macos") || !executable.is_dir() {
+        return Ok(executable.to_path_buf());
+    }
+
+    let macos_dir = executable.join("Contents").join("MacOS");
+    let bundle_name = executable
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .map(|name| macos_dir.join(name));
+    if let Some(bundle_executable) = bundle_name.filter(|path| path.is_file()) {
+        return Ok(bundle_executable);
+    }
+
+    std::fs::read_dir(&macos_dir)
+        .map_err(|error| format!("Could not inspect {}: {error}", macos_dir.display()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.is_file())
+        .ok_or_else(|| format!("Could not find an executable in {}", macos_dir.display()))
 }
 
 fn quote_command_part(part: &str) -> String {
@@ -214,6 +251,39 @@ mod tests {
         assert!(summary.contains(&quote_command_part(&executable.display().to_string())));
         assert!(summary.contains("'Dungeon Rampage'"));
         assert!(!summary.contains("<DRH executable>"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn captures_game_stdout_and_stderr_in_session_log() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let game_dir = paths::game_dir(temp.path());
+        fs::create_dir_all(&game_dir).unwrap();
+        let executable = game_dir.join(game_executable_names()[0]);
+        fs::write(
+            &executable,
+            "#!/bin/sh\nprintf 'stdout line\\n'\nprintf 'stderr line\\n' >&2\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().to_path_buf()),
+            ..LauncherConfig::default()
+        };
+
+        let mut game = launch_game_with_recommended_args(&config, &[], Some("V-test")).unwrap();
+        let status = game.child.wait().unwrap();
+        game_logs::finish(&game.session_log, &format!("Exited with status: {status}")).unwrap();
+        let contents = game_logs::read(&game.session_log.path).unwrap();
+
+        assert!(status.success());
+        assert!(contents.contains("stdout line"));
+        assert!(contents.contains("stderr line"));
+        assert!(contents.contains("Version: V-test"));
     }
 
     fn create_executable(path: &Path) {

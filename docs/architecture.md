@@ -60,6 +60,8 @@ The intended installed layout is:
     installed.json
     logs/
       launcher.log
+      game/
+        <session-timestamp>.log
     cache/
     downloads/
     staging/
@@ -508,11 +510,34 @@ DRH Launcher should write logs under:
 
 ```text
 data/logs/launcher.log
+data/logs/game/<session-timestamp>.log
 ```
 
-The launcher provides an in-app recent log viewer in `Settings > Logs`, plus an action to open the logs directory in the platform file manager. Log writes should be best-effort: failure to write diagnostics must not break install, update or launch flows.
+`launcher.log` contains DRH Launcher diagnostics. Each DRH process launched by the
+launcher gets a separate game-session log containing launch metadata, the game's
+standard output and standard error, and the final process result.
 
-Log entries use readable UTC timestamps and severity levels.
+The launcher retains the 20 most recent game-session logs. Session filenames use
+sortable UTC timestamps so a specific play session can be identified and shared.
+
+The launcher provides an in-app log viewer in `Settings > Logs` with separate
+launcher and game-session views, plus actions to open a selected session or the
+logs directory in the platform file manager. Game log lines use the five DRH
+severity levels: `DEBUG`, `INFO`, `WARN`, `ERROR` and `FATAL`.
+
+The log viewer measures its available layout width using the bundled Hack
+monospace font used for display, then splits logical lines into fixed-height
+visual rows. Bundling the font keeps character measurement consistent across
+platforms. Those rows stay virtualized, which keeps large files quick to load
+and prevents the scrollbar geometry from changing while scrolling. Resizing the
+viewer recalculates the segments without changing the underlying log file or
+losing content.
+
+Launcher log writes should be best-effort: failure to write diagnostics must not
+break install, update or launch flows. A game-session log must be created before
+DRH is launched so graphical launches do not silently lose game output.
+
+Log entries and session metadata use readable UTC timestamps.
 
 Logs should be useful for diagnosing:
 

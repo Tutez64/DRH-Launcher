@@ -42,6 +42,10 @@ pub fn launcher_log_file(install_dir: &std::path::Path) -> PathBuf {
     logs_dir(install_dir).join("launcher.log")
 }
 
+pub fn game_logs_dir(install_dir: &std::path::Path) -> PathBuf {
+    logs_dir(install_dir).join("game")
+}
+
 pub fn game_root_dir(install_dir: &std::path::Path) -> PathBuf {
     install_dir.join("Dungeon Rampage Haxe")
 }

@@ -8,6 +8,7 @@ mod diagnostics;
 mod download;
 mod game_install;
 mod game_launch;
+mod game_logs;
 mod github_releases;
 mod install_metadata;
 mod install_state;
@@ -19,7 +20,7 @@ mod release_source;
 
 use std::cell::RefCell;
 use std::path::Path;
-use std::process::{Child, Command};
+use std::process::Command;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -82,7 +83,6 @@ struct HomeViewState {
     reinstall_current_enabled: bool,
     reinstall_current_text: String,
     status_detail: String,
-    log_lines: Vec<LogLineView>,
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -91,7 +91,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let config = Rc::new(RefCell::new(LauncherConfig::load()));
     let latest_release = Arc::new(Mutex::new(None::<PlatformRelease>));
-    let game_process = Rc::new(RefCell::new(None::<Child>));
+    let game_process = Rc::new(RefCell::new(None::<game_launch::RunningGame>));
     let game_monitor = Rc::new(Timer::default());
     let release_source = ReleaseSource::from_environment();
 
@@ -119,6 +119,7 @@ fn main() -> Result<(), slint::PlatformError> {
             release_source.label()
         ),
     );
+    refresh_logs_view(&ui, &config.borrow());
 
     {
         let ui = ui.as_weak();
@@ -140,7 +141,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let process_error = {
                 let mut process = game_process.borrow_mut();
                 match process.as_mut() {
-                    Some(child) => match child.try_wait() {
+                    Some(game) => match game.child.try_wait() {
                         Ok(None) => Some(Ok(())),
                         Ok(Some(_)) => {
                             process.take();
@@ -214,23 +215,25 @@ fn main() -> Result<(), slint::PlatformError> {
                 match game_launch::launch_game_with_recommended_args(
                     &config,
                     &recommended_game_args,
+                    install_status.installed_version.as_deref(),
                 ) {
-                    Ok(child) => {
+                    Ok(game) => {
                         log_for_config(
                             &config,
                             diagnostics::LogLevel::Info,
                             &format!(
-                                "DRH launched with command: {}",
+                                "DRH launched with command: {}. Session log: {}",
                                 game_launch::launch_command_summary_with_recommended_args(
                                     &config,
                                     &recommended_game_args
                                 )
                                 .unwrap_or_else(|error| format!(
                                     "command summary unavailable ({error})"
-                                ))
+                                )),
+                                game.session_log.path.display(),
                             ),
                         );
-                        game_process.borrow_mut().replace(child);
+                        game_process.borrow_mut().replace(game);
                         refresh_playing_state(&ui, &config, "DRH is running.");
                         start_game_monitor(
                             Rc::clone(&game_monitor),
@@ -885,6 +888,89 @@ fn main() -> Result<(), slint::PlatformError> {
             };
 
             refresh_logs_view(&ui, &config.borrow());
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_log_wrap_columns_measured(move |columns| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let columns = columns.max(20);
+            if ui.get_log_wrap_columns() == columns {
+                return;
+            }
+
+            ui.set_log_wrap_columns(columns);
+            refresh_logs_view(&ui, &config.borrow());
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_select_log_source(move |source| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            ui.set_log_source(source);
+            refresh_logs_view(&ui, &config.borrow());
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_select_game_log(move |index| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            ui.set_selected_game_log_index(index);
+            refresh_logs_view(&ui, &config.borrow());
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_open_selected_game_log(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let Some(install_dir) = config.borrow().install_dir.clone() else {
+                set_status_message(&ui, "No install directory selected.");
+                return;
+            };
+            let sessions = match game_logs::list(&install_dir) {
+                Ok(sessions) => sessions,
+                Err(error) => {
+                    log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
+                    set_status_message(&ui, &error);
+                    return;
+                }
+            };
+            let index = ui.get_selected_game_log_index();
+            let Some(session) = usize::try_from(index)
+                .ok()
+                .and_then(|index| sessions.get(index))
+            else {
+                set_status_message(&ui, "No game session selected.");
+                return;
+            };
+
+            match open_file(&session.path) {
+                Ok(()) => set_status_message(&ui, "Game session log opened."),
+                Err(error) => {
+                    log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
+                    set_status_message(&ui, &error);
+                }
+            }
         });
     }
 
@@ -1557,7 +1643,6 @@ fn home_view_state(
         reinstall_current_enabled: reinstall_current_version_available(config),
         reinstall_current_text: reinstall_current_version_text(config),
         status_detail: status_detail(activity_message),
-        log_lines: log_lines(config),
     };
 
     if let Some(release) = latest_release {
@@ -1634,7 +1719,6 @@ fn apply_home_view_state(ui: &AppWindow, state: HomeViewState) {
     ui.set_reinstall_current_enabled(state.reinstall_current_enabled);
     ui.set_reinstall_current_text(state.reinstall_current_text.into());
     ui.set_status_detail(state.status_detail.into());
-    ui.set_log_lines(ModelRc::new(VecModel::from(state.log_lines)));
 }
 
 fn refresh_settings_view(ui: &AppWindow, config: &LauncherConfig, save_text: &str) {
@@ -1664,38 +1748,155 @@ fn ui_download_cache_limit(ui: &AppWindow) -> Result<usize, ()> {
 }
 
 fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
-    ui.set_log_lines(ModelRc::new(VecModel::from(log_lines(config))));
+    let wrap_columns = ui.get_log_wrap_columns().max(20) as usize;
+    let Some(install_dir) = config.install_dir.as_deref() else {
+        ui.set_game_log_sessions(ModelRc::new(VecModel::from(Vec::new())));
+        ui.set_selected_game_log_index(-1);
+        ui.set_selected_game_log_enabled(false);
+        ui.set_selected_game_log_title("No game session selected".into());
+        ui.set_log_lines(ModelRc::new(VecModel::from(log_lines_from_text(
+            "No install directory selected.",
+            wrap_columns,
+        ))));
+        return;
+    };
+
+    let sessions = match game_logs::list(install_dir) {
+        Ok(sessions) => sessions,
+        Err(error) => {
+            ui.set_game_log_sessions(ModelRc::new(VecModel::from(Vec::new())));
+            ui.set_selected_game_log_index(-1);
+            ui.set_selected_game_log_enabled(false);
+            ui.set_selected_game_log_title("Could not list game sessions".into());
+            let lines = if ui.get_log_source() == 0 {
+                log_lines(config, wrap_columns)
+            } else {
+                log_lines_from_text(&error, wrap_columns)
+            };
+            ui.set_log_lines(ModelRc::new(VecModel::from(lines)));
+            return;
+        }
+    };
+    let session_views = sessions
+        .iter()
+        .map(|session| GameSessionView {
+            title: session.title.clone().into(),
+            detail: session.detail.clone().into(),
+        })
+        .collect::<Vec<_>>();
+    ui.set_game_log_sessions(ModelRc::new(VecModel::from(session_views)));
+
+    if ui.get_log_source() == 0 {
+        ui.set_selected_game_log_enabled(!sessions.is_empty());
+        ui.set_log_lines(ModelRc::new(VecModel::from(log_lines(
+            config,
+            wrap_columns,
+        ))));
+        return;
+    }
+
+    let selected_index = match usize::try_from(ui.get_selected_game_log_index()) {
+        Ok(index) if index < sessions.len() => Some(index),
+        _ if sessions.is_empty() => None,
+        _ => Some(0),
+    };
+    let Some(selected_index) = selected_index else {
+        ui.set_selected_game_log_index(-1);
+        ui.set_selected_game_log_enabled(false);
+        ui.set_selected_game_log_title("No game sessions yet".into());
+        ui.set_log_lines(ModelRc::new(VecModel::from(log_lines_from_text(
+            "Game session logs will appear here after launching DRH.",
+            wrap_columns,
+        ))));
+        return;
+    };
+
+    let session = &sessions[selected_index];
+    let content = game_logs::read(&session.path)
+        .unwrap_or_else(|error| format!("Could not read game session log: {error}"));
+    ui.set_selected_game_log_index(selected_index as i32);
+    ui.set_selected_game_log_enabled(true);
+    ui.set_selected_game_log_title(session.title.clone().into());
+    ui.set_log_lines(ModelRc::new(VecModel::from(log_lines_from_text(
+        &content,
+        wrap_columns,
+    ))));
 }
 
-fn log_lines(config: &LauncherConfig) -> Vec<LogLineView> {
+fn log_lines(config: &LauncherConfig, wrap_columns: usize) -> Vec<LogLineView> {
     let Some(install_dir) = config.install_dir.as_deref() else {
-        return log_lines_from_text("No install directory selected.");
+        return log_lines_from_text("No install directory selected.", wrap_columns);
     };
 
     let content = diagnostics::read_recent(install_dir)
         .unwrap_or_else(|error| format!("Could not read launcher log: {error}"));
-    log_lines_from_text(&content)
+    log_lines_from_text(&content, wrap_columns)
 }
 
-fn log_lines_from_text(content: &str) -> Vec<LogLineView> {
+fn log_lines_from_text(content: &str, wrap_columns: usize) -> Vec<LogLineView> {
     content
         .lines()
-        .map(|line| LogLineView {
-            text: line.into(),
-            color: log_line_color(line),
+        .flat_map(|line| {
+            let color = log_line_color(line);
+            split_display_line(line, wrap_columns)
+                .into_iter()
+                .map(move |text| LogLineView {
+                    text: text.into(),
+                    color: color.clone(),
+                })
         })
         .collect()
 }
 
-fn log_line_color(line: &str) -> Brush {
-    if line.contains("[ERROR]") {
-        Color::from_rgb_u8(255, 108, 82).into()
+fn split_display_line(line: &str, max_chars: usize) -> Vec<String> {
+    if line.is_empty() || max_chars == 0 {
+        return vec![line.to_string()];
+    }
+
+    let mut remaining = line;
+    let mut segments = Vec::new();
+    while let Some((split_at, _)) = remaining.char_indices().nth(max_chars) {
+        segments.push(remaining[..split_at].to_string());
+        remaining = &remaining[split_at..];
+    }
+    segments.push(remaining.to_string());
+    segments
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LogLineLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Fatal,
+    Other,
+}
+
+fn log_line_level(line: &str) -> LogLineLevel {
+    if line.contains("[FATAL]") {
+        LogLineLevel::Fatal
+    } else if line.contains("[ERROR]") {
+        LogLineLevel::Error
     } else if line.contains("[WARN]") {
-        Color::from_rgb_u8(240, 194, 102).into()
+        LogLineLevel::Warn
     } else if line.contains("[INFO]") {
-        Color::from_rgb_u8(201, 216, 205).into()
+        LogLineLevel::Info
+    } else if line.contains("[DEBUG]") {
+        LogLineLevel::Debug
     } else {
-        Color::from_rgb_u8(234, 216, 202).into()
+        LogLineLevel::Other
+    }
+}
+
+fn log_line_color(line: &str) -> Brush {
+    match log_line_level(line) {
+        LogLineLevel::Fatal => Color::from_rgb_u8(255, 34, 56).into(),
+        LogLineLevel::Error => Color::from_rgb_u8(255, 108, 82).into(),
+        LogLineLevel::Warn => Color::from_rgb_u8(240, 194, 102).into(),
+        LogLineLevel::Info => Color::from_rgb_u8(201, 216, 205).into(),
+        LogLineLevel::Debug => Color::from_rgb_u8(154, 164, 172).into(),
+        LogLineLevel::Other => Color::from_rgb_u8(234, 216, 202).into(),
     }
 }
 
@@ -1814,6 +2015,31 @@ fn open_folder(path: &Path) -> Result<(), String> {
     let mut command = if cfg!(target_os = "windows") {
         let mut command = Command::new("explorer");
         command.arg(path);
+        command
+    } else if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg(path);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(path);
+        command
+    };
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn open_file(path: &Path) -> Result<(), String> {
+    if !path.is_file() {
+        return Err(format!("{} does not exist", path.display()));
+    }
+
+    let mut command = if cfg!(target_os = "windows") {
+        let mut command = Command::new("rundll32");
+        command.arg("url.dll,FileProtocolHandler").arg(path);
         command
     } else if cfg!(target_os = "macos") {
         let mut command = Command::new("open");
@@ -1982,6 +2208,31 @@ mod home_support_text_tests {
     }
 
     #[test]
+    fn recognizes_all_game_log_levels() {
+        assert_eq!(log_line_level("[DEBUG] details"), LogLineLevel::Debug);
+        assert_eq!(log_line_level("[INFO] details"), LogLineLevel::Info);
+        assert_eq!(log_line_level("[WARN] details"), LogLineLevel::Warn);
+        assert_eq!(log_line_level("[ERROR] details"), LogLineLevel::Error);
+        assert_eq!(log_line_level("[FATAL] details"), LogLineLevel::Fatal);
+        assert_eq!(log_line_level("plain output"), LogLineLevel::Other);
+    }
+
+    #[test]
+    fn splits_long_display_lines_without_losing_unicode_content() {
+        let line = "é".repeat(11);
+        let segments = split_display_line(&line, 4);
+
+        assert_eq!(
+            segments
+                .iter()
+                .map(|segment| segment.chars().count())
+                .collect::<Vec<_>>(),
+            vec![4, 4, 3]
+        );
+        assert_eq!(segments.concat(), line);
+    }
+
+    #[test]
     fn skips_rollback_blocked_update_until_a_newer_release_exists() {
         let temp = tempdir().unwrap();
         InstalledState {
@@ -2077,20 +2328,24 @@ fn start_game_monitor(
     timer: Rc<Timer>,
     ui: slint::Weak<AppWindow>,
     config: LauncherConfig,
-    game_process: Rc<RefCell<Option<Child>>>,
+    game_process: Rc<RefCell<Option<game_launch::RunningGame>>>,
 ) {
     let timer_handle = Rc::clone(&timer);
     timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
         let finished = {
             let mut process = game_process.borrow_mut();
-            let Some(child) = process.as_mut() else {
+            let Some(game) = process.as_mut() else {
                 timer_handle.stop();
                 return;
             };
 
-            match child.try_wait() {
+            match game.child.try_wait() {
                 Ok(Some(status)) => {
-                    process.take();
+                    let game = process.take().expect("running game disappeared");
+                    let _ = game_logs::finish(
+                        &game.session_log,
+                        &format!("Exited with status: {status}"),
+                    );
                     Some((
                         diagnostics::LogLevel::Info,
                         format!("DRH exited with status: {status}"),
@@ -2098,7 +2353,11 @@ fn start_game_monitor(
                 }
                 Ok(None) => None,
                 Err(error) => {
-                    process.take();
+                    let game = process.take().expect("running game disappeared");
+                    let _ = game_logs::finish(
+                        &game.session_log,
+                        &format!("Process inspection failed: {error}"),
+                    );
                     Some((
                         diagnostics::LogLevel::Error,
                         format!("Could not inspect DRH process: {error}"),
@@ -2115,35 +2374,46 @@ fn start_game_monitor(
         log_for_config(&config, level, &message);
         if let Some(ui) = ui.upgrade() {
             refresh_home_state(&ui, &config, &message);
+            refresh_logs_view(&ui, &config);
         }
     });
 }
 
-fn process_is_running(game_process: &Rc<RefCell<Option<Child>>>) -> bool {
+fn process_is_running(game_process: &Rc<RefCell<Option<game_launch::RunningGame>>>) -> bool {
     let mut process = game_process.borrow_mut();
-    let Some(child) = process.as_mut() else {
+    let Some(game) = process.as_mut() else {
         return false;
     };
 
-    match child.try_wait() {
+    match game.child.try_wait() {
         Ok(None) => true,
-        Ok(Some(_)) | Err(_) => {
-            process.take();
+        Ok(Some(status)) => {
+            let game = process.take().expect("running game disappeared");
+            let _ = game_logs::finish(&game.session_log, &format!("Exited with status: {status}"));
             false
         }
+        Err(_) => true,
     }
 }
 
-fn stop_game(game_process: &Rc<RefCell<Option<Child>>>) -> String {
-    let Some(mut child) = game_process.borrow_mut().take() else {
+fn stop_game(game_process: &Rc<RefCell<Option<game_launch::RunningGame>>>) -> String {
+    let mut process = game_process.borrow_mut();
+    let Some(mut game) = process.take() else {
         return "DRH is not running.".to_string();
     };
 
-    match child.kill() {
+    match game.child.kill() {
         Ok(()) => {
-            let _ = child.wait();
+            let status = game.child.wait().ok();
+            let result = status
+                .map(|status| format!("Stopped by user with status: {status}"))
+                .unwrap_or_else(|| "Stopped by user".to_string());
+            let _ = game_logs::finish(&game.session_log, &result);
             "DRH stopped.".to_string()
         }
-        Err(error) => format!("Could not stop DRH: {error}"),
+        Err(error) => {
+            process.replace(game);
+            format!("Could not stop DRH: {error}")
+        }
     }
 }

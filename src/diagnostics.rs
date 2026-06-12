@@ -89,12 +89,22 @@ pub fn read_recent(install_dir: &Path) -> Result<String, String> {
     }
 }
 
-fn timestamp() -> String {
-    let seconds = SystemTime::now()
+pub fn timestamp() -> String {
+    format_system_time_utc(SystemTime::now())
+}
+
+pub fn format_system_time_utc(time: SystemTime) -> String {
+    let seconds = time
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     format_utc_timestamp(seconds)
+}
+
+pub fn filename_timestamp_utc(time: SystemTime) -> String {
+    format_system_time_utc(time)
+        .replace([':', ' '], "-")
+        .replace("-UTC", "Z")
 }
 
 fn format_utc_timestamp(seconds: u64) -> String {
@@ -157,6 +167,10 @@ mod tests {
         assert_eq!(
             format_utc_timestamp(1_704_067_200),
             "2024-01-01 00:00:00 UTC"
+        );
+        assert_eq!(
+            filename_timestamp_utc(UNIX_EPOCH + std::time::Duration::from_secs(1_704_067_200)),
+            "2024-01-01-00-00-00Z"
         );
     }
 }
