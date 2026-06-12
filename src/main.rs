@@ -1007,7 +1007,16 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
 
-            match open_file(&session.path) {
+            let open_path = match game_logs::path_for_external_open(&session.path) {
+                Ok(path) => path,
+                Err(error) => {
+                    log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
+                    set_status_message(&ui, &error);
+                    return;
+                }
+            };
+
+            match open_file(&open_path) {
                 Ok(()) => set_status_message(&ui, "Game session log opened."),
                 Err(error) => {
                     log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
@@ -1872,7 +1881,12 @@ fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
 
 fn game_log_session_id(path: &Path) -> String {
     path.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
+        .map(|name| {
+            let name = name.to_string_lossy();
+            name.strip_suffix(".zst")
+                .unwrap_or(name.as_ref())
+                .to_string()
+        })
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
@@ -2356,6 +2370,10 @@ mod home_support_text_tests {
             Some(-340.0)
         );
         assert_eq!(saved_game_log_position(&positions, "session-c.log"), None);
+        assert_eq!(
+            game_log_session_id(Path::new("session-a.log.zst")),
+            game_log_session_id(Path::new("session-a.log"))
+        );
     }
 
     #[test]

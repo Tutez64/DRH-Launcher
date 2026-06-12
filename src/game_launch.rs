@@ -277,8 +277,9 @@ mod tests {
 
         let mut game = launch_game_with_recommended_args(&config, &[], Some("V-test")).unwrap();
         let status = game.child.wait().unwrap();
-        game_logs::finish(&game.session_log, &format!("Exited with status: {status}")).unwrap();
-        let contents = game_logs::read(&game.session_log.path).unwrap();
+        let log_path =
+            game_logs::finish(&game.session_log, &format!("Exited with status: {status}")).unwrap();
+        let contents = game_logs::read(&log_path).unwrap();
 
         assert!(status.success());
         assert!(contents.contains("stdout line"));

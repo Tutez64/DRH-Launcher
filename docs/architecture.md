@@ -61,7 +61,8 @@ The intended installed layout is:
     logs/
       launcher.log
       game/
-        <session-timestamp>.log
+        <active-session-timestamp>.log
+        <completed-session-timestamp>.log.zst
     cache/
     downloads/
     staging/
@@ -510,21 +511,30 @@ DRH Launcher should write logs under:
 
 ```text
 data/logs/launcher.log
-data/logs/game/<session-timestamp>.log
+data/logs/game/<active-session-timestamp>.log
+data/logs/game/<completed-session-timestamp>.log.zst
 ```
 
 `launcher.log` contains DRH Launcher diagnostics. Each DRH process launched by the
 launcher gets a separate game-session log containing launch metadata, the game's
 standard output and standard error, and the final process result.
 
-The launcher retains the 20 most recent game-session logs. Session filenames use
+Game output is written directly to an uncompressed `.log` while the process is
+running. When the session ends, the launcher appends its result and compresses
+the complete file as an independent Zstandard archive at level 10. The original
+`.log` is removed only after the `.log.zst` has been written successfully.
+An uncompressed `.log` therefore represents an active session or a recoverable
+session whose finalization was interrupted or failed. The viewer handles both
+states. Sessions are not deleted based on their count. Session filenames use
 sortable UTC timestamps so a specific play session can be identified and shared.
 
 The launcher provides an in-app log viewer in `Settings > Logs` with separate
 launcher and game-session views, plus actions to open a selected session or the
 logs directory in the platform file manager. Game log lines use the five DRH
 severity levels: `DEBUG`, `INFO`, `WARN`, `ERROR` and `FATAL`. Completed session
-entries show the game version, duration and log file size.
+entries show the game version, duration and compressed file size. Opening a
+compressed session externally creates an uncompressed copy in the system
+temporary directory so it can be handled by a regular text editor.
 
 The log viewer measures its available layout width using the bundled Hack
 monospace font used for display, then splits logical lines into fixed-height
