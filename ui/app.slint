@@ -246,20 +246,23 @@ component GameSessionButton inherits Rectangle {
 component LogViewer inherits Rectangle {
     in property <string> title;
     in property <[LogLineView]> lines;
-    in property <bool> scroll-to-end;
+    in property <bool> default-scroll-to-end;
+    in property <bool> saved-position-known;
+    in property <length> saved-viewport-y;
+    in property <int> position-key;
     callback wrap-columns-measured(int);
+    callback viewport-position-changed(length);
     property <int> scroll-ticks: 0;
-    property <int> line-count: root.lines.length;
     property <int> reported-wrap-columns: 0;
+    property <length> reported-viewport-y: 0px;
 
     border-radius: 6px;
     border-width: 1px;
     border-color: Theme.border-muted;
     background: Theme.panel-background;
 
-    changed line-count => {
+    changed position-key => {
         root.scroll-ticks = 0;
-        log-list.viewport-y = root.scroll-to-end ? -100000px : 0px;
     }
 
     VerticalLayout {
@@ -304,10 +307,13 @@ component LogViewer inherits Rectangle {
 
         scroll-log-to-end := Timer {
             interval: 1ms;
-            running: root.scroll-to-end && root.scroll-ticks < 2;
+            running: root.reported-wrap-columns > 0 && root.scroll-ticks < 2;
 
             triggered => {
-                log-list.viewport-y = -100000px;
+                log-list.viewport-y = root.saved-position-known
+                    ? root.saved-viewport-y
+                    : root.default-scroll-to-end ? -100000px : 0px;
+                root.reported-viewport-y = log-list.viewport-y;
                 root.scroll-ticks += 1;
             }
         }
@@ -327,6 +333,20 @@ component LogViewer inherits Rectangle {
                         root.reported-wrap-columns = columns;
                         root.wrap-columns-measured(root.reported-wrap-columns);
                     }
+                }
+            }
+        }
+
+        report-viewport-position := Timer {
+            interval: 100ms;
+            running: root.scroll-ticks >= 2;
+
+            triggered => {
+                if (log-list.viewport-y != root.reported-viewport-y) {
+                    root.reported-viewport-y = log-list.viewport-y;
+                    root.viewport-position-changed(root.reported-viewport-y);
+                } else if (!root.saved-position-known) {
+                    root.viewport-position-changed(root.reported-viewport-y);
                 }
             }
         }
@@ -773,6 +793,11 @@ export component AppWindow inherits Window {
     in-out property <int> log-wrap-columns: 120;
     in-out property <int> log-source: 0;
     in-out property <int> selected-game-log-index: -1;
+    in-out property <length> launcher-log-viewport-y: 0px;
+    in-out property <bool> launcher-log-position-known: false;
+    in-out property <length> game-log-viewport-y: 0px;
+    in-out property <bool> game-log-position-known: false;
+    in property <string> selected-game-log-id;
     in property <string> selected-game-log-title: "No game session selected";
     in property <bool> selected-game-log-enabled: false;
     in property <string> launcher-version;
@@ -1459,11 +1484,18 @@ export component AppWindow inherits Window {
                             if root.log-source == 0 : LogViewer {
                                 title: "Recent launcher log";
                                 lines: root.log-lines;
-                                scroll-to-end: true;
+                                default-scroll-to-end: true;
+                                saved-position-known: root.launcher-log-position-known;
+                                saved-viewport-y: root.launcher-log-viewport-y;
+                                position-key: 0;
                                 horizontal-stretch: 1;
                                 vertical-stretch: 1;
                                 wrap-columns-measured(columns) => {
                                     root.log-wrap-columns-measured(columns);
+                                }
+                                viewport-position-changed(position) => {
+                                    root.launcher-log-viewport-y = position;
+                                    root.launcher-log-position-known = true;
                                 }
                             }
 
@@ -1505,11 +1537,18 @@ export component AppWindow inherits Window {
                                 LogViewer {
                                     title: root.selected-game-log-title;
                                     lines: root.log-lines;
-                                    scroll-to-end: false;
+                                    default-scroll-to-end: false;
+                                    saved-position-known: root.game-log-position-known;
+                                    saved-viewport-y: root.game-log-viewport-y;
+                                    position-key: root.selected-game-log-index;
                                     horizontal-stretch: 1;
                                     vertical-stretch: 1;
                                     wrap-columns-measured(columns) => {
                                         root.log-wrap-columns-measured(columns);
+                                    }
+                                    viewport-position-changed(position) => {
+                                        root.game-log-viewport-y = position;
+                                        root.game-log-position-known = true;
                                     }
                                 }
                             }

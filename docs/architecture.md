@@ -523,7 +523,8 @@ sortable UTC timestamps so a specific play session can be identified and shared.
 The launcher provides an in-app log viewer in `Settings > Logs` with separate
 launcher and game-session views, plus actions to open a selected session or the
 logs directory in the platform file manager. Game log lines use the five DRH
-severity levels: `DEBUG`, `INFO`, `WARN`, `ERROR` and `FATAL`.
+severity levels: `DEBUG`, `INFO`, `WARN`, `ERROR` and `FATAL`. Completed session
+entries show the game version, duration and log file size.
 
 The log viewer measures its available layout width using the bundled Hack
 monospace font used for display, then splits logical lines into fixed-height
@@ -532,6 +533,11 @@ platforms. Those rows stay virtualized, which keeps large files quick to load
 and prevents the scrollbar geometry from changing while scrolling. Resizing the
 viewer recalculates the segments without changing the underlying log file or
 losing content.
+
+Display wrapping prefers whitespace, then commas, semicolons or colons near the
+right edge before falling back to a hard character boundary. The launcher keeps
+the launcher log scroll position and a separate scroll position for every game
+session file while navigating between screens and sessions.
 
 Launcher log writes should be best-effort: failure to write diagnostics must not
 break install, update or launch flows. A game-session log must be created before

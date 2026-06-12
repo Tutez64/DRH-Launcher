@@ -1,5 +1,5 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -104,11 +104,11 @@ pub fn read(path: &Path) -> Result<String, String> {
 fn session_entry(path: PathBuf) -> Result<GameSessionEntry, String> {
     let mut file =
         File::open(&path).map_err(|error| format!("Could not open {}: {error}", path.display()))?;
-    let mut header = vec![0; 8 * 1024];
-    let read = file
-        .read(&mut header)
-        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
-    let header = String::from_utf8_lossy(&header[..read]);
+    let size = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
+        .len();
+    let header = read_file_section(&mut file, 0, 8 * 1024, &path)?;
     let started = header_value(&header, "Started: ").unwrap_or_else(|| {
         path.file_stem()
             .and_then(|name| name.to_str())
@@ -116,16 +116,30 @@ fn session_entry(path: PathBuf) -> Result<GameSessionEntry, String> {
             .to_string()
     });
     let version = header_value(&header, "Version: ").unwrap_or_else(|| "unknown".to_string());
-    let size = file
-        .metadata()
-        .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
-        .len();
+    let tail_offset = size.saturating_sub(8 * 1024);
+    let tail = read_file_section(&mut file, tail_offset, 8 * 1024, &path)?;
+    let duration = header_value(&tail, "Duration: ").unwrap_or_else(|| "in progress".to_string());
 
     Ok(GameSessionEntry {
         path,
         title: started,
-        detail: format!("{version} · {}", format_file_size(size)),
+        detail: format!("{version} · {duration} · {}", format_file_size(size)),
     })
+}
+
+fn read_file_section(
+    file: &mut File,
+    offset: u64,
+    max_bytes: usize,
+    path: &Path,
+) -> Result<String, String> {
+    file.seek(std::io::SeekFrom::Start(offset))
+        .map_err(|error| format!("Could not seek {}: {error}", path.display()))?;
+    let mut bytes = vec![0; max_bytes];
+    let read = file
+        .read(&mut bytes)
+        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+    Ok(String::from_utf8_lossy(&bytes[..read]).into_owned())
 }
 
 fn header_value(contents: &str, prefix: &str) -> Option<String> {
@@ -242,10 +256,22 @@ mod tests {
         let contents = read(&session.path).unwrap();
 
         assert_eq!(sessions.len(), 1);
-        assert!(sessions[0].detail.starts_with("V9 · "));
+        assert!(sessions[0].detail.starts_with("V9 · 0s · "));
         assert!(contents.contains("Command: game --flag"));
         assert!(contents.contains("[INFO] Game started"));
         assert!(contents.contains("Result: Exited with status 0"));
+    }
+
+    #[test]
+    fn marks_unfinished_sessions_as_in_progress() {
+        let temp = tempdir().unwrap();
+        let (_file, session) = create(temp.path(), Some("V9"), "linux-x64", "game").unwrap();
+
+        let sessions = list(temp.path()).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0].detail.starts_with("V9 · in progress · "));
+        assert_eq!(sessions[0].path, session.path);
     }
 
     #[test]

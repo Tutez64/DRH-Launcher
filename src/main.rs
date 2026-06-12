@@ -19,6 +19,7 @@ mod release_manifest;
 mod release_source;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 use std::rc::Rc;
@@ -93,6 +94,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let latest_release = Arc::new(Mutex::new(None::<PlatformRelease>));
     let game_process = Rc::new(RefCell::new(None::<game_launch::RunningGame>));
     let game_monitor = Rc::new(Timer::default());
+    let game_log_positions = Rc::new(RefCell::new(HashMap::<String, f32>::new()));
     let release_source = ReleaseSource::from_environment();
 
     ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
@@ -925,10 +927,51 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
+        let game_log_positions = Rc::clone(&game_log_positions);
         ui.unwrap().on_select_game_log(move |index| {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
+
+            let Some(install_dir) = config.borrow().install_dir.clone() else {
+                return;
+            };
+            let Ok(sessions) = game_logs::list(&install_dir) else {
+                ui.set_selected_game_log_index(index);
+                ui.set_game_log_viewport_y(0.0);
+                ui.set_game_log_position_known(false);
+                refresh_logs_view(&ui, &config.borrow());
+                return;
+            };
+            game_log_positions.borrow_mut().retain(|session_id, _| {
+                sessions
+                    .iter()
+                    .any(|session| game_log_session_id(&session.path) == *session_id)
+            });
+
+            let current_session_id = ui.get_selected_game_log_id().to_string();
+            if ui.get_game_log_position_known() && !current_session_id.is_empty() {
+                remember_game_log_position(
+                    &mut game_log_positions.borrow_mut(),
+                    current_session_id,
+                    ui.get_game_log_viewport_y(),
+                );
+            }
+
+            let restored_position = usize::try_from(index)
+                .ok()
+                .and_then(|target_index| sessions.get(target_index))
+                .map(|session| game_log_session_id(&session.path))
+                .and_then(|session_id| {
+                    saved_game_log_position(&game_log_positions.borrow(), &session_id)
+                });
+            if let Some(position) = restored_position {
+                ui.set_game_log_viewport_y(position);
+                ui.set_game_log_position_known(true);
+            } else {
+                ui.set_game_log_viewport_y(0.0);
+                ui.set_game_log_position_known(false);
+            }
 
             ui.set_selected_game_log_index(index);
             refresh_logs_view(&ui, &config.borrow());
@@ -1754,6 +1797,7 @@ fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
         ui.set_selected_game_log_index(-1);
         ui.set_selected_game_log_enabled(false);
         ui.set_selected_game_log_title("No game session selected".into());
+        ui.set_selected_game_log_id("".into());
         ui.set_log_lines(ModelRc::new(VecModel::from(log_lines_from_text(
             "No install directory selected.",
             wrap_columns,
@@ -1768,6 +1812,7 @@ fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
             ui.set_selected_game_log_index(-1);
             ui.set_selected_game_log_enabled(false);
             ui.set_selected_game_log_title("Could not list game sessions".into());
+            ui.set_selected_game_log_id("".into());
             let lines = if ui.get_log_source() == 0 {
                 log_lines(config, wrap_columns)
             } else {
@@ -1804,6 +1849,7 @@ fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
         ui.set_selected_game_log_index(-1);
         ui.set_selected_game_log_enabled(false);
         ui.set_selected_game_log_title("No game sessions yet".into());
+        ui.set_selected_game_log_id("".into());
         ui.set_log_lines(ModelRc::new(VecModel::from(log_lines_from_text(
             "Game session logs will appear here after launching DRH.",
             wrap_columns,
@@ -1817,10 +1863,29 @@ fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
     ui.set_selected_game_log_index(selected_index as i32);
     ui.set_selected_game_log_enabled(true);
     ui.set_selected_game_log_title(session.title.clone().into());
+    ui.set_selected_game_log_id(game_log_session_id(&session.path).into());
     ui.set_log_lines(ModelRc::new(VecModel::from(log_lines_from_text(
         &content,
         wrap_columns,
     ))));
+}
+
+fn game_log_session_id(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+fn remember_game_log_position(
+    positions: &mut HashMap<String, f32>,
+    session_id: String,
+    position: f32,
+) {
+    positions.insert(session_id, position);
+}
+
+fn saved_game_log_position(positions: &HashMap<String, f32>, session_id: &str) -> Option<f32> {
+    positions.get(session_id).copied()
 }
 
 fn log_lines(config: &LauncherConfig, wrap_columns: usize) -> Vec<LogLineView> {
@@ -1855,12 +1920,31 @@ fn split_display_line(line: &str, max_chars: usize) -> Vec<String> {
 
     let mut remaining = line;
     let mut segments = Vec::new();
-    while let Some((split_at, _)) = remaining.char_indices().nth(max_chars) {
+    while let Some((hard_split, _)) = remaining.char_indices().nth(max_chars) {
+        let preferred_split = preferred_display_split(&remaining[..hard_split], max_chars);
+        let split_at = preferred_split.unwrap_or(hard_split);
         segments.push(remaining[..split_at].to_string());
         remaining = &remaining[split_at..];
     }
     segments.push(remaining.to_string());
     segments
+}
+
+fn preferred_display_split(candidate: &str, max_chars: usize) -> Option<usize> {
+    let minimum_chars = (max_chars * 2 / 3).max(1);
+    let mut preferred_split = None;
+
+    for (char_index, (byte_index, character)) in candidate.char_indices().enumerate() {
+        let split_at = byte_index + character.len_utf8();
+        if char_index + 1 < minimum_chars {
+            continue;
+        }
+        if character.is_whitespace() || matches!(character, ',' | ';' | ':') {
+            preferred_split = Some(split_at);
+        }
+    }
+
+    preferred_split
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2230,6 +2314,48 @@ mod home_support_text_tests {
             vec![4, 4, 3]
         );
         assert_eq!(segments.concat(), line);
+    }
+
+    #[test]
+    fn prefers_readable_display_line_boundaries() {
+        let whitespace_line = "123456 890123";
+        let punctuation_line = "123456,890123";
+        let nearest_separator_line = "123456 89,0123";
+        let hard_split_line = "abcdefghijk";
+
+        assert_eq!(
+            split_display_line(whitespace_line, 10),
+            vec!["123456 ", "890123"]
+        );
+        assert_eq!(
+            split_display_line(punctuation_line, 10),
+            vec!["123456,", "890123"]
+        );
+        assert_eq!(
+            split_display_line(nearest_separator_line, 10),
+            vec!["123456 89,", "0123"]
+        );
+        assert_eq!(
+            split_display_line(hard_split_line, 10),
+            vec!["abcdefghij", "k"]
+        );
+    }
+
+    #[test]
+    fn remembers_scroll_positions_for_each_game_log_file() {
+        let mut positions = HashMap::new();
+        remember_game_log_position(&mut positions, "session-a.log".to_string(), -120.0);
+        remember_game_log_position(&mut positions, "session-b.log".to_string(), -340.0);
+
+        assert_eq!(
+            saved_game_log_position(&positions, "session-a.log"),
+            Some(-120.0)
+        );
+        assert_eq!(
+            saved_game_log_position(&positions, "session-b.log"),
+            Some(-340.0)
+        );
+        assert_eq!(saved_game_log_position(&positions, "session-c.log"), None);
     }
 
     #[test]
