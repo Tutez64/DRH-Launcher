@@ -1461,7 +1461,9 @@ fn start_release_check(
                 }
                 state
             };
-            apply_home_view_state(&ui, state);
+            if ui.get_install_action_text() != InstallState::Playing.primary_action() {
+                apply_home_view_state(&ui, state);
+            }
         });
     });
 }
@@ -2205,6 +2207,8 @@ fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str)
     ui.set_install_action_text(InstallState::Playing.primary_action().into());
     ui.set_install_action_enabled(true);
     ui.set_version_status(status.version_text().into());
+    ui.set_update_check_text("Check for updates".into());
+    ui.set_update_check_enabled(false);
     ui.set_open_install_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
     ui.set_open_logs_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
     ui.set_restore_previous_visible(restore_previous_version_available(config));
