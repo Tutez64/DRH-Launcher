@@ -192,6 +192,55 @@ component HomeDiscordButton inherits Rectangle {
     }
 }
 
+component HelpGitHubButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+
+    min-width: 112px;
+    height: 38px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.accent-warm : Theme.border-accent-muted;
+    background: touch.pressed ? Theme.surface-pressed : touch.has-hover ? Theme.surface-accent : Theme.surface-raised;
+
+    HorizontalLayout {
+        y: (parent.height - self.height) / 2;
+        width: parent.width;
+        height: 24px;
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        alignment: center;
+
+        Rectangle {
+            width: 24px;
+            height: 24px;
+
+            Image {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                height: 24px;
+                source: @image-url("icons/github.svg");
+                image-fit: contain;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: Theme.text-primary;
+            font-size: 14px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 component NavButton inherits Rectangle {
     in property <string> text;
     in property <bool> active;
@@ -1298,8 +1347,8 @@ export component AppWindow inherits Window {
 
                     if root.help-menu-open : Rectangle {
                         z: 20;
-                        width: min(380px, home-panel.width - 32px);
-                        height: 62px;
+                        width: min(500px, home-panel.width - 32px);
+                        height: 104px;
                         x: home-panel.x + home-panel.width - self.width - 30px;
                         y: home-panel.y + home-panel.height - self.height - 78px;
                         border-radius: 7px;
@@ -1312,41 +1361,70 @@ export component AppWindow inherits Window {
 
                         TouchArea {}
 
-                        HorizontalLayout {
+                        VerticalLayout {
                             padding: 10px;
-                            alignment: center;
-                            spacing: 10px;
+                            spacing: 8px;
 
-                            if root.restore-previous-visible : SecondaryButton {
-                                min-width: 112px;
-                                horizontal-stretch: 1;
-                                text: root.restore-previous-text;
-                                enabled: root.restore-previous-enabled;
-                                clicked => {
-                                    root.help-menu-open = false;
-                                    root.restore-previous-version();
+                            HorizontalLayout {
+                                height: 38px;
+                                spacing: 10px;
+
+                                if root.restore-previous-visible : SecondaryButton {
+                                    min-width: 112px;
+                                    horizontal-stretch: 1;
+                                    text: root.restore-previous-text;
+                                    enabled: root.restore-previous-enabled;
+                                    clicked => {
+                                        root.help-menu-open = false;
+                                        root.restore-previous-version();
+                                    }
+                                }
+
+                                SecondaryButton {
+                                    min-width: 112px;
+                                    horizontal-stretch: 1;
+                                    text: root.reinstall-current-text;
+                                    enabled: root.reinstall-current-enabled;
+                                    clicked => {
+                                        root.help-menu-open = false;
+                                        root.reinstall-current-version();
+                                    }
+                                }
+
+                                SecondaryButton {
+                                    min-width: 112px;
+                                    horizontal-stretch: 1;
+                                    text: "Open logs";
+                                    clicked => {
+                                        root.help-menu-open = false;
+                                        root.active-page = 3;
+                                        root.settings-page = 1;
+                                    }
                                 }
                             }
 
-                            SecondaryButton {
-                                min-width: 112px;
-                                horizontal-stretch: 1;
-                                text: root.reinstall-current-text;
-                                enabled: root.reinstall-current-enabled;
-                                clicked => {
-                                    root.help-menu-open = false;
-                                    root.reinstall-current-version();
-                                }
-                            }
+                            HorizontalLayout {
+                                height: 38px;
+                                spacing: 10px;
 
-                            SecondaryButton {
-                                min-width: 112px;
-                                horizontal-stretch: 1;
-                                text: "Open logs";
-                                clicked => {
-                                    root.help-menu-open = false;
-                                    root.active-page = 3;
-                                    root.settings-page = 1;
+                                HelpGitHubButton {
+                                    min-width: 112px;
+                                    horizontal-stretch: 1;
+                                    text: "DRH GitHub";
+                                    clicked => {
+                                        root.help-menu-open = false;
+                                        root.open-drh-github-link();
+                                    }
+                                }
+
+                                HelpGitHubButton {
+                                    min-width: 112px;
+                                    horizontal-stretch: 1;
+                                    text: "DRHL GitHub";
+                                    clicked => {
+                                        root.help-menu-open = false;
+                                        root.open-drhl-github-link();
+                                    }
                                 }
                             }
                         }
