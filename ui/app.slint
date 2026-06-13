@@ -144,6 +144,54 @@ component HelpMenuButton inherits Rectangle {
     }
 }
 
+component HomeDiscordButton inherits Rectangle {
+    callback clicked();
+
+    width: 116px;
+    height: 36px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.home-community-border-hover : Theme.home-community-border;
+    background: touch.pressed ? Theme.home-community-pressed : touch.has-hover ? Theme.home-community-hover : Theme.home-community-background;
+
+    HorizontalLayout {
+        y: (parent.height - self.height) / 2;
+        width: parent.width;
+        height: 24px;
+        padding-left: 12px;
+        padding-right: 13px;
+        spacing: 8px;
+        alignment: center;
+
+        Rectangle {
+            width: 24px;
+            height: 24px;
+
+            Image {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                height: 20px;
+                source: @image-url("icons/discord.svg");
+                image-fit: contain;
+            }
+        }
+
+        Text {
+            text: "Discord";
+            color: Theme.text-primary;
+            font-size: 13px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 component NavButton inherits Rectangle {
     in property <string> text;
     in property <bool> active;
@@ -1121,6 +1169,7 @@ export component AppWindow inherits Window {
                                 }
 
                                 VerticalLayout {
+                                    horizontal-stretch: 1;
                                     spacing: 4px;
 
                                     Text {
@@ -1144,6 +1193,17 @@ export component AppWindow inherits Window {
                                         color: Theme.text-secondary;
                                         font-size: 12px;
                                         font-weight: 600;
+                                    }
+                                }
+
+                                Rectangle {
+                                    width: 116px;
+
+                                    HomeDiscordButton {
+                                        y: (parent.height - self.height) / 2;
+                                        clicked => {
+                                            root.open-discord-link();
+                                        }
                                     }
                                 }
                             }
