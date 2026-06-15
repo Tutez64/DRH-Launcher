@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 build = "build.rs"
 license = "GPL-3.0-or-later"
+authors = ["Tutez"]
+description = "Install, update, configure, and play Dungeon Rampage Haxe"
+homepage = "https://github.com/Tutez64/DRH-Launcher"
+repository = "https://github.com/Tutez64/DRH-Launcher"
 
 [[bin]]
 name = "DRH-Launcher"
@@ -39,3 +43,25 @@ tempfile = "3.27.0"
 [profile.release]
 codegen-units = 1
 lto = true
+
+[package.metadata.packager]
+product-name = "DRH Launcher"
+identifier = "io.github.Tutez64.DRHLauncher"
+category = "Game"
+icons = ["assets/icons/app-icon-256.png"]
+license-file = "LICENSE"
+binaries = [{ path = "DRH-Launcher", main = true }]
+
+[package.metadata.packager.appimage.files]
+"assets/icons/app-icon-16.png" = "usr/lib/DRH-Launcher/icons/16.png"
+"assets/icons/app-icon-32.png" = "usr/lib/DRH-Launcher/icons/32.png"
+"assets/icons/app-icon-48.png" = "usr/lib/DRH-Launcher/icons/48.png"
+"assets/icons/app-icon-64.png" = "usr/lib/DRH-Launcher/icons/64.png"
+"assets/icons/app-icon-128.png" = "usr/lib/DRH-Launcher/icons/128.png"
+
+[package.metadata.packager.nsis]
+installer-mode = "currentUser"
+languages = ["English"]
+
+[package.metadata.packager.macos]
+signing-identity = "-"

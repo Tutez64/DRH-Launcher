@@ -926,6 +926,13 @@ export component AppWindow inherits Window {
     in property <string> selected-game-log-title: "No game session selected";
     in property <bool> selected-game-log-enabled: false;
     in property <string> launcher-version;
+    in property <bool> linux-integration-visible: false;
+    in property <bool> linux-integration-advanced: false;
+    in property <string> linux-integration-status;
+    in property <string> linux-integration-path;
+    in property <bool> open-linux-integration-folder-enabled: false;
+    in property <string> linux-integration-action-text;
+    in property <bool> linux-integration-action-enabled: false;
     in property <string> config-path;
     in property <string> install-folder-path;
     in-out property <string> download-cache-limit;
@@ -965,6 +972,10 @@ export component AppWindow inherits Window {
     in-out property <bool> close-confirmation-visible: false;
     in-out property <bool> close-confirmation-busy: false;
     in-out property <string> close-confirmation-error;
+    in-out property <bool> appimage-dialog-visible: false;
+    in-out property <int> appimage-dialog-mode: 1;
+    in-out property <bool> appimage-dialog-busy: false;
+    in-out property <string> appimage-dialog-error;
     property <bool> info-tooltip-visible: false;
     property <string> info-tooltip-text;
     property <length> info-tooltip-anchor-x: 0px;
@@ -980,6 +991,10 @@ export component AppWindow inherits Window {
     callback open-drh-github-link();
     callback open-drhl-github-link();
     callback open-ax4-github-link();
+    callback linux-integration-action();
+    callback open-linux-integration-folder();
+    callback cancel-appimage-dialog();
+    callback confirm-appimage-action();
     callback refresh-logs();
     callback select-log-source(int);
     callback select-game-log(int);
@@ -1009,7 +1024,7 @@ export component AppWindow inherits Window {
     }
 
     title: "DRH Launcher";
-    icon: @image-url("../assets/icons/app-icon-1024.png");
+    icon: @image-url("../assets/icons/app-icon-256.png");
     preferred-width: 1280px;
     preferred-height: 720px;
     min-width: 720px;
@@ -1345,6 +1360,7 @@ export component AppWindow inherits Window {
 
                     }
 
+
                     if root.help-menu-open : Rectangle {
                         z: 20;
                         width: min(500px, home-panel.width - 32px);
@@ -1676,9 +1692,42 @@ export component AppWindow inherits Window {
                                     width: general-page-scroll.width;
                                     spacing: 12px;
 
+                                    if root.linux-integration-visible && !root.linux-integration-advanced : SettingsCard {
+                                        title: "Application";
+                                        description: root.linux-integration-status;
+
+                                        Text {
+                                            text: root.linux-integration-path;
+                                            font-size: 13px;
+                                            color: Theme.text-body;
+                                            wrap: word-wrap;
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            alignment: start;
+
+                                            SecondaryButton {
+                                                text: "Open folder";
+                                                enabled: root.open-linux-integration-folder-enabled;
+                                                clicked => {
+                                                    root.open-linux-integration-folder();
+                                                }
+                                            }
+
+                                            SecondaryButton {
+                                                text: root.linux-integration-action-text;
+                                                enabled: root.linux-integration-action-enabled;
+                                                clicked => {
+                                                    root.linux-integration-action();
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     SettingsCard {
-                                        title: "Installation";
-                                        description: "Contains launcher data, downloaded archives, logs, and Dungeon Rampage Haxe.";
+                                        title: "Storage";
+                                        description: "Location used for managed data, downloaded archives, logs, and Dungeon Rampage Haxe.";
 
                                         Text {
                                             text: root.install-folder-path;
@@ -1765,6 +1814,39 @@ export component AppWindow inherits Window {
                                                     text: "Open config folder";
                                                     clicked => {
                                                         root.open-config-folder();
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if root.advanced-settings-open && root.linux-integration-visible && root.linux-integration-advanced : SettingsCard {
+                                            title: "Application";
+                                            description: root.linux-integration-status;
+
+                                            Text {
+                                                text: root.linux-integration-path;
+                                                font-size: 13px;
+                                                color: Theme.text-body;
+                                                wrap: word-wrap;
+                                            }
+
+                                            HorizontalLayout {
+                                                spacing: 10px;
+                                                alignment: start;
+
+                                                SecondaryButton {
+                                                    text: "Open folder";
+                                                    enabled: root.open-linux-integration-folder-enabled;
+                                                    clicked => {
+                                                        root.open-linux-integration-folder();
+                                                    }
+                                                }
+
+                                                SecondaryButton {
+                                                    text: root.linux-integration-action-text;
+                                                    enabled: root.linux-integration-action-enabled;
+                                                    clicked => {
+                                                        root.linux-integration-action();
                                                     }
                                                 }
                                             }
@@ -2201,6 +2283,84 @@ export component AppWindow inherits Window {
                         enabled: !root.close-confirmation-busy;
                         clicked => {
                             root.confirm-close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.appimage-dialog-visible : Rectangle {
+        z: 2100;
+        background: Theme.modal-scrim;
+
+        TouchArea {}
+
+        Rectangle {
+            width: min(520px, parent.width - 32px);
+            height: appimage-dialog-content.preferred-height + 48px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border-accent-muted;
+            background: Theme.surface-raised;
+            drop-shadow-blur: 18px;
+            drop-shadow-offset-y: 6px;
+            drop-shadow-color: Theme.shadow-strong;
+
+            appimage-dialog-content := VerticalLayout {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                height: parent.height - 48px;
+                spacing: 16px;
+
+                Text {
+                    text: root.appimage-dialog-mode == 2
+                        ? "Uninstall DRH Launcher?"
+                        : "Install DRH Launcher?";
+                    color: Theme.text-title;
+                    font-size: 19px;
+                    font-weight: 800;
+                }
+
+                Text {
+                    text: root.appimage-dialog-mode == 2
+                        ? "This removes the AppImage and its application-menu entry. Dungeon Rampage Haxe, downloads, settings, and logs are kept."
+                        : "DRH Launcher will install itself for your Linux user, add an application-menu entry, and restart.";
+                    color: Theme.text-body;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+
+                if root.appimage-dialog-error != "" : Text {
+                    text: root.appimage-dialog-error;
+                    color: Theme.accent-warm;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    min-height: 42px;
+                    spacing: 10px;
+                    alignment: end;
+
+                    SecondaryButton {
+                        text: root.appimage-dialog-mode == 2 ? "Cancel" : "Not now";
+                        enabled: !root.appimage-dialog-busy;
+                        clicked => {
+                            root.cancel-appimage-dialog();
+                        }
+                    }
+
+                    PrimaryButton {
+                        text: root.appimage-dialog-busy
+                            ? (root.appimage-dialog-mode == 2 ? "Uninstalling..." : "Installing...")
+                            : (root.appimage-dialog-mode == 2 ? "Uninstall" : "Install");
+                        enabled: !root.appimage-dialog-busy;
+                        clicked => {
+                            root.confirm-appimage-action();
                         }
                     }
                 }

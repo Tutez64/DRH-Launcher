@@ -13,6 +13,7 @@ mod github_releases;
 mod install_metadata;
 mod install_state;
 mod installer;
+mod linux_appimage;
 mod paths;
 mod platform;
 mod release_manifest;
@@ -105,6 +106,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let release_source = ReleaseSource::from_environment();
 
     ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
+    refresh_linux_integration_view(&ui);
+    if matches!(
+        linux_appimage::state(),
+        linux_appimage::IntegrationState::Portable | linux_appimage::IntegrationState::NeedsRepair
+    ) {
+        ui.set_appimage_dialog_mode(1);
+        ui.set_appimage_dialog_visible(true);
+    }
     ui.set_config_path(paths::config_file().display().to_string().into());
     refresh_settings_view(&ui, &config.borrow(), "Save");
     let installed_launch_options = load_installed_launch_options(&config.borrow());
@@ -355,6 +364,120 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         });
     }
+
+    {
+        let ui = ui.as_weak();
+        ui.unwrap().on_linux_integration_action(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            match linux_appimage::state() {
+                linux_appimage::IntegrationState::Portable
+                | linux_appimage::IntegrationState::NeedsRepair => {
+                    ui.set_appimage_dialog_mode(1);
+                    ui.set_appimage_dialog_error("".into());
+                    ui.set_appimage_dialog_visible(true);
+                }
+                linux_appimage::IntegrationState::Installed => {
+                    ui.set_appimage_dialog_mode(2);
+                    ui.set_appimage_dialog_error("".into());
+                    ui.set_appimage_dialog_visible(true);
+                }
+                linux_appimage::IntegrationState::NotAppImage => {}
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_open_linux_integration_folder(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let result = linux_appimage::application_path()
+                .and_then(|path| path.parent().map(Path::to_path_buf))
+                .ok_or_else(|| "Could not locate the DRH Launcher AppImage folder.".to_string())
+                .and_then(|folder| open_folder(&folder));
+
+            match result {
+                Ok(()) => set_status_message(&ui, "Application folder opened."),
+                Err(error) => {
+                    log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
+                    set_status_message(&ui, &format!("Could not open application folder: {error}"));
+                }
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        ui.unwrap().on_cancel_appimage_dialog(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if ui.get_appimage_dialog_busy() {
+                return;
+            }
+            ui.set_appimage_dialog_visible(false);
+            ui.set_appimage_dialog_error("".into());
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let game_process = Rc::clone(&game_process);
+        ui.unwrap().on_confirm_appimage_action(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            if ui.get_appimage_dialog_busy() {
+                return;
+            }
+
+            let mode = ui.get_appimage_dialog_mode();
+            if mode == 2 && process_is_running(&game_process) {
+                ui.set_appimage_dialog_error(
+                    "Stop Dungeon Rampage Haxe before uninstalling DRH Launcher.".into(),
+                );
+                return;
+            }
+
+            ui.set_appimage_dialog_busy(true);
+            ui.set_appimage_dialog_error("".into());
+            let ui = ui.as_weak();
+            let config = config.borrow().clone();
+            thread::spawn(move || {
+                let result = if mode == 2 {
+                    linux_appimage::uninstall()
+                } else {
+                    linux_appimage::install_and_restart()
+                };
+
+                if let Err(error) = result {
+                    log_for_config(&config, diagnostics::LogLevel::Error, &error);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let Some(ui) = ui.upgrade() else {
+                            return;
+                        };
+                        ui.set_appimage_dialog_busy(false);
+                        ui.set_appimage_dialog_error(error.into());
+                        refresh_linux_integration_view(&ui);
+                    });
+                    return;
+                }
+
+                if mode == 2 {
+                    std::process::exit(0);
+                }
+            });
+        });
+    }
+
 
     {
         let ui = ui.as_weak();
@@ -1129,6 +1252,47 @@ fn main() -> Result<(), slint::PlatformError> {
     );
 
     ui.run()
+}
+
+fn refresh_linux_integration_view(ui: &AppWindow) {
+    let (visible, advanced, status, action) = match linux_appimage::state() {
+        linux_appimage::IntegrationState::NotAppImage => (false, false, "", ""),
+        linux_appimage::IntegrationState::Portable => (
+            true,
+            false,
+            "DRH Launcher is currently running as a portable AppImage. Install it to add it to your applications.",
+            "Install",
+        ),
+        linux_appimage::IntegrationState::Installed => (
+            true,
+            true,
+            "DRH Launcher is installed for the current Linux user.",
+            "Uninstall",
+        ),
+        linux_appimage::IntegrationState::NeedsRepair => (
+            true,
+            false,
+            "The AppImage is installed, but its desktop integration is incomplete.",
+            "Repair",
+        ),
+    };
+    let application_path = linux_appimage::application_path();
+    let open_folder_enabled = application_path
+        .as_deref()
+        .and_then(Path::parent)
+        .is_some_and(Path::is_dir);
+    ui.set_linux_integration_visible(visible);
+    ui.set_linux_integration_advanced(advanced);
+    ui.set_linux_integration_status(status.into());
+    ui.set_linux_integration_path(
+        application_path
+            .map(|path| path.display().to_string())
+            .unwrap_or_default()
+            .into(),
+    );
+    ui.set_open_linux_integration_folder_enabled(open_folder_enabled);
+    ui.set_linux_integration_action_text(action.into());
+    ui.set_linux_integration_action_enabled(visible);
 }
 
 fn install_latest_release(

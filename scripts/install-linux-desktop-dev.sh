@@ -7,7 +7,7 @@ desktop_source="$repo_root/packaging/linux/$app_id.desktop"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 desktop_target="$data_home/applications/$app_id.desktop"
 exe_path="$repo_root/target/debug/DRH-Launcher"
-icon_path="$repo_root/assets/icons/app-icon-1024.png"
+icon_path="$repo_root/assets/icons/app-icon-256.png"
 
 if [ ! -x "$exe_path" ]; then
     cargo build --manifest-path "$repo_root/Cargo.toml" --bin DRH-Launcher
