@@ -12,6 +12,8 @@ mod platform {
     const ICON_NAME: &str = "DRH-Launcher";
     const APPIMAGE_NAME: &str = "DRH-Launcher.AppImage";
     const ICON_SIZES: &[u32] = &[16, 32, 48, 64, 128, 256];
+    const DESKTOP_ENTRY_TEMPLATE: &str =
+        include_str!("../packaging/linux/io.github.Tutez64.DRHLauncher.desktop.in");
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum IntegrationState {
@@ -176,19 +178,13 @@ mod platform {
 
     fn desktop_entry_contents(appimage: &Path, icon: &Path) -> String {
         let executable = escape_desktop_exec_argument(appimage.as_os_str());
-        format!(
-            "[Desktop Entry]\n\
-             Type=Application\n\
-             Name=DRH Launcher\n\
-             Comment=Install, update, configure, and play Dungeon Rampage Haxe\n\
-             Exec=\"{executable}\"\n\
-             Icon={}\n\
-             Terminal=false\n\
-             Categories=Game;\n\
-             StartupNotify=true\n\
-             StartupWMClass={APP_ID}\n",
-            icon.display()
-        )
+        render_desktop_entry(&format!("\"{executable}\""), &icon.display().to_string())
+    }
+
+    fn render_desktop_entry(executable: &str, icon: &str) -> String {
+        DESKTOP_ENTRY_TEMPLATE
+            .replace("@EXEC@", executable)
+            .replace("@ICON@", icon)
     }
 
     fn escape_desktop_exec_argument(value: &std::ffi::OsStr) -> String {
@@ -330,6 +326,9 @@ mod platform {
             assert!(desktop.contains("Name=DRH Launcher"));
             assert!(desktop.contains(&format!("Exec=\"{}\"", paths.appimage.to_string_lossy())));
             assert!(desktop.contains(&format!("Icon={}", paths.icons.last().unwrap().display())));
+            assert!(desktop.contains(&format!("StartupWMClass={APP_ID}")));
+            assert!(!desktop.contains("@EXEC@"));
+            assert!(!desktop.contains("@ICON@"));
         }
 
         #[test]

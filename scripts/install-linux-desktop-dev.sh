@@ -3,7 +3,7 @@ set -eu
 
 app_id="io.github.Tutez64.DRHLauncher"
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-desktop_source="$repo_root/packaging/linux/$app_id.desktop"
+desktop_template="$repo_root/packaging/linux/$app_id.desktop.in"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 desktop_target="$data_home/applications/$app_id.desktop"
 exe_path="$repo_root/target/debug/DRH-Launcher"
@@ -13,11 +13,24 @@ if [ ! -x "$exe_path" ]; then
     cargo build --manifest-path "$repo_root/Cargo.toml" --bin DRH-Launcher
 fi
 
+escape_desktop_argument() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/`/\\`/g; s/\$/\\$/g; s/%/%%/g'
+}
+
 mkdir -p "$data_home/applications"
-sed \
-    -e "s#^Exec=.*#Exec=$exe_path#" \
-    -e "s#^Icon=.*#Icon=$icon_path#" \
-    "$desktop_source" > "$desktop_target"
+while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+        Exec=@EXEC@)
+            printf 'Exec="%s"\n' "$(escape_desktop_argument "$exe_path")"
+            ;;
+        Icon=@ICON@)
+            printf 'Icon=%s\n' "$icon_path"
+            ;;
+        *)
+            printf '%s\n' "$line"
+            ;;
+    esac
+done < "$desktop_template" > "$desktop_target"
 chmod 755 "$desktop_target"
 
 if command -v update-desktop-database >/dev/null 2>&1; then

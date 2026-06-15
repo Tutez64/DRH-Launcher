@@ -2,8 +2,8 @@
 Type=Application
 Name=DRH Launcher
 Comment=Install, update, configure, and play Dungeon Rampage Haxe
-Exec=DRH-Launcher
-Icon=DRH-Launcher
+Exec=@EXEC@
+Icon=@ICON@
 Terminal=false
 Categories=Game;
 StartupNotify=true
