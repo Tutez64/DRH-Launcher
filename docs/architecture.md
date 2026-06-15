@@ -45,17 +45,44 @@ These identifiers should be used consistently in manifests, logs, update decisio
 - Window title: `DRH Launcher`
 - User-facing launcher name: `DRH Launcher`
 - Linux desktop app ID: `io.github.Tutez64.DRHLauncher`
+- Linux desktop icon name: `DRH-Launcher`
 - Steam entry for playing: `Dungeon Rampage Haxe`
 
 Steam should point to the launcher, not directly to the game executable.
 
-## Installation Layout
+## Application and Managed Data Layout
 
-The intended installed layout is:
+DRH Launcher itself is installed as a platform application:
+
+- Linux: an AppImage installed for the current user by DRHL itself
+- Windows: a current-user NSIS installation
+- macOS: `DRH Launcher.app`, normally copied from a DMG
+
+On Linux, the downloaded AppImage is both the bootstrap and portable package.
+When it is launched outside DRHL's managed location, the launcher offers to:
+
+```text
+copy itself atomically to ~/Applications/DRH-Launcher.AppImage
+install its icon under $XDG_DATA_HOME/icons/
+install its desktop entry under $XDG_DATA_HOME/applications/
+remove the downloaded AppImage when possible
+restart from the managed AppImage
+```
+
+This installation is per-user and does not require administrator privileges.
+Choosing `Not now` keeps the current AppImage portable. Native distribution
+packages may be added later, but are not a first-release requirement.
+
+The configured `install_dir` is not the launcher executable location. It is the
+launcher-managed content root containing DRH, downloads, logs and install
+metadata. Keeping application files and managed content separate lets the
+launcher update itself without touching the game rollback directories and lets
+the game update without replacing the launcher.
+
+The intended managed content layout is:
 
 ```text
 <install-dir>/
-  DRH-Launcher
   data/
     installed.json
     logs/
@@ -226,7 +253,73 @@ When launch option metadata is not available for the installed release, the UI s
 
 ## Updates
 
-The first implementation should use full archives from GitHub releases.
+Game updates and launcher updates are independent release streams. DRH uses tags
+such as `V10` in the DRH repository. DRH Launcher uses semantic versions such as
+`v0.1.0` in the DRH Launcher repository.
+
+### Launcher Packaging and Self-Updates
+
+DRH Launcher releases are built by GitHub Actions with pinned `cargo-packager`
+tooling:
+
+```text
+linux-x64       AppImage
+windows-x64     current-user NSIS installer
+macos-universal universal .app in a DMG
+```
+
+The macOS update bundle contains the same universal app for both
+`macos-x86_64` and `macos-aarch64`.
+
+Each release includes:
+
+- the user-facing platform packages
+- a cargo-packager update bundle where needed
+- Minisign signatures generated from the DRHL update key
+- `latest.json` for `cargo-packager-updater`
+- `SHA256SUMS` for manual verification
+
+The update private key exists only in GitHub Actions secrets. Its public key is
+embedded in release builds through `DRHL_UPDATE_PUBLIC_KEY`. Release builds must
+fail rather than publish packages when either key is missing.
+
+Pushing a matching version tag builds the native packages and creates a draft
+GitHub Release. The generated artifacts are tested from that draft before it is
+published manually. Draft releases are not exposed through GitHub's `latest`
+release endpoint, so launcher clients only discover a version after validation.
+
+DRHL checks for its own updates independently from the DRH release check. Only
+an available launcher update is shown, as a contextual notification on `Home`.
+Installing it is an explicit action and is refused while a game process tracked
+by DRHL is running. The downloaded package is verified with the embedded public
+key before it is installed, then DRHL restarts.
+
+On Linux, automatic updates only replace the AppImage in DRHL's managed
+location. A portable AppImage first offers installation and does not silently
+replace itself in an arbitrary download directory. Development binaries and
+other unsupported installation formats link to the latest GitHub release
+instead.
+
+`Settings > General` exposes Linux installation and repair prominently when
+needed. Once installed, AppImage management moves under advanced settings.
+Linux uninstall removes the managed AppImage, icon and desktop entry, but
+preserves launcher configuration, DRH installations, downloaded archives and
+logs.
+
+Minisign update signatures do not replace platform code signing:
+
+- unsigned Windows builds can still trigger SmartScreen
+- non-notarized macOS builds can still trigger Gatekeeper
+- Apple Developer ID signing/notarization and Windows Authenticode should be
+  enabled when credentials are available
+
+The packaging and updater implementation is isolated from the game installer.
+`cargo-packager` and `cargo-packager-updater` are pinned because their updater is
+still described upstream as preview functionality.
+
+### Game Updates
+
+The first game update implementation uses full archives from GitHub releases.
 
 ```text
 Release name: Dungeon Rampage Haxe V1
@@ -494,6 +587,9 @@ The game may need explicit support to load mods cleanly. Until then, the launche
 
 - the install directory, described as the folder that contains launcher data, downloads, logs and `Dungeon Rampage Haxe/`
 - an action to open the install directory
+- an `Application` card for Linux AppImage installation or repair when needed
+- the active AppImage path and an action to open its folder
+- installed Linux AppImage management under advanced settings
 - `download_cache_limit`, with clear help text explaining that it controls how many verified release archives are kept in `data/downloads/` for faster reinstalls, repairs and rollbacks
 - an advanced section, collapsed by default, for diagnostics-only details such as the `config.json` location
 

@@ -38,6 +38,20 @@ Build:
 cargo build --release
 ```
 
+Package the current platform:
+
+```bash
+cargo install cargo-packager --version 0.11.8 --locked
+cargo packager --release
+```
+
+Release packaging, signing and self-update setup are documented in
+[docs/packaging.md](docs/packaging.md).
+
+The Linux release is an AppImage. On first launch it can install itself for the
+current user and add DRH Launcher to the desktop application menu without
+requiring administrator access.
+
 ## Current Scope
 
 - Slint-based desktop UI
@@ -45,6 +59,7 @@ cargo build --release
 - Initial home screen
 - GitHub release discovery
 - Verified archive downloads
+- Native launcher packages and signed launcher self-updates
 
 ## Architecture
 
