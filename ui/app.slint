@@ -926,6 +926,10 @@ export component AppWindow inherits Window {
     in property <string> selected-game-log-title: "No game session selected";
     in property <bool> selected-game-log-enabled: false;
     in property <string> launcher-version;
+    in property <bool> launcher-update-visible: false;
+    in property <string> launcher-update-status;
+    in property <string> launcher-update-action-text: "Update and restart";
+    in property <bool> launcher-update-action-enabled: true;
     in property <bool> linux-integration-visible: false;
     in property <bool> linux-integration-advanced: false;
     in property <string> linux-integration-status;
@@ -991,6 +995,7 @@ export component AppWindow inherits Window {
     callback open-drh-github-link();
     callback open-drhl-github-link();
     callback open-ax4-github-link();
+    callback launcher-update-action();
     callback linux-integration-action();
     callback open-linux-integration-folder();
     callback cancel-appimage-dialog();
@@ -1360,6 +1365,42 @@ export component AppWindow inherits Window {
 
                     }
 
+                    if root.launcher-update-visible : Rectangle {
+                        z: 5;
+                        width: min(560px, parent.width - 16px);
+                        height: 58px;
+                        x: (parent.width - self.width) / 2;
+                        y: 8px;
+                        border-radius: 7px;
+                        border-width: 1px;
+                        border-color: Theme.border-accent;
+                        background: Theme.surface-raised;
+                        drop-shadow-blur: 12px;
+                        drop-shadow-offset-y: 4px;
+                        drop-shadow-color: Theme.shadow-strong;
+
+                        HorizontalLayout {
+                            padding: 10px;
+                            spacing: 12px;
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: root.launcher-update-status;
+                                font-size: 13px;
+                                color: Theme.text-body;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                            }
+
+                            SecondaryButton {
+                                text: root.launcher-update-action-text;
+                                enabled: root.launcher-update-action-enabled;
+                                clicked => {
+                                    root.launcher-update-action();
+                                }
+                            }
+                        }
+                    }
 
                     if root.help-menu-open : Rectangle {
                         z: 20;

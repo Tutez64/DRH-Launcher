@@ -13,6 +13,7 @@ mod github_releases;
 mod install_metadata;
 mod install_state;
 mod installer;
+mod launcher_update;
 mod linux_appimage;
 mod paths;
 mod platform;
@@ -99,6 +100,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let config = Rc::new(RefCell::new(LauncherConfig::load()));
     let latest_release = Arc::new(Mutex::new(None::<PlatformRelease>));
+    let latest_launcher_update = Arc::new(Mutex::new(None::<launcher_update::LauncherUpdate>));
     let game_process = Rc::new(RefCell::new(None::<game_launch::RunningGame>));
     let game_monitor = Rc::new(Timer::default());
     let game_stop_timer = Rc::new(Timer::default());
@@ -478,6 +480,64 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let game_process = Rc::clone(&game_process);
+        let latest_launcher_update = Arc::clone(&latest_launcher_update);
+        ui.unwrap().on_launcher_update_action(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if !launcher_update::automatic_update_supported() {
+                return;
+            }
+
+            if process_is_running(&game_process) {
+                let message = "Stop DRH before updating DRH Launcher.";
+                log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
+                ui.set_launcher_update_status(message.into());
+                return;
+            }
+
+            let update = latest_launcher_update
+                .lock()
+                .expect("launcher update lock poisoned")
+                .clone();
+            let Some(update) = update else {
+                start_launcher_update_check(
+                    &ui,
+                    config.borrow().clone(),
+                    Arc::clone(&latest_launcher_update),
+                );
+                return;
+            };
+
+            let version = update.version().to_string();
+            let message = format!("Installing DRH Launcher {version}...");
+            log_for_config(&config.borrow(), diagnostics::LogLevel::Info, &message);
+            ui.set_launcher_update_status(message.into());
+            ui.set_launcher_update_action_text("Installing...".into());
+            ui.set_launcher_update_action_enabled(false);
+
+            let ui = ui.as_weak();
+            let config = config.borrow().clone();
+            thread::spawn(move || {
+                if let Err(error) = update.install_and_restart() {
+                    log_for_config(&config, diagnostics::LogLevel::Error, &error);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let Some(ui) = ui.upgrade() else {
+                            return;
+                        };
+                        ui.set_launcher_update_status(error.into());
+                        ui.set_launcher_update_action_text("Try again".into());
+                        ui.set_launcher_update_action_enabled(true);
+                    });
+                }
+            });
+        });
+    }
 
     {
         let ui = ui.as_weak();
@@ -1250,8 +1310,75 @@ fn main() -> Result<(), slint::PlatformError> {
         Arc::clone(&latest_release),
         release_source.clone(),
     );
+    start_launcher_update_check(
+        &ui,
+        config.borrow().clone(),
+        Arc::clone(&latest_launcher_update),
+    );
 
     ui.run()
+}
+
+fn start_launcher_update_check(
+    ui: &AppWindow,
+    config: LauncherConfig,
+    latest_launcher_update: Arc<Mutex<Option<launcher_update::LauncherUpdate>>>,
+) {
+    latest_launcher_update
+        .lock()
+        .expect("launcher update lock poisoned")
+        .take();
+
+    if !launcher_update::automatic_update_supported() {
+        ui.set_launcher_update_visible(false);
+        return;
+    }
+
+    ui.set_launcher_update_visible(false);
+
+    let ui = ui.as_weak();
+    thread::spawn(move || {
+        let result = launcher_update::check();
+        let message = match &result {
+            Ok(Some(update)) => format!(
+                "DRH Launcher {} is available. The launcher will restart after updating.",
+                update.version()
+            ),
+            Ok(None) => format!("DRH Launcher {} is up to date.", env!("CARGO_PKG_VERSION")),
+            Err(error) => error.clone(),
+        };
+        let level = if result.is_err() {
+            diagnostics::LogLevel::Warn
+        } else {
+            diagnostics::LogLevel::Info
+        };
+        log_for_config(&config, level, &message);
+
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            match result {
+                Ok(Some(update)) => {
+                    latest_launcher_update
+                        .lock()
+                        .expect("launcher update lock poisoned")
+                        .replace(update);
+                    ui.set_launcher_update_status(message.into());
+                    ui.set_launcher_update_action_text("Update and restart".into());
+                    ui.set_launcher_update_action_enabled(true);
+                    ui.set_launcher_update_visible(true);
+                }
+                Ok(None) => {
+                    ui.set_launcher_update_visible(false);
+                }
+                Err(_) => {
+                    ui.set_launcher_update_visible(false);
+                }
+            }
+        });
+    });
 }
 
 fn refresh_linux_integration_view(ui: &AppWindow) {

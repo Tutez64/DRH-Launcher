@@ -1,0 +1,200 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-22.04
+            platform: linux
+            upload_pattern: dist/*.AppImage*
+          - name: Windows x64
+            runner: windows-2022
+            platform: windows
+            upload_pattern: dist/*.exe*
+          - name: macOS universal
+            runner: macos-14
+            platform: macos
+            upload_pattern: |
+              dist/*.dmg*
+              dist/*.tar.gz*
+
+    env:
+      DRHL_UPDATE_PUBLIC_KEY: ${{ vars.DRHL_UPDATE_PUBLIC_KEY }}
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Validate release configuration
+        shell: bash
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY"
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD"
+          test -n "$DRHL_UPDATE_PUBLIC_KEY"
+
+      - name: Validate tag and Cargo version
+        shell: python
+        run: |
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              raise SystemExit(f"Tag {tag} does not match Cargo version {version}")
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Test
+        run: cargo test --all-targets --locked
+
+      - name: Clippy
+        if: matrix.platform == 'linux'
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Build Linux package
+        if: matrix.platform == 'linux'
+        run: cargo build --release --locked
+
+      - name: Package Linux
+        if: matrix.platform == 'linux'
+        run: cargo packager --release --formats appimage --out-dir dist
+
+      - name: Sign Linux update package
+        if: matrix.platform == 'linux'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          artifacts=(dist/*.AppImage)
+          test "${#artifacts[@]}" -eq 1
+          cargo packager signer sign "${artifacts[0]}"
+
+      - name: Build Windows package
+        if: matrix.platform == 'windows'
+        run: cargo build --release --locked
+
+      - name: Package Windows
+        if: matrix.platform == 'windows'
+        run: cargo packager --release --formats nsis --out-dir dist
+
+      - name: Sign Windows update package
+        if: matrix.platform == 'windows'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          $artifacts = @(Get-ChildItem dist -Filter *.exe)
+          if ($artifacts.Count -ne 1) {
+            throw "Expected one NSIS installer, found $($artifacts.Count)"
+          }
+          cargo packager signer sign $artifacts[0].FullName
+
+      - name: Build universal macOS package
+        if: matrix.platform == 'macos'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          cargo build --release --locked --target aarch64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create \
+            target/x86_64-apple-darwin/release/DRH-Launcher \
+            target/aarch64-apple-darwin/release/DRH-Launcher \
+            -output target/universal-apple-darwin/release/DRH-Launcher
+
+      - name: Package macOS
+        if: matrix.platform == 'macos'
+        run: |
+          cargo packager \
+              --release \
+              --target universal-apple-darwin \
+              --formats app,dmg \
+              --out-dir dist
+
+      - name: Create and sign macOS update package
+        if: matrix.platform == 'macos'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+          COPYFILE_DISABLE: "1"
+        run: |
+          tar -czf "dist/DRH Launcher.app.tar.gz" -C dist "DRH Launcher.app"
+          cargo packager signer sign "dist/DRH Launcher.app.tar.gz"
+          artifacts=(dist/*.dmg)
+          test "${#artifacts[@]}" -eq 1
+          cargo packager signer sign "${artifacts[0]}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: drhl-${{ matrix.platform }}
+          path: ${{ matrix.upload_pattern }}
+          if-no-files-found: error
+
+  release:
+    name: Create draft GitHub release
+    needs: package
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: drhl-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate update manifest and checksums
+        run: |
+          python3 scripts/generate-launcher-update-manifest.py \
+            --version "$GITHUB_REF_NAME" \
+            --repository "$GITHUB_REPOSITORY" \
+            --dist-dir dist \
+            --output dist/latest.json \
+            --checksums-output dist/SHA256SUMS
+
+      - name: Create draft release
+        shell: bash
+        run: |
+          prerelease=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --title "DRH Launcher $GITHUB_REF_NAME" \
+            --generate-notes \
+            "${prerelease[@]}" \
+            dist/*
