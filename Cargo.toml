@@ -49,9 +49,12 @@ lto = true
 [package.metadata.packager]
 product-name = "DRH Launcher"
 identifier = "io.github.Tutez64.DRHLauncher"
+publisher = "Tutez"
 category = "Game"
+copyright = "Copyright (c) Tutez"
 icons = ["assets/icons/app-icon-256.png"]
 license-file = "LICENSE"
+long-description = "DRH Launcher installs, updates, configures, and launches Dungeon Rampage Haxe."
 binaries = [{ path = "DRH-Launcher", main = true }]
 
 [package.metadata.packager.appimage.files]

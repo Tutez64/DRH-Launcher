@@ -11,8 +11,13 @@ fn main() {
         winresource::WindowsResource::new()
             .set_icon("assets/icons/app-icon.ico")
             .set("CompanyName", "Tutez")
+            .set(
+                "Comments",
+                "Installs, updates, configures, and launches Dungeon Rampage Haxe.",
+            )
             .set("FileDescription", "DRH Launcher")
             .set("InternalName", "DRH-Launcher.exe")
+            .set("LegalCopyright", "Copyright (c) Tutez")
             .set("OriginalFilename", "DRH-Launcher.exe")
             .set("ProductName", "DRH Launcher")
             .compile()
