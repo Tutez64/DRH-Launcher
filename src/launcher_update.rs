@@ -78,7 +78,7 @@ pub fn check() -> Result<Option<LauncherUpdate>, String> {
         runtime_update_endpoint.as_deref(),
         option_env!("DRHL_UPDATE_ENDPOINT"),
     ))
-        .map_err(|error| format!("Invalid launcher update endpoint: {error}"))?;
+    .map_err(|error| format!("Invalid launcher update endpoint: {error}"))?;
     let config = Config {
         endpoints: vec![endpoint],
         pubkey: public_key().to_string(),
@@ -110,11 +110,7 @@ fn configured_update_endpoint<'a>(
 
 fn non_empty_trimmed(value: Option<&str>) -> Option<&str> {
     let value = value?.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn restart_command() -> Result<std::path::PathBuf, String> {
