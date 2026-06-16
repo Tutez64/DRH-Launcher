@@ -3,10 +3,20 @@ name: Test Packages
 on:
   workflow_dispatch:
     inputs:
-      update_base_url:
-        description: "Base URL serving update-server files, for example http://127.0.0.1:8000"
+      linux_update_base_url:
+        description: "Linux URL serving update-server files"
         required: true
         default: "http://127.0.0.1:8000"
+        type: string
+      windows_update_base_url:
+        description: "Windows URL serving update-server files"
+        required: true
+        default: "http://192.168.100.1:8000"
+        type: string
+      macos_update_base_url:
+        description: "macOS URL serving update-server files"
+        required: true
+        default: "http://10.0.2.2:8000"
         type: string
       build_current:
         description: "Also build installable current-version packages for full update tests"
@@ -35,8 +45,9 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       package_matrix: ${{ steps.prepare.outputs.package_matrix }}
-      update_base_url: ${{ steps.prepare.outputs.update_base_url }}
-      update_endpoint: ${{ steps.prepare.outputs.update_endpoint }}
+      linux_update_base_url: ${{ steps.prepare.outputs.linux_update_base_url }}
+      windows_update_base_url: ${{ steps.prepare.outputs.windows_update_base_url }}
+      macos_update_base_url: ${{ steps.prepare.outputs.macos_update_base_url }}
       current_version: ${{ steps.prepare.outputs.current_version }}
       update_version: ${{ steps.prepare.outputs.update_version }}
 
@@ -49,7 +60,9 @@ jobs:
         env:
           INPUT_BUILD_CURRENT: ${{ inputs.build_current }}
           INPUT_CURRENT_VERSION: ${{ inputs.current_version }}
-          INPUT_UPDATE_BASE_URL: ${{ inputs.update_base_url }}
+          INPUT_LINUX_UPDATE_BASE_URL: ${{ inputs.linux_update_base_url }}
+          INPUT_WINDOWS_UPDATE_BASE_URL: ${{ inputs.windows_update_base_url }}
+          INPUT_MACOS_UPDATE_BASE_URL: ${{ inputs.macos_update_base_url }}
           INPUT_UPDATE_VERSION: ${{ inputs.update_version }}
         run: |
           import json
@@ -86,9 +99,14 @@ jobs:
           if build_current and current_version == update_version:
               raise SystemExit("current_version and update_version must differ when build_current is enabled")
 
-          update_base_url = os.environ["INPUT_UPDATE_BASE_URL"].strip().rstrip("/")
-          if not re.fullmatch(r"https?://.+", update_base_url):
-              raise SystemExit(f"update_base_url must be an HTTP(S) URL, got {update_base_url!r}")
+          base_urls = {
+              "linux": os.environ["INPUT_LINUX_UPDATE_BASE_URL"].strip().rstrip("/"),
+              "windows": os.environ["INPUT_WINDOWS_UPDATE_BASE_URL"].strip().rstrip("/"),
+              "macos": os.environ["INPUT_MACOS_UPDATE_BASE_URL"].strip().rstrip("/"),
+          }
+          for platform, base_url in base_urls.items():
+              if not re.fullmatch(r"https?://.+", base_url):
+                  raise SystemExit(f"{platform}_update_base_url must be an HTTP(S) URL, got {base_url!r}")
 
           platforms = [
               ("linux", "Linux x64", "ubuntu-22.04", "dist/*.AppImage", "dist/*.AppImage*"),
@@ -105,6 +123,7 @@ jobs:
                       "runner": runner,
                       "upload_pattern": current_pattern,
                       "version": current_version,
+                      "update_endpoint": f"{base_urls[platform]}/latest.json",
                   })
               matrix.append({
                   "kind": "update",
@@ -113,13 +132,15 @@ jobs:
                   "runner": runner,
                   "upload_pattern": update_pattern,
                   "version": update_version,
+                  "update_endpoint": f"{base_urls[platform]}/latest.json",
               })
 
           output = Path(os.environ["GITHUB_OUTPUT"])
           with output.open("a", encoding="utf-8") as file:
               file.write(f"package_matrix={json.dumps({'include': matrix}, separators=(',', ':'))}\n")
-              file.write(f"update_base_url={update_base_url}\n")
-              file.write(f"update_endpoint={update_base_url}/latest.json\n")
+              file.write(f"linux_update_base_url={base_urls['linux']}\n")
+              file.write(f"windows_update_base_url={base_urls['windows']}\n")
+              file.write(f"macos_update_base_url={base_urls['macos']}\n")
               file.write(f"current_version={current_version}\n")
               file.write(f"update_version={update_version}\n")
 
@@ -132,7 +153,7 @@ jobs:
       matrix: ${{ fromJson(needs.prepare.outputs.package_matrix) }}
 
     env:
-      DRHL_UPDATE_ENDPOINT: ${{ needs.prepare.outputs.update_endpoint }}
+      DRHL_UPDATE_ENDPOINT: ${{ matrix.update_endpoint }}
       DRHL_UPDATE_PUBLIC_KEY: ${{ vars.DRHL_UPDATE_PUBLIC_KEY }}
       DRHL_PACKAGE_VERSION: ${{ matrix.version }}
 
@@ -287,7 +308,9 @@ jobs:
         run: |
           python3 scripts/generate-launcher-update-manifest.py \
             --version "v${{ needs.prepare.outputs.update_version }}" \
-            --base-url "${{ needs.prepare.outputs.update_base_url }}" \
+            --linux-base-url "${{ needs.prepare.outputs.linux_update_base_url }}" \
+            --windows-base-url "${{ needs.prepare.outputs.windows_update_base_url }}" \
+            --macos-base-url "${{ needs.prepare.outputs.macos_update_base_url }}" \
             --dist-dir dist \
             --output dist/latest.json \
             --checksums-output dist/SHA256SUMS

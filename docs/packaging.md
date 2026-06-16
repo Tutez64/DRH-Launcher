@@ -144,7 +144,9 @@ Inputs:
 
 | Input | Purpose |
 | --- | --- |
-| `update_base_url` | HTTP(S) directory that will serve the generated `update-server` artifact. |
+| `linux_update_base_url` | Linux HTTP(S) directory that will serve the generated `update-server` artifact. |
+| `windows_update_base_url` | Windows HTTP(S) directory that will serve the generated `update-server` artifact. |
+| `macos_update_base_url` | macOS HTTP(S) directory that will serve the generated `update-server` artifact. |
 | `build_current` | Also builds installable current-version packages for full current-to-update tests. |
 | `current_version` | Optional version for the current packages; blank uses `Cargo.toml`. |
 | `update_version` | Optional version for the update packages; blank uses the next patch test version. |
@@ -157,13 +159,45 @@ also creates `drhl-test-current-linux`, `drhl-test-current-windows` and
 Typical full update test:
 
 1. Run `Test Packages` with `build_current` enabled.
-2. Set `update_base_url` to a URL reachable from the test machine, such as
-   `http://192.168.1.42:8000`. `127.0.0.1` only works when the HTTP server runs
-   inside the same VM.
+2. Set each platform update URL to an address reachable from that OS.
 3. Download and extract the `drhl-test-update-server` artifact.
 4. Serve that directory with any static HTTP server.
 5. Install the matching `drhl-test-current-*` package on the target OS.
 6. Start DRHL and check for launcher updates.
+
+### VM Update Server Networking
+
+Serve the extracted `drhl-test-update-server` directory from the host. Python's
+default `http.server` binding is usually enough; `--bind 0.0.0.0` only makes the
+intent explicit when the guest reaches the host through a VM network address:
+
+```bash
+python3 -m http.server --bind 0.0.0.0 --directory /path/to/update-server 8000
+```
+
+Use the matching host address for each platform URL when triggering the
+workflow. The defaults below match the current maintainer test setup, but VM
+network addresses are environment-specific and may differ on another machine.
+
+| VM network mode | Workflow URL |
+| --- | --- |
+| Linux on the same host as the server | `linux_update_base_url=http://127.0.0.1:8000` |
+| virt-manager/libvirt NAT on `virbr0` | `windows_update_base_url=http://192.168.100.1:8000` |
+| OSX-KVM scripts using QEMU user networking | `macos_update_base_url=http://10.0.2.2:8000` |
+| VM bridged to the LAN | `*_update_base_url=http://<host-lan-ip>:8000` |
+
+The local loopback address is per-machine. `http://127.0.0.1:8000` only works
+when the HTTP server runs inside the same VM as DRHL.
+
+Before testing DRHL itself, verify connectivity from the guest:
+
+```powershell
+curl.exe http://192.168.100.1:8000/latest.json
+```
+
+```bash
+curl -f http://10.0.2.2:8000/latest.json
+```
 
 Once real releases exist, `build_current` can often stay disabled. In that
 case, install the existing release and launch it with a runtime endpoint

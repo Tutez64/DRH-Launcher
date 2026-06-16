@@ -14,15 +14,17 @@ def parse_args() -> argparse.Namespace:
         description="Generate cargo-packager-updater metadata for a DRH Launcher release."
     )
     parser.add_argument("--version", required=True)
-    url_source = parser.add_mutually_exclusive_group(required=True)
-    url_source.add_argument(
+    parser.add_argument(
         "--repository",
         help="GitHub repository in owner/name form. URLs point to the matching release tag.",
     )
-    url_source.add_argument(
+    parser.add_argument(
         "--base-url",
         help="Base URL serving the artifact directory. URLs point to files under this directory.",
     )
+    parser.add_argument("--linux-base-url", help="Base URL for Linux updater artifacts.")
+    parser.add_argument("--windows-base-url", help="Base URL for Windows updater artifacts.")
+    parser.add_argument("--macos-base-url", help="Base URL for macOS updater artifacts.")
     parser.add_argument("--dist-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--checksums-output", type=Path, required=True)
@@ -57,10 +59,19 @@ def base_url_download_url(base_url: str, artifact: Path) -> str:
     return f"{base_url.rstrip('/')}/{encoded_name}"
 
 
-def download_url(args: argparse.Namespace, version: str, artifact: Path) -> str:
+def platform_base_url(args: argparse.Namespace, platform: str) -> str:
+    urls = {
+        "linux": args.linux_base_url or args.base_url,
+        "windows": args.windows_base_url or args.base_url,
+        "macos": args.macos_base_url or args.base_url,
+    }
+    return urls[platform]
+
+
+def download_url(args: argparse.Namespace, version: str, artifact: Path, platform: str) -> str:
     if args.repository:
         return github_download_url(args.repository, version, artifact)
-    return base_url_download_url(args.base_url, artifact)
+    return base_url_download_url(platform_base_url(args, platform), artifact)
 
 
 def sha256_file(path: Path) -> str:
@@ -78,8 +89,26 @@ def main() -> None:
         raise SystemExit(f"Invalid semantic version: {args.version}")
     if args.repository and not re.fullmatch(r"[^/]+/[^/]+", args.repository):
         raise SystemExit(f"Invalid GitHub repository: {args.repository}")
-    if args.base_url and not re.fullmatch(r"https?://.+", args.base_url):
-        raise SystemExit(f"Invalid artifact base URL: {args.base_url}")
+    platform_specific_urls = [args.linux_base_url, args.windows_base_url, args.macos_base_url]
+    if args.repository and (args.base_url or any(platform_specific_urls)):
+        raise SystemExit("--repository cannot be combined with artifact base URLs")
+    if not args.repository:
+        missing_urls = [
+            name
+            for name, value in (
+                ("linux", args.linux_base_url or args.base_url),
+                ("windows", args.windows_base_url or args.base_url),
+                ("macos", args.macos_base_url or args.base_url),
+            )
+            if not value
+        ]
+        if missing_urls:
+            raise SystemExit(
+                "Missing artifact base URL for platforms: " + ", ".join(missing_urls)
+            )
+    for url in [args.base_url, *platform_specific_urls]:
+        if url and not re.fullmatch(r"https?://.+", url):
+            raise SystemExit(f"Invalid artifact base URL: {url}")
 
     linux = require_one(args.dist_dir, f"DRH-Launcher_{version}_x86_64.AppImage")
     windows = require_one(args.dist_dir, f"DRH-Launcher_{version}_x64-setup.exe")
@@ -87,22 +116,22 @@ def main() -> None:
 
     platforms = {
         "linux-x86_64": {
-            "url": download_url(args, version, linux),
+            "url": download_url(args, version, linux, "linux"),
             "signature": signature_for(linux),
             "format": "appimage",
         },
         "windows-x86_64": {
-            "url": download_url(args, version, windows),
+            "url": download_url(args, version, windows, "windows"),
             "signature": signature_for(windows),
             "format": "nsis",
         },
         "macos-x86_64": {
-            "url": download_url(args, version, macos),
+            "url": download_url(args, version, macos, "macos"),
             "signature": signature_for(macos),
             "format": "app",
         },
         "macos-aarch64": {
-            "url": download_url(args, version, macos),
+            "url": download_url(args, version, macos, "macos"),
             "signature": signature_for(macos),
             "format": "app",
         },
