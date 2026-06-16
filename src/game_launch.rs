@@ -1,3 +1,5 @@
+use std::env;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
@@ -111,6 +113,7 @@ pub fn launch_game_with_recommended_args(
     })?;
 
     command.current_dir(&game_dir);
+    configure_game_process_environment(&mut command, &launch_executable);
     command.stdout(Stdio::from(log_file));
     command.stderr(Stdio::from(stderr_file));
     let child = command.spawn().map_err(|error| {
@@ -119,6 +122,69 @@ pub fn launch_game_with_recommended_args(
     })?;
 
     Ok(RunningGame { child, session_log })
+}
+
+fn configure_game_process_environment(command: &mut Command, launch_executable: &Path) {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+
+    clear_parent_desktop_identity(command);
+    clear_parent_appimage_environment(command, env::var_os("APPDIR").as_deref().map(Path::new));
+
+    let Some(window_class) = launch_executable.file_name() else {
+        return;
+    };
+    command.env("SDL_VIDEO_WAYLAND_WMCLASS", window_class);
+    command.env("SDL_VIDEO_X11_WMCLASS", window_class);
+}
+
+fn clear_parent_desktop_identity(command: &mut Command) {
+    // Do not let desktop environments associate DRH's window with DRHL's .desktop file.
+    for name in [
+        "BAMF_DESKTOP_FILE_HINT",
+        "DESKTOP_STARTUP_ID",
+        "GIO_LAUNCHED_DESKTOP_FILE",
+        "GIO_LAUNCHED_DESKTOP_FILE_PID",
+        "KSTARTUPID",
+        "XDG_ACTIVATION_TOKEN",
+    ] {
+        command.env_remove(name);
+    }
+}
+
+fn clear_parent_appimage_environment(command: &mut Command, appdir: Option<&Path>) {
+    // AppImage runtime variables describe DRHL's mounted image, not the game process.
+    for name in ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] {
+        command.env_remove(name);
+    }
+
+    let Some(appdir) = appdir else {
+        return;
+    };
+    remove_path_entries_under(command, "LD_LIBRARY_PATH", appdir);
+    remove_path_entries_under(command, "PATH", appdir);
+}
+
+fn remove_path_entries_under(command: &mut Command, name: &str, parent: &Path) {
+    let Some(value) = env::var_os(name) else {
+        return;
+    };
+    match path_entries_without_parent(&value, parent) {
+        Some(value) => command.env(name, value),
+        None => command.env_remove(name),
+    };
+}
+
+fn path_entries_without_parent(value: &OsStr, parent: &Path) -> Option<OsString> {
+    let entries = env::split_paths(value)
+        .filter(|entry| !entry.starts_with(parent))
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        None
+    } else {
+        env::join_paths(entries).ok()
+    }
 }
 
 pub fn launch_command_summary_with_recommended_args(
@@ -285,6 +351,76 @@ mod tests {
         let error = parse_command_line("--name \"Dungeon Rampage").unwrap_err();
 
         assert!(error.contains("unterminated"));
+    }
+
+    #[test]
+    fn linux_launch_sets_game_desktop_identity() {
+        let mut command = Command::new("DRH.exe");
+        let launch_executable = Path::new("/games/Dungeon Rampage Haxe");
+
+        configure_game_process_environment(&mut command, launch_executable);
+
+        let removed = command
+            .get_envs()
+            .filter_map(|(name, value)| value.is_none().then_some(name))
+            .collect::<Vec<_>>();
+        let assigned = command
+            .get_envs()
+            .filter_map(|(name, value)| value.map(|value| (name, value)))
+            .collect::<Vec<_>>();
+
+        if cfg!(target_os = "linux") {
+            assert!(removed.contains(&std::ffi::OsStr::new("APPIMAGE")));
+            assert!(removed.contains(&std::ffi::OsStr::new("APPDIR")));
+            assert!(removed.contains(&std::ffi::OsStr::new("ARGV0")));
+            assert!(removed.contains(&std::ffi::OsStr::new("OWD")));
+            assert!(removed.contains(&std::ffi::OsStr::new("DESKTOP_STARTUP_ID")));
+            assert!(removed.contains(&std::ffi::OsStr::new("GIO_LAUNCHED_DESKTOP_FILE")));
+            assert!(removed.contains(&std::ffi::OsStr::new("XDG_ACTIVATION_TOKEN")));
+            assert!(assigned.contains(&(
+                std::ffi::OsStr::new("SDL_VIDEO_WAYLAND_WMCLASS"),
+                std::ffi::OsStr::new("Dungeon Rampage Haxe")
+            )));
+            assert!(assigned.contains(&(
+                std::ffi::OsStr::new("SDL_VIDEO_X11_WMCLASS"),
+                std::ffi::OsStr::new("Dungeon Rampage Haxe")
+            )));
+        } else {
+            assert!(removed.is_empty());
+            assert!(assigned.is_empty());
+        }
+    }
+
+    #[test]
+    fn removes_appimage_paths_from_path_like_environment_values() {
+        let appdir = Path::new("/tmp/DRHL.AppDir");
+        let value = std::env::join_paths([
+            Path::new("/usr/bin"),
+            Path::new("/tmp/DRHL.AppDir/usr/bin"),
+            Path::new("/tmp/DRHL.AppDir/usr/lib"),
+            Path::new("/opt/game/bin"),
+        ])
+        .unwrap();
+
+        let filtered = path_entries_without_parent(&value, appdir).unwrap();
+        let entries = std::env::split_paths(&filtered).collect::<Vec<_>>();
+
+        assert_eq!(
+            entries,
+            vec![Path::new("/usr/bin"), Path::new("/opt/game/bin")]
+        );
+    }
+
+    #[test]
+    fn removes_empty_appimage_path_like_environment_values() {
+        let appdir = Path::new("/tmp/DRHL.AppDir");
+        let value = std::env::join_paths([
+            Path::new("/tmp/DRHL.AppDir/usr/bin"),
+            Path::new("/tmp/DRHL.AppDir/usr/lib"),
+        ])
+        .unwrap();
+
+        assert!(path_entries_without_parent(&value, appdir).is_none());
     }
 
     #[test]
