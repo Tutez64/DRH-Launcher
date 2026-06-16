@@ -442,10 +442,8 @@ fn main() -> Result<(), slint::PlatformError> {
             }
 
             let mode = ui.get_appimage_dialog_mode();
-            if mode == 2 && process_is_running(&game_process) {
-                ui.set_appimage_dialog_error(
-                    "Stop Dungeon Rampage Haxe before uninstalling DRH Launcher.".into(),
-                );
+            if process_is_running(&game_process) {
+                ui.set_appimage_dialog_error(appimage_running_game_message(mode).into());
                 return;
             }
 
@@ -1420,6 +1418,14 @@ fn refresh_linux_integration_view(ui: &AppWindow) {
     ui.set_open_linux_integration_folder_enabled(open_folder_enabled);
     ui.set_linux_integration_action_text(action.into());
     ui.set_linux_integration_action_enabled(visible);
+}
+
+fn appimage_running_game_message(mode: i32) -> &'static str {
+    if mode == 2 {
+        "Stop Dungeon Rampage Haxe before uninstalling DRH Launcher."
+    } else {
+        "Stop Dungeon Rampage Haxe before installing or repairing DRH Launcher."
+    }
 }
 
 fn install_latest_release(
@@ -2922,6 +2928,18 @@ mod home_support_text_tests {
         assert_eq!(
             home_support_text("Version: V1", "Install folder opened."),
             "Version: V1"
+        );
+    }
+
+    #[test]
+    fn appimage_actions_are_blocked_while_game_runs() {
+        assert_eq!(
+            appimage_running_game_message(1),
+            "Stop Dungeon Rampage Haxe before installing or repairing DRH Launcher."
+        );
+        assert_eq!(
+            appimage_running_game_message(2),
+            "Stop Dungeon Rampage Haxe before uninstalling DRH Launcher."
         );
     }
 
