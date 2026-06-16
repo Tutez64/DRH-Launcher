@@ -280,15 +280,40 @@ fn resolve_launch_executable(executable: &Path) -> Result<PathBuf, String> {
         .and_then(|name| name.to_str())
         .map(|name| macos_dir.join(name));
     if let Some(bundle_executable) = bundle_name.filter(|path| path.is_file()) {
+        ensure_executable_permission(&bundle_executable)?;
         return Ok(bundle_executable);
     }
 
-    std::fs::read_dir(&macos_dir)
+    let bundle_executable = std::fs::read_dir(&macos_dir)
         .map_err(|error| format!("Could not inspect {}: {error}", macos_dir.display()))?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .find(|path| path.is_file())
-        .ok_or_else(|| format!("Could not find an executable in {}", macos_dir.display()))
+        .ok_or_else(|| format!("Could not find an executable in {}", macos_dir.display()))?;
+    ensure_executable_permission(&bundle_executable)?;
+    Ok(bundle_executable)
+}
+
+#[cfg(unix)]
+fn ensure_executable_permission(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?;
+    let mode = metadata.permissions().mode();
+    if mode & 0o100 != 0 {
+        return Ok(());
+    }
+
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(mode | 0o100);
+    std::fs::set_permissions(path, permissions)
+        .map_err(|error| format!("Could not mark {} as executable: {error}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn ensure_executable_permission(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 fn quote_command_part(part: &str) -> String {
@@ -421,6 +446,22 @@ mod tests {
         .unwrap();
 
         assert!(path_entries_without_parent(&value, appdir).is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn repairs_missing_owner_execute_permission() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let executable = temp.path().join("Dungeon Rampage Haxe");
+        fs::write(&executable, "").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o644)).unwrap();
+
+        ensure_executable_permission(&executable).unwrap();
+
+        let mode = fs::metadata(&executable).unwrap().permissions().mode();
+        assert_ne!(mode & 0o100, 0);
     }
 
     #[test]

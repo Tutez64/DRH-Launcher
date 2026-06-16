@@ -137,11 +137,38 @@ fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), String> {
                 .map_err(|error| format!("Could not create {}: {error}", output_path.display()))?;
             io::copy(&mut file, &mut output)
                 .map_err(|error| format!("Could not extract {}: {error}", output_path.display()))?;
+            apply_zip_permissions(&file, &output_path)?;
         } else {
             return Err(format!("Unsupported zip entry type: {file_name}"));
         }
     }
 
+    Ok(())
+}
+
+#[cfg(unix)]
+fn apply_zip_permissions(
+    file: &zip::read::ZipFile<'_, File>,
+    output_path: &Path,
+) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(mode) = file.unix_mode() else {
+        return Ok(());
+    };
+    fs::set_permissions(output_path, fs::Permissions::from_mode(mode & 0o777)).map_err(|error| {
+        format!(
+            "Could not set permissions on {}: {error}",
+            output_path.display()
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn apply_zip_permissions(
+    _file: &zip::read::ZipFile<'_, File>,
+    _output_path: &Path,
+) -> Result<(), String> {
     Ok(())
 }
 
@@ -204,6 +231,26 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn preserves_zip_unix_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let archive_path = temp.path().join("sample.zip");
+        write_zip_with_permissions(&archive_path, "game/Dungeon Rampage Haxe", b"game", 0o755);
+        let download = test_download(archive_path);
+
+        let extracted = extract_to_staging(&download, temp.path()).unwrap();
+
+        let mode = fs::metadata(extracted.path.join("game/Dungeon Rampage Haxe"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o755);
+    }
+
+    #[test]
     fn rejects_unsupported_archive_format() {
         let temp = tempdir().unwrap();
         let archive_path = temp.path().join("sample.rar");
@@ -249,6 +296,20 @@ mod tests {
         let mut writer = ZipWriter::new(file);
         writer
             .start_file(entry_name, SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(contents).unwrap();
+        writer.finish().unwrap();
+    }
+
+    #[cfg(unix)]
+    fn write_zip_with_permissions(path: &Path, entry_name: &str, contents: &[u8], mode: u32) {
+        let file = File::create(path).unwrap();
+        let mut writer = ZipWriter::new(file);
+        writer
+            .start_file(
+                entry_name,
+                SimpleFileOptions::default().unix_permissions(mode),
+            )
             .unwrap();
         writer.write_all(contents).unwrap();
         writer.finish().unwrap();
