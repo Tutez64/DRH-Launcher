@@ -1,0 +1,299 @@
+name: Test Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      update_base_url:
+        description: "Base URL serving update-server files, for example http://127.0.0.1:8000"
+        required: true
+        default: "http://127.0.0.1:8000"
+        type: string
+      build_current:
+        description: "Also build installable current-version packages for full update tests"
+        required: true
+        default: false
+        type: boolean
+      current_version:
+        description: "Current package version. Blank uses Cargo.toml."
+        required: false
+        type: string
+      update_version:
+        description: "Update package version. Blank uses the next patch test version."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-packages-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare test package versions
+    runs-on: ubuntu-22.04
+    outputs:
+      package_matrix: ${{ steps.prepare.outputs.package_matrix }}
+      update_base_url: ${{ steps.prepare.outputs.update_base_url }}
+      update_endpoint: ${{ steps.prepare.outputs.update_endpoint }}
+      current_version: ${{ steps.prepare.outputs.current_version }}
+      update_version: ${{ steps.prepare.outputs.update_version }}
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - id: prepare
+        name: Compute test matrix
+        shell: python
+        env:
+          INPUT_BUILD_CURRENT: ${{ inputs.build_current }}
+          INPUT_CURRENT_VERSION: ${{ inputs.current_version }}
+          INPUT_UPDATE_BASE_URL: ${{ inputs.update_base_url }}
+          INPUT_UPDATE_VERSION: ${{ inputs.update_version }}
+        run: |
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          semver_pattern = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
+
+          def validate_version(name, value):
+              if not semver_pattern.fullmatch(value):
+                  raise SystemExit(f"{name} must be a SemVer-compatible version, got {value!r}")
+              return value
+
+          def next_patch_test_version(value):
+              match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?", value)
+              if not match:
+                  raise SystemExit(f"Cannot derive a test update version from {value!r}")
+              major, minor, patch = (int(part) for part in match.groups())
+              return f"{major}.{minor}.{patch + 1}-test.{os.environ['GITHUB_RUN_NUMBER']}"
+
+          cargo_version = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
+          build_current = os.environ["INPUT_BUILD_CURRENT"].lower() == "true"
+          current_version = validate_version(
+              "current_version",
+              os.environ["INPUT_CURRENT_VERSION"].strip() or cargo_version,
+          )
+          update_version = validate_version(
+              "update_version",
+              os.environ["INPUT_UPDATE_VERSION"].strip() or next_patch_test_version(current_version),
+          )
+
+          if build_current and current_version == update_version:
+              raise SystemExit("current_version and update_version must differ when build_current is enabled")
+
+          update_base_url = os.environ["INPUT_UPDATE_BASE_URL"].strip().rstrip("/")
+          if not re.fullmatch(r"https?://.+", update_base_url):
+              raise SystemExit(f"update_base_url must be an HTTP(S) URL, got {update_base_url!r}")
+
+          platforms = [
+              ("linux", "Linux x64", "ubuntu-22.04", "dist/*.AppImage", "dist/*.AppImage*"),
+              ("windows", "Windows x64", "windows-2022", "dist/*.exe", "dist/*.exe*"),
+              ("macos", "macOS universal", "macos-14", "dist/*.dmg", "dist/*.tar.gz*"),
+          ]
+          matrix = []
+          for platform, name, runner, current_pattern, update_pattern in platforms:
+              if build_current:
+                  matrix.append({
+                      "kind": "current",
+                      "name": name,
+                      "platform": platform,
+                      "runner": runner,
+                      "upload_pattern": current_pattern,
+                      "version": current_version,
+                  })
+              matrix.append({
+                  "kind": "update",
+                  "name": name,
+                  "platform": platform,
+                  "runner": runner,
+                  "upload_pattern": update_pattern,
+                  "version": update_version,
+              })
+
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a", encoding="utf-8") as file:
+              file.write(f"package_matrix={json.dumps({'include': matrix}, separators=(',', ':'))}\n")
+              file.write(f"update_base_url={update_base_url}\n")
+              file.write(f"update_endpoint={update_base_url}/latest.json\n")
+              file.write(f"current_version={current_version}\n")
+              file.write(f"update_version={update_version}\n")
+
+  package:
+    name: Package ${{ matrix.kind }} ${{ matrix.name }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.package_matrix) }}
+
+    env:
+      DRHL_UPDATE_ENDPOINT: ${{ needs.prepare.outputs.update_endpoint }}
+      DRHL_UPDATE_PUBLIC_KEY: ${{ vars.DRHL_UPDATE_PUBLIC_KEY }}
+      DRHL_PACKAGE_VERSION: ${{ matrix.version }}
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Validate test package configuration
+        shell: bash
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY"
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD"
+          test -n "$DRHL_UPDATE_PUBLIC_KEY"
+          test -n "$DRHL_UPDATE_ENDPOINT"
+
+      - name: Set package version
+        shell: python
+        run: |
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["DRHL_PACKAGE_VERSION"]
+          cargo_toml = Path("Cargo.toml")
+          cargo_text, cargo_count = re.subn(
+              r'(?m)^version = "[^"]+"',
+              f'version = "{version}"',
+              cargo_toml.read_text(encoding="utf-8"),
+              count=1,
+          )
+          if cargo_count != 1:
+              raise SystemExit("Could not update Cargo.toml package version")
+          cargo_toml.write_text(cargo_text, encoding="utf-8")
+
+          cargo_lock = Path("Cargo.lock")
+          lock_text, lock_count = re.subn(
+              r'(?m)(\[\[package\]\]\nname = "drh_launcher"\nversion = ")[^"]+(")',
+              lambda match: f"{match.group(1)}{version}{match.group(2)}",
+              cargo_lock.read_text(encoding="utf-8"),
+              count=1,
+          )
+          if lock_count != 1:
+              raise SystemExit("Could not update Cargo.lock package version")
+          cargo_lock.write_text(lock_text, encoding="utf-8")
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          key: test-packages-${{ matrix.kind }}-${{ matrix.platform }}-${{ matrix.version }}
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Build Linux package
+        if: matrix.platform == 'linux'
+        run: cargo build --release --locked
+
+      - name: Package Linux
+        if: matrix.platform == 'linux'
+        run: cargo packager --release --formats appimage --out-dir dist
+
+      - name: Sign Linux update package
+        if: matrix.kind == 'update' && matrix.platform == 'linux'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          artifacts=(dist/*.AppImage)
+          test "${#artifacts[@]}" -eq 1
+          cargo packager signer sign "${artifacts[0]}"
+
+      - name: Build Windows package
+        if: matrix.platform == 'windows'
+        run: cargo build --release --locked
+
+      - name: Package Windows
+        if: matrix.platform == 'windows'
+        run: cargo packager --release --formats nsis --out-dir dist
+
+      - name: Sign Windows update package
+        if: matrix.kind == 'update' && matrix.platform == 'windows'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          $artifacts = @(Get-ChildItem dist -Filter *.exe)
+          if ($artifacts.Count -ne 1) {
+            throw "Expected one NSIS installer, found $($artifacts.Count)"
+          }
+          cargo packager signer sign $artifacts[0].FullName
+
+      - name: Build universal macOS package
+        if: matrix.platform == 'macos'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          cargo build --release --locked --target aarch64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create \
+            target/x86_64-apple-darwin/release/DRH-Launcher \
+            target/aarch64-apple-darwin/release/DRH-Launcher \
+            -output target/universal-apple-darwin/release/DRH-Launcher
+
+      - name: Package macOS
+        if: matrix.platform == 'macos'
+        run: |
+          cargo packager \
+              --release \
+              --target universal-apple-darwin \
+              --formats app,dmg \
+              --out-dir dist
+
+      - name: Create and sign macOS update package
+        if: matrix.kind == 'update' && matrix.platform == 'macos'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+          COPYFILE_DISABLE: "1"
+        run: |
+          tar -czf "dist/DRH Launcher.app.tar.gz" -C dist "DRH Launcher.app"
+          cargo packager signer sign "dist/DRH Launcher.app.tar.gz"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: drhl-test-${{ matrix.kind }}-${{ matrix.platform }}
+          path: ${{ matrix.upload_pattern }}
+          if-no-files-found: error
+
+  update-server:
+    name: Create update-server artifact
+    needs:
+      - prepare
+      - package
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: drhl-test-update-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate test update manifest and checksums
+        run: |
+          python3 scripts/generate-launcher-update-manifest.py \
+            --version "v${{ needs.prepare.outputs.update_version }}" \
+            --base-url "${{ needs.prepare.outputs.update_base_url }}" \
+            --dist-dir dist \
+            --output dist/latest.json \
+            --checksums-output dist/SHA256SUMS
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: drhl-test-update-server
+          path: dist/*
+          if-no-files-found: error

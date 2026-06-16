@@ -285,7 +285,9 @@ fail rather than publish packages when either key is missing.
 
 Release builds use GitHub's `Latest` release manifest by default. Test builds
 can override the launcher update manifest endpoint at compile time with
-`DRHL_UPDATE_ENDPOINT`; official release builds leave it unset.
+`DRHL_UPDATE_ENDPOINT`; installed builds can also be redirected for a test run
+with the same runtime environment variable. Official release builds leave the
+compile-time value unset.
 
 Pushing a matching version tag builds the native packages and creates a draft
 GitHub Release. The generated artifacts are tested from that draft before it is

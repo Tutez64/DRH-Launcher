@@ -14,7 +14,15 @@ def parse_args() -> argparse.Namespace:
         description="Generate cargo-packager-updater metadata for a DRH Launcher release."
     )
     parser.add_argument("--version", required=True)
-    parser.add_argument("--repository", required=True)
+    url_source = parser.add_mutually_exclusive_group(required=True)
+    url_source.add_argument(
+        "--repository",
+        help="GitHub repository in owner/name form. URLs point to the matching release tag.",
+    )
+    url_source.add_argument(
+        "--base-url",
+        help="Base URL serving the artifact directory. URLs point to files under this directory.",
+    )
     parser.add_argument("--dist-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--checksums-output", type=Path, required=True)
@@ -39,9 +47,20 @@ def signature_for(artifact: Path) -> str:
     return value
 
 
-def download_url(repository: str, version: str, artifact: Path) -> str:
+def github_download_url(repository: str, version: str, artifact: Path) -> str:
     encoded_name = quote(artifact.name)
     return f"https://github.com/{repository}/releases/download/v{version}/{encoded_name}"
+
+
+def base_url_download_url(base_url: str, artifact: Path) -> str:
+    encoded_name = quote(artifact.name)
+    return f"{base_url.rstrip('/')}/{encoded_name}"
+
+
+def download_url(args: argparse.Namespace, version: str, artifact: Path) -> str:
+    if args.repository:
+        return github_download_url(args.repository, version, artifact)
+    return base_url_download_url(args.base_url, artifact)
 
 
 def sha256_file(path: Path) -> str:
@@ -57,8 +76,10 @@ def main() -> None:
     version = args.version.removeprefix("v")
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
         raise SystemExit(f"Invalid semantic version: {args.version}")
-    if not re.fullmatch(r"[^/]+/[^/]+", args.repository):
+    if args.repository and not re.fullmatch(r"[^/]+/[^/]+", args.repository):
         raise SystemExit(f"Invalid GitHub repository: {args.repository}")
+    if args.base_url and not re.fullmatch(r"https?://.+", args.base_url):
+        raise SystemExit(f"Invalid artifact base URL: {args.base_url}")
 
     linux = require_one(args.dist_dir, f"DRH-Launcher_{version}_x86_64.AppImage")
     windows = require_one(args.dist_dir, f"DRH-Launcher_{version}_x64-setup.exe")
@@ -66,22 +87,22 @@ def main() -> None:
 
     platforms = {
         "linux-x86_64": {
-            "url": download_url(args.repository, version, linux),
+            "url": download_url(args, version, linux),
             "signature": signature_for(linux),
             "format": "appimage",
         },
         "windows-x86_64": {
-            "url": download_url(args.repository, version, windows),
+            "url": download_url(args, version, windows),
             "signature": signature_for(windows),
             "format": "nsis",
         },
         "macos-x86_64": {
-            "url": download_url(args.repository, version, macos),
+            "url": download_url(args, version, macos),
             "signature": signature_for(macos),
             "format": "app",
         },
         "macos-aarch64": {
-            "url": download_url(args.repository, version, macos),
+            "url": download_url(args, version, macos),
             "signature": signature_for(macos),
             "format": "app",
         },

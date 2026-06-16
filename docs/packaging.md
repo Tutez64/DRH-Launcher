@@ -133,6 +133,66 @@ Replace `appimage` with `nsis` on Windows or `app,dmg` on macOS. Local packages
 are not updater-signed unless the two `CARGO_PACKAGER_SIGN_*` environment
 variables are set.
 
+## GitHub Test Packages
+
+Use the manual `Test Packages` workflow to generate packages for all platforms without 
+having to install Rust, Python or cargo-packager in the test VMs. This
+workflow only uploads Actions artifacts; it does not create tags or GitHub
+Releases.
+
+Inputs:
+
+| Input | Purpose |
+| --- | --- |
+| `update_base_url` | HTTP(S) directory that will serve the generated `update-server` artifact. |
+| `build_current` | Also builds installable current-version packages for full current-to-update tests. |
+| `current_version` | Optional version for the current packages; blank uses `Cargo.toml`. |
+| `update_version` | Optional version for the update packages; blank uses the next patch test version. |
+
+The workflow always creates `drhl-test-update-server`, containing signed update
+artifacts, `latest.json` and `SHA256SUMS`. When `build_current` is enabled, it
+also creates `drhl-test-current-linux`, `drhl-test-current-windows` and
+`drhl-test-current-macos`.
+
+Typical full update test:
+
+1. Run `Test Packages` with `build_current` enabled.
+2. Set `update_base_url` to a URL reachable from the test machine, such as
+   `http://192.168.1.42:8000`. `127.0.0.1` only works when the HTTP server runs
+   inside the same VM.
+3. Download and extract the `drhl-test-update-server` artifact.
+4. Serve that directory with any static HTTP server.
+5. Install the matching `drhl-test-current-*` package on the target OS.
+6. Start DRHL and check for launcher updates.
+
+Once real releases exist, `build_current` can often stay disabled. In that
+case, install the existing release and launch it with a runtime endpoint
+override:
+
+```bash
+DRHL_UPDATE_ENDPOINT="http://192.168.1.42:8000/latest.json" \
+~/Applications/DRH-Launcher.AppImage
+```
+
+On Windows, run the installed launcher from PowerShell with:
+
+```powershell
+$env:DRHL_UPDATE_ENDPOINT = "http://192.168.1.42:8000/latest.json"
+& "$env:LOCALAPPDATA\DRH Launcher\DRH Launcher.exe"
+```
+
+On macOS, launch the app executable directly so the environment variable is
+inherited:
+
+```bash
+DRHL_UPDATE_ENDPOINT="http://192.168.1.42:8000/latest.json" \
+/Applications/DRH\ Launcher.app/Contents/MacOS/DRH-Launcher
+```
+
+The runtime override is only a test hook. Update packages are still verified
+with the public key embedded in the launcher, so redirecting the endpoint does
+not bypass update signing.
+
 ## Local Update Testing
 
 Release builds normally embed GitHub's latest-release manifest endpoint:
@@ -141,8 +201,9 @@ Release builds normally embed GitHub's latest-release manifest endpoint:
 https://github.com/Tutez64/DRH-Launcher/releases/latest/download/latest.json
 ```
 
-For local update tests, compile a release build with `DRHL_UPDATE_ENDPOINT`
-pointing to a locally served manifest:
+For local update tests, either compile a release build with
+`DRHL_UPDATE_ENDPOINT` pointing to a locally served manifest or launch an
+existing build with `DRHL_UPDATE_ENDPOINT` set in the runtime environment:
 
 ```bash
 DRHL_UPDATE_PUBLIC_KEY="$(cat drhl-update.key.pub)" \
@@ -150,9 +211,11 @@ DRHL_UPDATE_ENDPOINT="http://127.0.0.1:8000/latest.json" \
 cargo build --release --locked
 ```
 
-The endpoint is a compile-time setting, like `DRHL_UPDATE_PUBLIC_KEY`; rebuilding
-is required after changing it. The release workflow does not set
-`DRHL_UPDATE_ENDPOINT`, so official packages keep using GitHub `Latest`.
+The compile-time endpoint is useful for packages that should work through normal
+double-click launching. The runtime endpoint is useful for redirecting an
+already installed release during a one-off update test. The release workflow
+does not set the compile-time `DRHL_UPDATE_ENDPOINT`, so official packages keep
+using GitHub `Latest` unless the runtime variable is present.
 
 On Linux, the test build still needs to run as a managed AppImage before
 automatic launcher updates are enabled. This mirrors production behavior and
@@ -162,7 +225,8 @@ prevents test updates from replacing an arbitrary AppImage in `Downloads`.
 
 This test uses two locally built AppImages:
 
-- the currently installed AppImage, compiled with `DRHL_UPDATE_ENDPOINT`
+- the currently installed AppImage, compiled with `DRHL_UPDATE_ENDPOINT` or
+  launched with the runtime variable
 - a newer signed AppImage, served from a local HTTP server
 
 Generate an update key once if needed:

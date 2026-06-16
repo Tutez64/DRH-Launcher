@@ -73,7 +73,11 @@ pub fn check() -> Result<Option<LauncherUpdate>, String> {
 
     let current_version = Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|error| format!("Invalid launcher version: {error}"))?;
-    let endpoint = Url::parse(update_endpoint())
+    let runtime_update_endpoint = env::var("DRHL_UPDATE_ENDPOINT").ok();
+    let endpoint = Url::parse(configured_update_endpoint(
+        runtime_update_endpoint.as_deref(),
+        option_env!("DRHL_UPDATE_ENDPOINT"),
+    ))
         .map_err(|error| format!("Invalid launcher update endpoint: {error}"))?;
     let config = Config {
         endpoints: vec![endpoint],
@@ -95,16 +99,21 @@ fn public_key() -> &'static str {
     option_env!("DRHL_UPDATE_PUBLIC_KEY").unwrap_or("").trim()
 }
 
-fn update_endpoint() -> &'static str {
-    configured_update_endpoint(option_env!("DRHL_UPDATE_ENDPOINT"))
+fn configured_update_endpoint<'a>(
+    runtime_value: Option<&'a str>,
+    compile_time_value: Option<&'a str>,
+) -> &'a str {
+    non_empty_trimmed(runtime_value)
+        .or_else(|| non_empty_trimmed(compile_time_value))
+        .unwrap_or(DEFAULT_UPDATE_ENDPOINT)
 }
 
-fn configured_update_endpoint(value: Option<&'static str>) -> &'static str {
-    let endpoint = value.unwrap_or("").trim();
-    if endpoint.is_empty() {
-        DEFAULT_UPDATE_ENDPOINT
+fn non_empty_trimmed(value: Option<&str>) -> Option<&str> {
+    let value = value?.trim();
+    if value.is_empty() {
+        None
     } else {
-        endpoint
+        Some(value)
     }
 }
 
@@ -131,13 +140,16 @@ mod tests {
 
     #[test]
     fn update_endpoint_defaults_to_latest_github_release() {
-        assert_eq!(configured_update_endpoint(None), DEFAULT_UPDATE_ENDPOINT);
         assert_eq!(
-            configured_update_endpoint(Some("")),
+            configured_update_endpoint(None, None),
             DEFAULT_UPDATE_ENDPOINT
         );
         assert_eq!(
-            configured_update_endpoint(Some("  \n\t  ")),
+            configured_update_endpoint(Some(""), Some("")),
+            DEFAULT_UPDATE_ENDPOINT
+        );
+        assert_eq!(
+            configured_update_endpoint(Some("  \n\t  "), None),
             DEFAULT_UPDATE_ENDPOINT
         );
     }
@@ -145,8 +157,26 @@ mod tests {
     #[test]
     fn update_endpoint_can_be_overridden_at_compile_time() {
         assert_eq!(
-            configured_update_endpoint(Some("  https://example.test/latest.json  ")),
+            configured_update_endpoint(None, Some("  https://example.test/latest.json  ")),
             "https://example.test/latest.json"
+        );
+    }
+
+    #[test]
+    fn update_endpoint_can_be_overridden_at_runtime() {
+        assert_eq!(
+            configured_update_endpoint(
+                Some("  https://runtime.example.test/latest.json  "),
+                Some("https://compile.example.test/latest.json"),
+            ),
+            "https://runtime.example.test/latest.json"
+        );
+        assert_eq!(
+            configured_update_endpoint(
+                Some("  "),
+                Some("https://compile.example.test/latest.json"),
+            ),
+            "https://compile.example.test/latest.json"
         );
     }
 }
