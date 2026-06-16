@@ -55,10 +55,14 @@ jobs:
         shell: python
         run: |
           import os
-          import tomllib
+          import re
           from pathlib import Path
 
-          version = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
+          cargo_toml = Path("Cargo.toml").read_text(encoding="utf-8")
+          match = re.search(r'(?m)^version = "([^"]+)"', cargo_toml)
+          if not match:
+              raise SystemExit("Could not read Cargo.toml package version")
+          version = match.group(1)
           tag = os.environ["GITHUB_REF_NAME"]
           if tag != f"v{version}":
               raise SystemExit(f"Tag {tag} does not match Cargo version {version}")

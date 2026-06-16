@@ -68,7 +68,6 @@ jobs:
           import json
           import os
           import re
-          import tomllib
           from pathlib import Path
 
           semver_pattern = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
@@ -85,7 +84,11 @@ jobs:
               major, minor, patch = (int(part) for part in match.groups())
               return f"{major}.{minor}.{patch + 1}-test.{os.environ['GITHUB_RUN_NUMBER']}"
 
-          cargo_version = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
+          cargo_toml = Path("Cargo.toml").read_text(encoding="utf-8")
+          match = re.search(r'(?m)^version = "([^"]+)"', cargo_toml)
+          if not match:
+              raise SystemExit("Could not read Cargo.toml package version")
+          cargo_version = match.group(1)
           build_current = os.environ["INPUT_BUILD_CURRENT"].lower() == "true"
           current_version = validate_version(
               "current_version",
