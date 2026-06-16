@@ -70,6 +70,15 @@ const AX4_GITHUB_URL: &str = concat!(
 );
 const XDG_APP_ID: &str = "io.github.Tutez64.DRHLauncher";
 
+fn main() {
+    install_panic_hook();
+
+    if let Err(error) = run() {
+        report_startup_failure(&format!("DRH Launcher failed to start: {error}"));
+        std::process::exit(1);
+    }
+}
+
 struct HomeViewState {
     install_status: String,
     install_action_text: String,
@@ -94,7 +103,7 @@ struct LogViewportPosition {
     at_end: bool,
 }
 
-fn main() -> Result<(), slint::PlatformError> {
+fn run() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     slint::set_xdg_app_id(XDG_APP_ID)?;
 
@@ -1315,6 +1324,46 @@ fn main() -> Result<(), slint::PlatformError> {
     );
 
     ui.run()
+}
+
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        report_startup_failure(&format!("DRH Launcher panicked: {info}"));
+        default_hook(info);
+    }));
+}
+
+fn report_startup_failure(message: &str) {
+    let install_dir = paths::default_install_dir();
+    let _ = diagnostics::write(&install_dir, diagnostics::LogLevel::Error, message);
+    show_startup_failure(message);
+}
+
+#[cfg(windows)]
+fn show_startup_failure(message: &str) {
+    use std::ffi::OsStr;
+    use std::iter;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+
+    fn wide(value: &str) -> Vec<u16> {
+        OsStr::new(value)
+            .encode_wide()
+            .chain(iter::once(0))
+            .collect()
+    }
+
+    let text = wide(message);
+    let title = wide("DRH Launcher");
+    unsafe {
+        MessageBoxW(0, text.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR);
+    }
+}
+
+#[cfg(not(windows))]
+fn show_startup_failure(message: &str) {
+    eprintln!("{message}");
 }
 
 fn start_launcher_update_check(

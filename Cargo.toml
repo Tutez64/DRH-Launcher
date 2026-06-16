@@ -37,6 +37,7 @@ windows-sys = { version = "0.61.2", features = [
 
 [build-dependencies]
 slint-build = "1.16.1"
+winresource = "0.1.31"
 
 [dev-dependencies]
 tempfile = "3.27.0"
@@ -62,6 +63,7 @@ binaries = [{ path = "DRH-Launcher", main = true }]
 
 [package.metadata.packager.nsis]
 installer-mode = "currentUser"
+installer-icon = "assets/icons/app-icon.ico"
 languages = ["English"]
 
 [package.metadata.packager.macos]
