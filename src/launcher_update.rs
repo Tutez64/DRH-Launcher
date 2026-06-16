@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::linux_appimage;
 
-const UPDATE_ENDPOINT: &str =
+const DEFAULT_UPDATE_ENDPOINT: &str =
     "https://github.com/Tutez64/DRH-Launcher/releases/latest/download/latest.json";
 
 #[derive(Clone, Debug)]
@@ -73,7 +73,7 @@ pub fn check() -> Result<Option<LauncherUpdate>, String> {
 
     let current_version = Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|error| format!("Invalid launcher version: {error}"))?;
-    let endpoint = Url::parse(UPDATE_ENDPOINT)
+    let endpoint = Url::parse(update_endpoint())
         .map_err(|error| format!("Invalid launcher update endpoint: {error}"))?;
     let config = Config {
         endpoints: vec![endpoint],
@@ -95,6 +95,19 @@ fn public_key() -> &'static str {
     option_env!("DRHL_UPDATE_PUBLIC_KEY").unwrap_or("").trim()
 }
 
+fn update_endpoint() -> &'static str {
+    configured_update_endpoint(option_env!("DRHL_UPDATE_ENDPOINT"))
+}
+
+fn configured_update_endpoint(value: Option<&'static str>) -> &'static str {
+    let endpoint = value.unwrap_or("").trim();
+    if endpoint.is_empty() {
+        DEFAULT_UPDATE_ENDPOINT
+    } else {
+        endpoint
+    }
+}
+
 fn restart_command() -> Result<std::path::PathBuf, String> {
     if cfg!(target_os = "linux") {
         return env::var_os("APPIMAGE")
@@ -114,5 +127,26 @@ mod tests {
         if cfg!(debug_assertions) {
             assert!(!automatic_update_supported());
         }
+    }
+
+    #[test]
+    fn update_endpoint_defaults_to_latest_github_release() {
+        assert_eq!(configured_update_endpoint(None), DEFAULT_UPDATE_ENDPOINT);
+        assert_eq!(
+            configured_update_endpoint(Some("")),
+            DEFAULT_UPDATE_ENDPOINT
+        );
+        assert_eq!(
+            configured_update_endpoint(Some("  \n\t  ")),
+            DEFAULT_UPDATE_ENDPOINT
+        );
+    }
+
+    #[test]
+    fn update_endpoint_can_be_overridden_at_compile_time() {
+        assert_eq!(
+            configured_update_endpoint(Some("  https://example.test/latest.json  ")),
+            "https://example.test/latest.json"
+        );
     }
 }

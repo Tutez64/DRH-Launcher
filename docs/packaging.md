@@ -133,6 +133,131 @@ Replace `appimage` with `nsis` on Windows or `app,dmg` on macOS. Local packages
 are not updater-signed unless the two `CARGO_PACKAGER_SIGN_*` environment
 variables are set.
 
+## Local Update Testing
+
+Release builds normally embed GitHub's latest-release manifest endpoint:
+
+```text
+https://github.com/Tutez64/DRH-Launcher/releases/latest/download/latest.json
+```
+
+For local update tests, compile a release build with `DRHL_UPDATE_ENDPOINT`
+pointing to a locally served manifest:
+
+```bash
+DRHL_UPDATE_PUBLIC_KEY="$(cat drhl-update.key.pub)" \
+DRHL_UPDATE_ENDPOINT="http://127.0.0.1:8000/latest.json" \
+cargo build --release --locked
+```
+
+The endpoint is a compile-time setting, like `DRHL_UPDATE_PUBLIC_KEY`; rebuilding
+is required after changing it. The release workflow does not set
+`DRHL_UPDATE_ENDPOINT`, so official packages keep using GitHub `Latest`.
+
+On Linux, the test build still needs to run as a managed AppImage before
+automatic launcher updates are enabled. This mirrors production behavior and
+prevents test updates from replacing an arbitrary AppImage in `Downloads`.
+
+### Local Linux AppImage Update Test
+
+This test uses two locally built AppImages:
+
+- the currently installed AppImage, compiled with `DRHL_UPDATE_ENDPOINT`
+- a newer signed AppImage, served from a local HTTP server
+
+Generate an update key once if needed:
+
+```bash
+cargo packager signer generate --path drhl-update.key
+```
+
+Configure the shell used for both builds:
+
+```bash
+export DRHL_UPDATE_PUBLIC_KEY="$(cat drhl-update.key.pub)"
+export CARGO_PACKAGER_SIGN_PRIVATE_KEY="$(cat drhl-update.key)"
+export CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD='replace-with-key-password'
+export DRHL_UPDATE_ENDPOINT="http://127.0.0.1:8000/latest.json"
+```
+
+Build the current version and install it from the generated AppImage:
+
+```bash
+rm -rf /tmp/drhl-current /tmp/drhl-server
+mkdir -p /tmp/drhl-current /tmp/drhl-server
+
+cargo build --release --locked
+cargo packager --release --formats appimage --out-dir /tmp/drhl-current
+```
+
+Launch the AppImage from `/tmp/drhl-current`, confirm `Install DRH Launcher`,
+then close the restarted launcher.
+
+Create a temporary newer version by editing `package.version` in `Cargo.toml`
+to a SemVer-compatible pre-release such as:
+
+```toml
+version = "0.1.1-test"
+```
+
+Build and sign the newer AppImage:
+
+```bash
+cargo build --release
+cargo packager --release --formats appimage --out-dir /tmp/drhl-server
+
+artifact="$(find /tmp/drhl-server -maxdepth 1 -name '*.AppImage' -print -quit)"
+cargo packager signer sign "$artifact"
+```
+
+Create a local update manifest:
+
+```bash
+python3 - <<'PY'
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+version = "0.1.1-test"
+root = Path("/tmp/drhl-server")
+artifact = next(root.glob("*.AppImage"))
+signature = artifact.with_name(f"{artifact.name}.sig").read_text(encoding="utf-8").strip()
+
+manifest = {
+    "version": version,
+    "pub_date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "platforms": {
+        "linux-x86_64": {
+            "url": f"http://127.0.0.1:8000/{artifact.name}",
+            "signature": signature,
+            "format": "appimage",
+        }
+    },
+}
+
+(root / "latest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+PY
+```
+
+Serve the update directory in a separate terminal:
+
+```bash
+python3 -m http.server 8000 --directory /tmp/drhl-server
+```
+
+Restart the installed launcher:
+
+```bash
+~/Applications/DRH-Launcher.AppImage
+```
+
+The launcher should detect the newer version, show the update banner, download
+the local AppImage, verify its signature, replace the managed AppImage, and
+restart.
+
+After the test, restore `Cargo.toml` and `Cargo.lock` if they were changed for
+the temporary version.
+
 ## Platform Trust
 
 The updater signature verifies that a package was produced with the DRHL update

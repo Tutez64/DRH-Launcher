@@ -283,6 +283,10 @@ The update private key exists only in GitHub Actions secrets. Its public key is
 embedded in release builds through `DRHL_UPDATE_PUBLIC_KEY`. Release builds must
 fail rather than publish packages when either key is missing.
 
+Release builds use GitHub's `Latest` release manifest by default. Test builds
+can override the launcher update manifest endpoint at compile time with
+`DRHL_UPDATE_ENDPOINT`; official release builds leave it unset.
+
 Pushing a matching version tag builds the native packages and creates a draft
 GitHub Release. The generated artifacts are tested from that draft before it is
 published manually. Draft releases are not exposed through GitHub's `latest`
