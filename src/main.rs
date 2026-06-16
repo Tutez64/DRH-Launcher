@@ -74,7 +74,11 @@ fn main() {
     install_panic_hook();
 
     if let Err(error) = run() {
-        report_startup_failure(&format!("DRH Launcher failed to start: {error}"));
+        let message = format!("DRH Launcher failed to start: {error}");
+        if retry_with_software_renderer_if_needed(&message) {
+            return;
+        }
+        report_startup_failure(&message);
         std::process::exit(1);
     }
 }
@@ -1338,6 +1342,55 @@ fn report_startup_failure(message: &str) {
     let install_dir = paths::default_install_dir();
     let _ = diagnostics::write(&install_dir, diagnostics::LogLevel::Error, message);
     show_startup_failure(message);
+}
+
+#[cfg(windows)]
+fn retry_with_software_renderer_if_needed(message: &str) -> bool {
+    const RETRY_ENV: &str = "DRHL_SOFTWARE_RENDERER_RETRY";
+    const SLINT_BACKEND_ENV: &str = "SLINT_BACKEND";
+
+    if std::env::var_os(SLINT_BACKEND_ENV).is_some() || std::env::var_os(RETRY_ENV).is_some() {
+        return false;
+    }
+    if !message.contains("glCreateShader") {
+        return false;
+    }
+
+    let Ok(executable) = std::env::current_exe() else {
+        return false;
+    };
+
+    let mut command = Command::new(executable);
+    command
+        .args(std::env::args_os().skip(1))
+        .env(SLINT_BACKEND_ENV, "winit-software")
+        .env(RETRY_ENV, "1");
+
+    match command.spawn() {
+        Ok(_) => {
+            let install_dir = paths::default_install_dir();
+            let _ = diagnostics::write(
+                &install_dir,
+                diagnostics::LogLevel::Warn,
+                "OpenGL startup failed; retrying with Slint software renderer.",
+            );
+            true
+        }
+        Err(error) => {
+            let install_dir = paths::default_install_dir();
+            let _ = diagnostics::write(
+                &install_dir,
+                diagnostics::LogLevel::Error,
+                &format!("Could not retry with Slint software renderer: {error}"),
+            );
+            false
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn retry_with_software_renderer_if_needed(_message: &str) -> bool {
+    false
 }
 
 #[cfg(windows)]

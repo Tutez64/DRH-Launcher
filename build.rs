@@ -10,6 +10,11 @@ fn main() {
     if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
         winresource::WindowsResource::new()
             .set_icon("assets/icons/app-icon.ico")
+            .set("CompanyName", "Tutez")
+            .set("FileDescription", "DRH Launcher")
+            .set("InternalName", "DRH-Launcher.exe")
+            .set("OriginalFilename", "DRH-Launcher.exe")
+            .set("ProductName", "DRH Launcher")
             .compile()
             .expect("failed to embed Windows resources");
     }
