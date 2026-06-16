@@ -1357,7 +1357,12 @@ fn show_startup_failure(message: &str) {
     let text = wide(message);
     let title = wide("DRH Launcher");
     unsafe {
-        MessageBoxW(0, text.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR);
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
     }
 }
 
