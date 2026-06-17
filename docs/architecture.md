@@ -163,6 +163,7 @@ The main navigation is:
 
 - `Home`
 - `Options`
+- `Versions`
 - `Mods`
 - `Settings`
 
@@ -177,6 +178,27 @@ Useful secondary actions:
 - open a compact Help menu for recovery actions such as restore, reinstall and logs
 
 The home UI state should be derived from a small view model rather than scattered direct widget updates. This keeps installed state, latest-release state, process state and temporary progress messages easier to reason about as the launcher grows.
+
+### Version History UI
+
+The `Versions` page shows DRH and DRH Launcher release history with changelogs
+from GitHub releases. DRH entries can install a selected historical release when
+a compatible package or manifest is available. Replacing an already installed
+DRH version requires an explicit confirmation because older game releases may
+not be playable anymore.
+
+Changelog rendering is intentionally best-effort for now. Slint 1.16 provides
+`StyledText` and Markdown parsing for inline styling and links, but it does not
+cover the full GitHub Markdown surface needed by release notes, such as headings,
+images, block quotes and fenced code blocks as a single runtime Markdown
+document. DRH Launcher therefore keeps a small block-level adapter around
+`pulldown-cmark`: block structure is handled locally, while inline spans are
+rendered through Slint `StyledText`.
+
+Revisit this once Slint 1.17 is released so DRHL can use the public runtime
+`StyledText` Markdown API instead of Slint's private unstable Rust re-export.
+Revisit it again if Slint later grows a fuller Markdown renderer; at that point
+the local block adapter should be removed or reduced substantially.
 
 ## Launch Modes
 
@@ -529,7 +551,27 @@ This is preferred over incremental `Vx -> Vx.y` patch chains because it keeps fr
 
 ## Version History
 
-The launcher should show changelogs and allow installing older versions.
+The launcher exposes a `Versions` screen above `Mods`. It has two sub-tabs:
+
+- `Dungeon Rampage Haxe`
+- `DRH Launcher`
+
+Both tabs load GitHub release history and show the selected release changelog in
+the launcher UI. Changelogs are parsed from GitHub release Markdown and rendered
+as readable in-app blocks for headings, paragraphs, lists, quotes, code blocks
+and separators.
+
+The DRH tab lists releases from the configured DRH release source, marks whether
+the current platform has an installable asset, and allows installing or
+replacing the installed DRH version with a selected release. Before installing a
+selected release, the launcher re-fetches that release by tag and uses manifest
+metadata when available. Replacing an already installed version requires an
+explicit confirmation action.
+
+The DRH Launcher tab is informational for now. It shows published DRHL releases,
+including changelogs and links to GitHub. Installing older launcher versions
+from inside DRHL is intentionally out of scope because launcher self-updates use
+the signed latest-release updater flow.
 
 Older versions must be presented as potentially incompatible with:
 

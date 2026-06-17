@@ -18,6 +18,18 @@ export struct GameSessionView {
     detail: string,
 }
 
+export struct VersionEntryView {
+    title: string,
+    detail: string,
+    status: string,
+}
+
+export struct MarkdownBlockView {
+    text: styled-text,
+    kind: int,
+    target: string,
+}
+
 component PrimaryButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
@@ -48,14 +60,15 @@ component PrimaryButton inherits Rectangle {
 component SecondaryButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
+    in property <bool> active: false;
     callback clicked();
 
     min-width: 142px;
     min-height: 38px;
     border-radius: 6px;
     border-width: 1px;
-    border-color: !root.enabled ? Theme.border-disabled : touch.has-hover ? Theme.accent-warm : Theme.border-accent-muted;
-    background: !root.enabled ? Theme.surface : touch.pressed ? Theme.surface-pressed : touch.has-hover ? Theme.surface-accent : Theme.surface-raised;
+    border-color: !root.enabled ? Theme.border-disabled : root.active || touch.has-hover ? Theme.accent-warm : Theme.border-accent-muted;
+    background: !root.enabled ? Theme.surface : touch.pressed ? Theme.surface-pressed : root.active ? Theme.surface-accent : touch.has-hover ? Theme.surface-accent : Theme.surface-raised;
 
     Text {
         text: root.text;
@@ -336,6 +349,130 @@ component GameSessionButton inherits Rectangle {
     touch := TouchArea {
         clicked => {
             root.clicked();
+        }
+    }
+}
+
+component VersionEntryButton inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <string> status;
+    in property <bool> active;
+    callback clicked();
+
+    height: 72px;
+    border-radius: 6px;
+    border-width: root.active ? 1px : 0px;
+    border-color: Theme.border-accent;
+    background: root.active ? Theme.surface-selected : touch.has-hover ? Theme.surface-hover : transparent;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 10px;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 4px;
+
+            Text {
+                text: root.title;
+                color: Theme.text-primary;
+                font-size: 13px;
+                font-weight: root.active ? 800 : 700;
+                overflow: elide;
+            }
+
+            Text {
+                text: root.detail;
+                color: Theme.text-support;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+
+        Text {
+            text: root.status;
+            color: Theme.accent-warm;
+            font-size: 11px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component MarkdownBlock inherits Rectangle {
+    in property <styled-text> text;
+    in property <int> kind;
+    in property <string> target;
+    callback open-target(string);
+
+    property <bool> heading: root.kind >= 1 && root.kind <= 3;
+    property <bool> code: root.kind == 6;
+    property <bool> quote: root.kind == 7;
+    property <bool> rule: root.kind == 8;
+    property <bool> target-block: root.kind == 9;
+    property <bool> boxed: root.code || root.quote || root.target-block;
+
+    horizontal-stretch: 1;
+    height: root.rule ? 13px
+        : root.target-block ? markdown-text.preferred-height + target-text.preferred-height + 18px
+        : markdown-text.preferred-height + (root.heading ? 10px : root.boxed ? 12px : 6px);
+    border-radius: root.boxed ? 5px : 0px;
+    border-width: root.quote || root.target-block ? 1px : 0px;
+    border-color: root.target-block && touch.has-hover ? Theme.accent-warm : Theme.border-accent-muted;
+    background: root.target-block ? touch.pressed ? Theme.surface-pressed : touch.has-hover ? Theme.surface-accent : Theme.surface-raised
+        : root.code ? Theme.panel-background
+        : root.quote ? Theme.surface-raised
+        : transparent;
+
+    if root.rule : Rectangle {
+        x: 0px;
+        y: 6px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.divider;
+    }
+
+    markdown-text := StyledText {
+        x: root.boxed ? 10px : 0px;
+        y: root.heading ? 5px : root.boxed ? 6px : 3px;
+        width: parent.width - self.x - (root.boxed ? 10px : 0px);
+        height: self.preferred-height;
+        text: root.text;
+        default-color: root.heading ? Theme.text-strong : root.code ? Theme.text-secondary : root.quote ? Theme.text-muted : root.target-block ? Theme.text-strong : Theme.text-body;
+        default-font-family: root.code ? "Hack" : "";
+        default-font-size: root.kind == 1 ? 18px : root.kind == 2 ? 16px : root.kind == 3 ? 14px : 13px;
+        link-color: #f07a37;
+        link-clicked(link) => {
+            root.open-target(link);
+        }
+    }
+
+    target-text := Text {
+        visible: root.target-block && root.target != "";
+        x: 10px;
+        y: markdown-text.y + markdown-text.preferred-height + 4px;
+        width: parent.width - 20px;
+        text: root.target;
+        color: Theme.text-secondary;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+
+    touch := TouchArea {
+        enabled: root.target-block && root.target != "";
+        clicked => {
+            root.open-target(root.target);
         }
     }
 }
@@ -912,6 +1049,11 @@ export component AppWindow inherits Window {
     in property <string> status-detail;
     in property <[LogLineView]> log-lines;
     in property <[GameSessionView]> game-log-sessions;
+    in property <[VersionEntryView]> drh-version-entries;
+    in property <[VersionEntryView]> launcher-version-entries;
+    in property <[MarkdownBlockView]> selected-version-changelog-blocks;
+    in property <string> drh-version-list-label: "DRH releases";
+    in property <string> launcher-version-list-label: "DRH Launcher releases";
     in-out property <int> launcher-log-wrap-columns: 120;
     in-out property <int> game-log-wrap-columns: 120;
     in-out property <int> log-source: 0;
@@ -970,6 +1112,20 @@ export component AppWindow inherits Window {
     in property <bool> reinstall-current-enabled: false;
     in property <string> reinstall-current-text: "Reinstall current";
     in-out property <int> active-page: 0;
+    in-out property <int> version-history-page: 0;
+    in-out property <int> selected-drh-version-index: -1;
+    in-out property <int> selected-launcher-version-index: -1;
+    in property <string> version-history-status;
+    in property <bool> version-history-loading: false;
+    in property <bool> refresh-version-history-enabled: true;
+    in property <string> selected-version-title: "No release selected";
+    in property <string> selected-version-detail;
+    in property <bool> selected-version-release-enabled: false;
+    in property <string> selected-version-action-text: "Install selected version";
+    in property <bool> selected-version-action-enabled: false;
+    in property <bool> selected-version-replace-confirmation-visible: false;
+    in-out property <length> selected-version-replace-popover-anchor-x: 0px;
+    in-out property <length> selected-version-replace-popover-anchor-y: 0px;
     in-out property <int> settings-page: 0;
     in-out property <bool> advanced-settings-open: false;
     in-out property <bool> help-menu-open: false;
@@ -1001,6 +1157,15 @@ export component AppWindow inherits Window {
     callback cancel-appimage-dialog();
     callback confirm-appimage-action();
     callback refresh-logs();
+    callback ensure-version-history();
+    callback refresh-version-history();
+    callback select-version-history-source(int);
+    callback select-drh-version(int);
+    callback select-launcher-version(int);
+    callback open-selected-version-release();
+    callback open-markdown-link(string);
+    callback install-selected-drh-version();
+    callback cancel-selected-drh-version-install();
     callback select-log-source(int);
     callback select-game-log(int);
     callback log-wrap-columns-measured(int, int);
@@ -1090,11 +1255,21 @@ export component AppWindow inherits Window {
                 }
 
                 NavButton {
-                    text: "Mods";
+                    text: "Versions";
                     active: root.active-page == 2;
                     clicked => {
                         root.help-menu-open = false;
                         root.active-page = 2;
+                        root.ensure-version-history();
+                    }
+                }
+
+                NavButton {
+                    text: "Mods";
+                    active: root.active-page == 3;
+                    clicked => {
+                        root.help-menu-open = false;
+                        root.active-page = 3;
                     }
                 }
 
@@ -1104,10 +1279,10 @@ export component AppWindow inherits Window {
 
                 NavButton {
                     text: "Settings";
-                    active: root.active-page == 3;
+                    active: root.active-page == 4;
                     clicked => {
                         root.help-menu-open = false;
-                        root.active-page = 3;
+                        root.active-page = 4;
                     }
                 }
             }
@@ -1454,7 +1629,7 @@ export component AppWindow inherits Window {
                                     text: "Open logs";
                                     clicked => {
                                         root.help-menu-open = false;
-                                        root.active-page = 3;
+                                        root.active-page = 4;
                                         root.settings-page = 1;
                                     }
                                 }
@@ -1652,6 +1827,170 @@ export component AppWindow inherits Window {
                         spacing: 16px;
 
                         SectionTitle {
+                            title: "Versions";
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+
+                            TabButton {
+                                text: "Dungeon Rampage Haxe";
+                                active: root.version-history-page == 0;
+                                clicked => {
+                                    root.select-version-history-source(0);
+                                }
+                            }
+
+                            TabButton {
+                                text: "DRH Launcher";
+                                active: root.version-history-page == 1;
+                                clicked => {
+                                    root.select-version-history-source(1);
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 12px;
+                            vertical-stretch: 1;
+
+                            Rectangle {
+                                width: 290px;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: Theme.border-muted;
+                                background: Theme.panel-background;
+
+                                VerticalLayout {
+                                    padding: 10px;
+                                    spacing: 8px;
+
+                                    SmallLabel {
+                                        label: root.version-history-page == 0 ? root.drh-version-list-label : root.launcher-version-list-label;
+                                    }
+
+                                    if root.version-history-loading || root.version-history-status != "" : Text {
+                                        text: root.version-history-loading ? "Loading releases..." : root.version-history-status;
+                                        color: root.version-history-loading ? Theme.text-muted : Theme.text-secondary;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                    }
+
+                                    if root.version-history-page == 0 : ListView {
+                                        horizontal-stretch: 1;
+                                        vertical-stretch: 1;
+
+                                        for version[index] in root.drh-version-entries: VersionEntryButton {
+                                            title: version.title;
+                                            detail: version.detail;
+                                            status: version.status;
+                                            active: root.selected-drh-version-index == index;
+                                            clicked => {
+                                                root.select-drh-version(index);
+                                            }
+                                        }
+                                    }
+
+                                    if root.version-history-page == 1 : ListView {
+                                        horizontal-stretch: 1;
+                                        vertical-stretch: 1;
+
+                                        for version[index] in root.launcher-version-entries: VersionEntryButton {
+                                            title: version.title;
+                                            detail: version.detail;
+                                            status: version.status;
+                                            active: root.selected-launcher-version-index == index;
+                                            clicked => {
+                                                root.select-launcher-version(index);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            SettingsCard {
+                                title: root.selected-version-title;
+                                description: root.selected-version-detail;
+                                horizontal-stretch: 1;
+                                vertical-stretch: 1;
+
+                                if root.selected-version-release-enabled : Text {
+                                    text: "Changelog preview may miss some GitHub formatting. Use the button bellow to see the original release notes.";
+                                    color: Theme.text-support;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+
+                                ScrollView {
+                                    horizontal-stretch: 1;
+                                    vertical-stretch: 1;
+                                    viewport-width: self.width;
+                                    viewport-height: version-changelog-content.preferred-height;
+
+                                    version-changelog-content := VerticalLayout {
+                                        width: parent.width;
+                                        spacing: 4px;
+
+                                        for block in root.selected-version-changelog-blocks: MarkdownBlock {
+                                            text: block.text;
+                                            kind: block.kind;
+                                            target: block.target;
+                                            open-target(url) => {
+                                                root.open-markdown-link(url);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    alignment: end;
+                                    vertical-stretch: 0;
+
+                                    SecondaryButton {
+                                        text: "Open on GitHub";
+                                        enabled: root.selected-version-release-enabled;
+                                        clicked => {
+                                            root.open-selected-version-release();
+                                        }
+                                    }
+
+                                    if root.version-history-page == 0 : replace-version-button := SecondaryButton {
+                                        text: root.selected-version-action-text;
+                                        enabled: root.selected-version-action-enabled;
+                                        active: root.selected-version-replace-confirmation-visible;
+                                        clicked => {
+                                            root.selected-version-replace-popover-anchor-x = replace-version-button.absolute-position.x + replace-version-button.width;
+                                            root.selected-version-replace-popover-anchor-y = replace-version-button.absolute-position.y;
+                                            root.install-selected-drh-version();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+
+                            SecondaryButton {
+                                text: "Refresh";
+                                enabled: root.refresh-version-history-enabled;
+                                clicked => {
+                                    root.refresh-version-history();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.active-page == 3 : Rectangle {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        spacing: 16px;
+
+                        SectionTitle {
                             title: "Mods";
                         }
 
@@ -1680,7 +2019,7 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.active-page == 3 : Rectangle {
+                if root.active-page == 4 : Rectangle {
                     horizontal-stretch: 1;
                     vertical-stretch: 1;
 
@@ -2256,6 +2595,89 @@ export component AppWindow inherits Window {
             color: Theme.text-body;
             font-size: 12px;
             wrap: word-wrap;
+        }
+    }
+
+    if root.selected-version-replace-confirmation-visible : Rectangle {
+        z: 1500;
+        background: transparent;
+
+        TouchArea {
+            clicked => {
+                root.cancel-selected-drh-version-install();
+            }
+        }
+
+        Rectangle {
+            z: 1501;
+            width: min(440px, parent.width - 24px);
+            property <length> popover-padding: 14px;
+            property <length> popover-spacing: 12px;
+            property <length> popover-button-height: 38px;
+            height: self.popover-padding * 2
+                + replace-popover-title.preferred-height
+                + self.popover-spacing
+                + replace-popover-message.preferred-height
+                + self.popover-spacing
+                + self.popover-button-height;
+            x: min(max(root.selected-version-replace-popover-anchor-x - self.width, 8px), parent.width - self.width - 8px);
+            y: min(max(root.selected-version-replace-popover-anchor-y - self.height - 10px, 8px), parent.height - self.height - 8px);
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border-accent-muted;
+            background: Theme.surface-raised;
+            drop-shadow-blur: 18px;
+            drop-shadow-offset-y: 6px;
+            drop-shadow-color: Theme.shadow-strong;
+
+            replace-popover-title := Text {
+                x: parent.popover-padding;
+                y: parent.popover-padding;
+                width: parent.width - parent.popover-padding * 2;
+                text: "Install older DRH version?";
+                color: Theme.text-title;
+                font-size: 14px;
+                font-weight: 800;
+            }
+
+            replace-popover-message := Text {
+                x: parent.popover-padding;
+                y: replace-popover-title.y + replace-popover-title.preferred-height + parent.popover-spacing;
+                width: parent.width - parent.popover-padding * 2;
+                height: self.preferred-height;
+                text: "Older releases may no longer connect properly, may miss features or may be unstable.";
+                color: Theme.text-body;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                x: parent.popover-padding;
+                y: replace-popover-message.y + replace-popover-message.preferred-height + parent.popover-spacing;
+                width: parent.width - parent.popover-padding * 2;
+                height: parent.popover-button-height;
+                spacing: 10px;
+                alignment: end;
+
+                SecondaryButton {
+                    width: (parent.width - 10px) / 2;
+                    height: parent.height;
+                    text: "Cancel";
+                    clicked => {
+                        root.cancel-selected-drh-version-install();
+                    }
+                }
+
+                SecondaryButton {
+                    width: (parent.width - 10px) / 2;
+                    height: parent.height;
+                    text: "Confirm";
+                    enabled: root.selected-version-action-enabled;
+                    clicked => {
+                        root.install-selected-drh-version();
+                    }
+                }
+            }
         }
     }
 

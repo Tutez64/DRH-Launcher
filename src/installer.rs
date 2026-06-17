@@ -8,11 +8,22 @@ use crate::install_metadata::{InstalledRelease, InstalledState};
 use crate::paths;
 use crate::release_source::ReleaseSource;
 
+#[cfg(test)]
 pub fn install_extracted_archive(
     extracted: &ExtractedArchive,
     install_dir: &Path,
     release: &PlatformRelease,
     source: &ReleaseSource,
+) -> Result<InstalledState, String> {
+    install_extracted_archive_with_blocked_update(extracted, install_dir, release, source, None)
+}
+
+pub fn install_extracted_archive_with_blocked_update(
+    extracted: &ExtractedArchive,
+    install_dir: &Path,
+    release: &PlatformRelease,
+    source: &ReleaseSource,
+    blocked_update_version: Option<String>,
 ) -> Result<InstalledState, String> {
     let source_game_dir = find_extracted_game_dir(&extracted.path)?;
     let game_dir = paths::game_dir(install_dir);
@@ -63,7 +74,7 @@ pub fn install_extracted_archive(
     let installed = InstalledState {
         active: InstalledRelease::from_platform_release(release, source),
         previous: previous_metadata,
-        blocked_update_version: None,
+        blocked_update_version,
     };
     installed
         .save(install_dir)

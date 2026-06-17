@@ -43,15 +43,41 @@ pub struct ReleaseAsset {
     pub digest: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug)]
+pub struct RepositoryRelease {
+    pub version: String,
+    pub name: String,
+    pub html_url: String,
+    pub body: String,
+    pub published_at: Option<String>,
+    pub prerelease: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct PlatformReleaseHistoryEntry {
+    pub release: RepositoryRelease,
+    pub platform_release: Option<PlatformRelease>,
+    pub manifest_available: bool,
+    pub unsupported_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 struct GitHubRelease {
     tag_name: String,
     name: Option<String>,
     html_url: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    published_at: Option<String>,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
     assets: Vec<GitHubAsset>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct GitHubAsset {
     name: String,
     browser_download_url: String,
@@ -78,10 +104,7 @@ fn discover_latest_platform_release_with_manifest(
     platform: Platform,
     include_manifest: bool,
 ) -> Result<PlatformRelease, String> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|error| format!("Could not create GitHub client: {error}"))?;
+    let client = github_client()?;
 
     let release: GitHubRelease = client
         .get(source.api_latest_release_url())
@@ -100,6 +123,108 @@ fn discover_latest_platform_release_with_manifest(
         None
     };
     select_platform_release(release, platform, manifest.as_ref())
+}
+
+pub fn discover_platform_release_history(
+    source: &ReleaseSource,
+    platform: Platform,
+) -> Result<Vec<PlatformReleaseHistoryEntry>, String> {
+    let releases = fetch_repository_releases(source)?;
+    Ok(releases
+        .into_iter()
+        .filter(|release| !release.draft)
+        .map(|release| {
+            let manifest_available = release_has_manifest(&release);
+            let repository_release = repository_release_from_github(&release);
+            match select_platform_release(release.clone(), platform, None) {
+                Ok(platform_release) => PlatformReleaseHistoryEntry {
+                    release: repository_release,
+                    platform_release: Some(platform_release),
+                    manifest_available,
+                    unsupported_reason: None,
+                },
+                Err(error) => PlatformReleaseHistoryEntry {
+                    release: repository_release,
+                    platform_release: None,
+                    manifest_available,
+                    unsupported_reason: Some(error),
+                },
+            }
+        })
+        .collect())
+}
+
+pub fn discover_repository_release_history(
+    source: &ReleaseSource,
+) -> Result<Vec<RepositoryRelease>, String> {
+    Ok(fetch_repository_releases(source)?
+        .into_iter()
+        .filter(|release| !release.draft)
+        .map(|release| repository_release_from_github(&release))
+        .collect())
+}
+
+pub fn discover_platform_release_by_tag_for_install(
+    source: &ReleaseSource,
+    platform: Platform,
+    tag: &str,
+) -> Result<PlatformRelease, String> {
+    let client = github_client()?;
+    let release: GitHubRelease = client
+        .get(source.api_release_by_tag_url(tag))
+        .header(USER_AGENT, "DRH-Launcher")
+        .header(ACCEPT, "application/vnd.github+json")
+        .send()
+        .map_err(|error| format!("Could not check GitHub release {tag}: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("GitHub release {tag} check failed: {error}"))?
+        .json()
+        .map_err(|error| format!("Could not parse GitHub release {tag}: {error}"))?;
+
+    let manifest = fetch_manifest_if_available(&client, &release)?;
+    select_platform_release(release, platform, manifest.as_ref())
+}
+
+fn github_client() -> Result<Client, String> {
+    Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|error| format!("Could not create GitHub client: {error}"))
+}
+
+fn fetch_repository_releases(source: &ReleaseSource) -> Result<Vec<GitHubRelease>, String> {
+    let client = github_client()?;
+    client
+        .get(format!("{}?per_page=100", source.api_releases_url()))
+        .header(USER_AGENT, "DRH-Launcher")
+        .header(ACCEPT, "application/vnd.github+json")
+        .send()
+        .map_err(|error| format!("Could not check GitHub release history: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("GitHub release history check failed: {error}"))?
+        .json()
+        .map_err(|error| format!("Could not parse GitHub release history: {error}"))
+}
+
+fn repository_release_from_github(release: &GitHubRelease) -> RepositoryRelease {
+    RepositoryRelease {
+        version: release.tag_name.clone(),
+        name: release
+            .name
+            .clone()
+            .unwrap_or_else(|| "Unnamed release".to_string()),
+        html_url: release.html_url.clone(),
+        body: release.body.clone().unwrap_or_default(),
+        published_at: release.published_at.clone(),
+        prerelease: release.prerelease,
+    }
+}
+
+fn release_has_manifest(release: &GitHubRelease) -> bool {
+    release
+        .assets
+        .iter()
+        .any(|asset| is_manifest_asset_name(&asset.name, &release.tag_name))
 }
 
 fn fetch_manifest_if_available(
@@ -222,6 +347,10 @@ mod tests {
             tag_name: "V4".to_string(),
             name: Some("Dungeon Rampage Haxe V4".to_string()),
             html_url: "https://example.test/release".to_string(),
+            body: None,
+            published_at: None,
+            prerelease: false,
+            draft: false,
             assets: vec![
                 GitHubAsset {
                     name: "Dungeon.Rampage.Haxe.V4.Windows.zip".to_string(),
@@ -257,6 +386,10 @@ mod tests {
             tag_name: "V4".to_string(),
             name: None,
             html_url: "https://example.test/release".to_string(),
+            body: None,
+            published_at: None,
+            prerelease: false,
+            draft: false,
             assets: Vec::new(),
         };
 
@@ -271,6 +404,10 @@ mod tests {
             tag_name: "V4".to_string(),
             name: Some("Dungeon Rampage Haxe V4".to_string()),
             html_url: "https://example.test/release".to_string(),
+            body: None,
+            published_at: None,
+            prerelease: false,
+            draft: false,
             assets: vec![GitHubAsset {
                 name: "custom-linux.tar.gz".to_string(),
                 browser_download_url: "https://example.test/custom-linux.tar.gz".to_string(),
@@ -321,5 +458,27 @@ mod tests {
             selected.launch_options.unwrap().game_arguments[0].recommended,
             Some(true)
         );
+    }
+
+    #[test]
+    fn builds_repository_release_history_entry() {
+        let release = GitHubRelease {
+            tag_name: "v0.2.0".to_string(),
+            name: None,
+            html_url: "https://example.test/release".to_string(),
+            body: Some("Changelog".to_string()),
+            published_at: Some("2026-06-17T12:00:00Z".to_string()),
+            prerelease: true,
+            draft: false,
+            assets: Vec::new(),
+        };
+
+        let entry = repository_release_from_github(&release);
+
+        assert_eq!(entry.version, "v0.2.0");
+        assert_eq!(entry.name, "Unnamed release");
+        assert_eq!(entry.body, "Changelog");
+        assert_eq!(entry.published_at.as_deref(), Some("2026-06-17T12:00:00Z"));
+        assert!(entry.prerelease);
     }
 }

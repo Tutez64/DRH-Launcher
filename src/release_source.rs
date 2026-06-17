@@ -21,6 +21,13 @@ impl ReleaseSource {
         }
     }
 
+    pub fn launcher() -> Self {
+        Self {
+            owner: "Tutez64",
+            repo: "DRH-Launcher",
+        }
+    }
+
     pub fn from_environment() -> Self {
         match env::var("DRHL_RELEASE_SOURCE").as_deref() {
             Ok("fixtures") => Self::fixtures(),
@@ -47,6 +54,20 @@ impl ReleaseSource {
             self.owner, self.repo
         )
     }
+
+    pub fn api_releases_url(&self) -> String {
+        format!(
+            "https://api.github.com/repos/{}/{}/releases",
+            self.owner, self.repo
+        )
+    }
+
+    pub fn api_release_by_tag_url(&self, tag: &str) -> String {
+        format!(
+            "https://api.github.com/repos/{}/{}/releases/tags/{}",
+            self.owner, self.repo, tag
+        )
+    }
 }
 
 #[cfg(test)]
@@ -60,6 +81,20 @@ mod tests {
         assert_eq!(
             source.api_latest_release_url(),
             "https://api.github.com/repos/Tutez64/DRHL-Release-Fixtures/releases/latest"
+        );
+    }
+
+    #[test]
+    fn builds_release_history_api_urls() {
+        let source = ReleaseSource::launcher();
+
+        assert_eq!(
+            source.api_releases_url(),
+            "https://api.github.com/repos/Tutez64/DRH-Launcher/releases"
+        );
+        assert_eq!(
+            source.api_release_by_tag_url("v1.2.3"),
+            "https://api.github.com/repos/Tutez64/DRH-Launcher/releases/tags/v1.2.3"
         );
     }
 

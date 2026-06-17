@@ -37,17 +37,21 @@ use download::{
 };
 use game_install::inspect_install;
 use github_releases::{
-    PlatformRelease, ReleaseMetadataSource, discover_latest_platform_release,
-    discover_latest_platform_release_for_install,
+    PlatformRelease, PlatformReleaseHistoryEntry, ReleaseMetadataSource, RepositoryRelease,
+    discover_latest_platform_release, discover_latest_platform_release_for_install,
+    discover_platform_release_by_tag_for_install, discover_platform_release_history,
+    discover_repository_release_history,
 };
 use install_state::InstallState;
 use installer::{
-    install_extracted_archive, repair_active_install_from_extracted_archive,
+    install_extracted_archive_with_blocked_update, repair_active_install_from_extracted_archive,
     repair_release_from_extracted_archive, restore_previous_version,
 };
 use platform::Platform;
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use release_manifest::ManifestLaunchOptions;
 use release_source::ReleaseSource;
+use slint::private_unstable_api::re_exports::{StyledText, string_to_styled_text};
 use slint::{Brush, CloseRequestResponse, Color, Model, ModelRc, Timer, TimerMode, VecModel};
 
 slint::include_modules!();
@@ -114,6 +118,9 @@ fn run() -> Result<(), slint::PlatformError> {
     let config = Rc::new(RefCell::new(LauncherConfig::load()));
     let latest_release = Arc::new(Mutex::new(None::<PlatformRelease>));
     let latest_launcher_update = Arc::new(Mutex::new(None::<launcher_update::LauncherUpdate>));
+    let drh_version_history = Arc::new(Mutex::new(Vec::<PlatformReleaseHistoryEntry>::new()));
+    let launcher_version_history = Arc::new(Mutex::new(Vec::<RepositoryRelease>::new()));
+    let pending_drh_version_install = Arc::new(Mutex::new(None::<String>));
     let game_process = Rc::new(RefCell::new(None::<game_launch::RunningGame>));
     let game_monitor = Rc::new(Timer::default());
     let game_stop_timer = Rc::new(Timer::default());
@@ -488,6 +495,31 @@ fn run() -> Result<(), slint::PlatformError> {
                     std::process::exit(0);
                 }
             });
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let drh_version_history = Arc::clone(&drh_version_history);
+        let launcher_version_history = Arc::clone(&launcher_version_history);
+        let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+        ui.unwrap().on_cancel_selected_drh_version_install(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            pending_drh_version_install
+                .lock()
+                .expect("pending DRH version install lock poisoned")
+                .take();
+            refresh_selected_version_view(
+                &ui,
+                &config.borrow(),
+                &drh_version_history,
+                &launcher_version_history,
+                &pending_drh_version_install,
+            );
         });
     }
 
@@ -1105,6 +1137,356 @@ fn run() -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
+        let drh_version_history = Arc::clone(&drh_version_history);
+        let launcher_version_history = Arc::clone(&launcher_version_history);
+        let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+        let release_source = release_source.clone();
+        ui.unwrap().on_ensure_version_history(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let has_history = !drh_version_history
+                .lock()
+                .expect("DRH version history lock poisoned")
+                .is_empty()
+                || !launcher_version_history
+                    .lock()
+                    .expect("launcher version history lock poisoned")
+                    .is_empty();
+            if has_history {
+                refresh_selected_version_view(
+                    &ui,
+                    &config.borrow(),
+                    &drh_version_history,
+                    &launcher_version_history,
+                    &pending_drh_version_install,
+                );
+            } else if ui.get_refresh_version_history_enabled() {
+                start_version_history_refresh(
+                    &ui,
+                    config.borrow().clone(),
+                    release_source.clone(),
+                    Arc::clone(&drh_version_history),
+                    Arc::clone(&launcher_version_history),
+                    Arc::clone(&pending_drh_version_install),
+                );
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let drh_version_history = Arc::clone(&drh_version_history);
+        let launcher_version_history = Arc::clone(&launcher_version_history);
+        let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+        let release_source = release_source.clone();
+        ui.unwrap().on_refresh_version_history(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if !ui.get_refresh_version_history_enabled() {
+                return;
+            }
+
+            start_version_history_refresh(
+                &ui,
+                config.borrow().clone(),
+                release_source.clone(),
+                Arc::clone(&drh_version_history),
+                Arc::clone(&launcher_version_history),
+                Arc::clone(&pending_drh_version_install),
+            );
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let drh_version_history = Arc::clone(&drh_version_history);
+        let launcher_version_history = Arc::clone(&launcher_version_history);
+        let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+        let release_source = release_source.clone();
+        ui.unwrap().on_select_version_history_source(move |source| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            ui.set_version_history_page(source);
+            refresh_selected_version_view(
+                &ui,
+                &config.borrow(),
+                &drh_version_history,
+                &launcher_version_history,
+                &pending_drh_version_install,
+            );
+            let source_empty = if source == 0 {
+                drh_version_history
+                    .lock()
+                    .expect("DRH version history lock poisoned")
+                    .is_empty()
+            } else {
+                launcher_version_history
+                    .lock()
+                    .expect("launcher version history lock poisoned")
+                    .is_empty()
+            };
+            if source_empty && ui.get_refresh_version_history_enabled() {
+                start_version_history_refresh(
+                    &ui,
+                    config.borrow().clone(),
+                    release_source.clone(),
+                    Arc::clone(&drh_version_history),
+                    Arc::clone(&launcher_version_history),
+                    Arc::clone(&pending_drh_version_install),
+                );
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let drh_version_history = Arc::clone(&drh_version_history);
+        let launcher_version_history = Arc::clone(&launcher_version_history);
+        let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+        ui.unwrap().on_select_drh_version(move |index| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            ui.set_selected_drh_version_index(index);
+            pending_drh_version_install
+                .lock()
+                .expect("pending DRH version install lock poisoned")
+                .take();
+            refresh_selected_version_view(
+                &ui,
+                &config.borrow(),
+                &drh_version_history,
+                &launcher_version_history,
+                &pending_drh_version_install,
+            );
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let drh_version_history = Arc::clone(&drh_version_history);
+        let launcher_version_history = Arc::clone(&launcher_version_history);
+        let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+        ui.unwrap().on_select_launcher_version(move |index| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            ui.set_selected_launcher_version_index(index);
+            refresh_selected_version_view(
+                &ui,
+                &config.borrow(),
+                &drh_version_history,
+                &launcher_version_history,
+                &pending_drh_version_install,
+            );
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let drh_version_history = Arc::clone(&drh_version_history);
+        let launcher_version_history = Arc::clone(&launcher_version_history);
+        ui.unwrap().on_open_selected_version_release(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let release_url =
+                selected_version_release_url(&ui, &drh_version_history, &launcher_version_history);
+            let Some(release_url) = release_url else {
+                set_status_message(&ui, "No release selected.");
+                return;
+            };
+
+            open_external_link_from_ui(&ui, &config.borrow(), "Release", &release_url);
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_open_markdown_link(move |url| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            open_external_link_from_ui(&ui, &config.borrow(), "Changelog link", url.as_str());
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let game_process = Rc::clone(&game_process);
+        let latest_release = Arc::clone(&latest_release);
+        let drh_version_history = Arc::clone(&drh_version_history);
+        let launcher_version_history = Arc::clone(&launcher_version_history);
+        let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+        let release_source = release_source.clone();
+        ui.unwrap().on_install_selected_drh_version(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if process_is_running(&game_process) {
+                let message = "Stop DRH before installing another version.";
+                log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
+                set_status_message(&ui, message);
+                return;
+            }
+
+            let selected = selected_drh_history_entry(&ui, &drh_version_history);
+            let Some(selected) = selected else {
+                set_status_message(&ui, "No DRH release selected.");
+                return;
+            };
+            if selected.platform_release.is_none() && !selected.manifest_available {
+                set_status_message(&ui, "Selected release is not available for this platform.");
+                return;
+            }
+
+            let version = selected.release.version.clone();
+            let installed_version = installed_active_release_version(&config.borrow());
+            if installed_version
+                .as_deref()
+                .is_some_and(|installed| installed.trim() != version.trim())
+            {
+                let mut pending = pending_drh_version_install
+                    .lock()
+                    .expect("pending DRH version install lock poisoned");
+                if pending.as_deref() != Some(version.as_str()) {
+                    pending.replace(version.clone());
+                    drop(pending);
+                    refresh_selected_version_view(
+                        &ui,
+                        &config.borrow(),
+                        &drh_version_history,
+                        &launcher_version_history,
+                        &pending_drh_version_install,
+                    );
+                    return;
+                }
+            }
+
+            {
+                let mut config = config.borrow_mut();
+                if config.install_dir.is_none() {
+                    config.install_dir = Some(paths::default_install_dir());
+                    if let Err(error) = config.save() {
+                        let message = format!("Could not save configuration: {error}");
+                        log_for_config(&config, diagnostics::LogLevel::Error, &message);
+                        set_status_message(&ui, &message);
+                        return;
+                    }
+                    refresh_settings_view(&ui, &config, "Save");
+                }
+            }
+
+            let config_snapshot = config.borrow().clone();
+            let Some(install_dir) = config_snapshot.install_dir.clone() else {
+                set_status_message(&ui, "No install directory selected.");
+                return;
+            };
+
+            pending_drh_version_install
+                .lock()
+                .expect("pending DRH version install lock poisoned")
+                .take();
+            refresh_home_state(&ui, &config_snapshot, &format!("Installing {version}..."));
+            ui.set_install_action_enabled(false);
+            ui.set_update_check_enabled(false);
+            ui.set_restore_previous_enabled(false);
+            ui.set_reinstall_current_enabled(false);
+            ui.set_install_action_text(InstallState::Updating.primary_action().into());
+            ui.set_refresh_version_history_enabled(false);
+            ui.set_selected_version_action_enabled(false);
+            ui.set_selected_version_replace_confirmation_visible(false);
+            set_status_message(&ui, &format!("Installing DRH {version}..."));
+
+            let ui = ui.as_weak();
+            let release_source = release_source.clone();
+            let latest_release = Arc::clone(&latest_release);
+            let drh_version_history = Arc::clone(&drh_version_history);
+            let launcher_version_history = Arc::clone(&launcher_version_history);
+            let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+            thread::spawn(move || {
+                let latest_version =
+                    latest_drh_release_version_for_update_block(&latest_release, &release_source);
+                let message = match discover_platform_release_by_tag_for_install(
+                    &release_source,
+                    Platform::current(),
+                    &version,
+                ) {
+                    Ok(release) => install_platform_release(
+                        &ui,
+                        &install_dir,
+                        &config_snapshot,
+                        &release_source,
+                        InstallPlatformReleaseRequest {
+                            latest_release: None,
+                            release,
+                            repair_current: false,
+                            blocked_update_version: selected_history_blocked_update_version(
+                                latest_version.as_deref(),
+                                version.as_str(),
+                            ),
+                        },
+                    ),
+                    Err(error) => error,
+                };
+                let level = if is_error_message(&message) {
+                    diagnostics::LogLevel::Error
+                } else {
+                    diagnostics::LogLevel::Info
+                };
+                let _ = diagnostics::write(&install_dir, level, &message);
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(ui) = ui.upgrade() else {
+                        return;
+                    };
+
+                    let installed_launch_options = load_installed_launch_options(&config_snapshot);
+                    refresh_launch_options_view(
+                        &ui,
+                        &config_snapshot,
+                        installed_launch_options.as_ref(),
+                        "Save",
+                    );
+                    refresh_home_state(&ui, &config_snapshot, &message);
+                    ui.set_install_action_enabled(true);
+                    ui.set_update_check_enabled(true);
+                    ui.set_update_check_text("Check for updates".into());
+                    ui.set_refresh_version_history_enabled(true);
+                    set_status_message(&ui, &message);
+                    refresh_version_history_selection(
+                        &ui,
+                        &config_snapshot,
+                        &drh_version_history,
+                        &launcher_version_history,
+                        &pending_drh_version_install,
+                    );
+                });
+            });
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
         ui.unwrap()
             .on_log_wrap_columns_measured(move |source, columns| {
                 let Some(ui) = ui.upgrade() else {
@@ -1550,170 +1932,190 @@ fn install_latest_release(
     };
 
     match release {
-        Ok(release) => {
-            if repair_current
-                && rollback_blocked_update_version(config).as_deref()
-                    == Some(release.version.as_str())
+        Ok(release) => install_platform_release(
+            ui,
+            install_dir,
+            config,
+            release_source,
+            InstallPlatformReleaseRequest {
+                latest_release: Some(latest_release),
+                release,
+                repair_current,
+                blocked_update_version: None,
+            },
+        ),
+        Err(error) => error,
+    }
+}
+
+struct InstallPlatformReleaseRequest {
+    latest_release: Option<Arc<Mutex<Option<PlatformRelease>>>>,
+    release: PlatformRelease,
+    repair_current: bool,
+    blocked_update_version: Option<String>,
+}
+
+fn install_platform_release(
+    ui: &slint::Weak<AppWindow>,
+    install_dir: &Path,
+    config: &LauncherConfig,
+    release_source: &ReleaseSource,
+    request: InstallPlatformReleaseRequest,
+) -> String {
+    let InstallPlatformReleaseRequest {
+        latest_release,
+        release,
+        repair_current,
+        blocked_update_version,
+    } = request;
+
+    if repair_current
+        && rollback_blocked_update_version(config).as_deref() == Some(release.version.as_str())
+    {
+        return format!(
+            "Could not repair from cached archive, and update {} is skipped until a newer release is available.",
+            release.version
+        );
+    }
+
+    if let Some(latest_release) = latest_release {
+        latest_release
+            .lock()
+            .expect("latest release lock poisoned")
+            .replace(release.clone());
+    }
+    let _ = diagnostics::write(
+        install_dir,
+        diagnostics::LogLevel::Info,
+        &format!("Found release {}. Starting install.", release.version),
+    );
+    report_background_activity(ui, format!("Preparing download for {}...", release.version));
+    let mut last_percent = None::<u64>;
+    let mut last_logged_percent = None::<u64>;
+    let mut reported_verification = false;
+    match download_and_verify_with_progress(
+        &release.asset,
+        install_dir,
+        |progress| {
+            let percent = progress_percent(&progress);
+            if percent != last_percent
+                || progress.downloaded == 0
+                || progress.downloaded == progress.total
             {
-                return format!(
-                    "Could not repair from cached archive, and update {} is skipped until a newer release is available.",
-                    release.version
+                last_percent = percent;
+                report_background_activity(
+                    ui,
+                    format_download_progress(&release.asset.name, &progress),
                 );
             }
-
-            latest_release
-                .lock()
-                .expect("latest release lock poisoned")
-                .replace(release.clone());
-            let _ = diagnostics::write(
-                install_dir,
-                diagnostics::LogLevel::Info,
-                &format!("Found release {}. Starting install.", release.version),
-            );
-            report_background_activity(
-                ui,
-                format!("Preparing download for {}...", release.version),
-            );
-            let mut last_percent = None::<u64>;
-            let mut last_logged_percent = None::<u64>;
-            let mut reported_verification = false;
-            match download_and_verify_with_progress(
-                &release.asset,
-                install_dir,
-                |progress| {
-                    let percent = progress_percent(&progress);
-                    if percent != last_percent
-                        || progress.downloaded == 0
-                        || progress.downloaded == progress.total
-                    {
-                        last_percent = percent;
-                        report_background_activity(
-                            ui,
-                            format_download_progress(&release.asset.name, &progress),
-                        );
-                    }
-                    if should_log_download_progress(percent, last_logged_percent) {
-                        last_logged_percent = percent;
-                        let _ = diagnostics::write(
-                            install_dir,
-                            diagnostics::LogLevel::Info,
-                            &format_download_progress(&release.asset.name, &progress),
-                        );
-                    }
-                    if !reported_verification
-                        && progress.total > 0
-                        && progress.downloaded == progress.total
-                    {
-                        reported_verification = true;
-                        let message = "Verifying download...".to_string();
-                        let _ =
-                            diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
-                        report_background_activity(ui, message);
-                    }
-                },
-                |cache_error| {
-                    let _ =
-                        diagnostics::write(install_dir, diagnostics::LogLevel::Warn, &cache_error);
-                },
-            ) {
-                Ok(download) => {
-                    let verified_message = if download.reused {
-                        format!(
-                            "Reused cached archive: {} ({} bytes, sha256:{})",
-                            download.path.display(),
-                            download.size,
-                            download.sha256
-                        )
-                    } else {
-                        format!(
-                            "Download verified: {} ({} bytes, sha256:{})",
-                            download.path.display(),
-                            download.size,
-                            download.sha256
-                        )
-                    };
+            if should_log_download_progress(percent, last_logged_percent) {
+                last_logged_percent = percent;
+                let _ = diagnostics::write(
+                    install_dir,
+                    diagnostics::LogLevel::Info,
+                    &format_download_progress(&release.asset.name, &progress),
+                );
+            }
+            if !reported_verification && progress.total > 0 && progress.downloaded == progress.total
+            {
+                reported_verification = true;
+                let message = "Verifying download...".to_string();
+                let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
+                report_background_activity(ui, message);
+            }
+        },
+        |cache_error| {
+            let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Warn, &cache_error);
+        },
+    ) {
+        Ok(download) => {
+            let verified_message = if download.reused {
+                format!(
+                    "Reused cached archive: {} ({} bytes, sha256:{})",
+                    download.path.display(),
+                    download.size,
+                    download.sha256
+                )
+            } else {
+                format!(
+                    "Download verified: {} ({} bytes, sha256:{})",
+                    download.path.display(),
+                    download.size,
+                    download.sha256
+                )
+            };
+            let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &verified_message);
+            let message = "Extracting archive...".to_string();
+            let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
+            report_background_activity(ui, message);
+            match extract_to_staging(&download, install_dir) {
+                Ok(extracted) => {
                     let _ = diagnostics::write(
                         install_dir,
                         diagnostics::LogLevel::Info,
-                        &verified_message,
+                        "Archive extracted.",
                     );
-                    let message = "Extracting archive...".to_string();
+                    let message = "Installing files...".to_string();
                     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
                     report_background_activity(ui, message);
-                    match extract_to_staging(&download, install_dir) {
-                        Ok(extracted) => {
-                            let _ = diagnostics::write(
+                    let install_result = if repair_current {
+                        repair_release_from_extracted_archive(
+                            &extracted,
+                            install_dir,
+                            &release,
+                            release_source,
+                        )
+                    } else {
+                        install_extracted_archive_with_blocked_update(
+                            &extracted,
+                            install_dir,
+                            &release,
+                            release_source,
+                            blocked_update_version,
+                        )
+                    };
+                    match install_result {
+                        Ok(installed) => {
+                            match update_download_cache(
                                 install_dir,
-                                diagnostics::LogLevel::Info,
-                                "Archive extracted.",
+                                &release.asset.name,
+                                config.download_cache_limit,
+                            ) {
+                                Ok(removed) => {
+                                    for archive in removed {
+                                        let _ = diagnostics::write(
+                                            install_dir,
+                                            diagnostics::LogLevel::Info,
+                                            &format!(
+                                                "Removed cached archive {}.",
+                                                archive.display()
+                                            ),
+                                        );
+                                    }
+                                }
+                                Err(error) => {
+                                    let _ = diagnostics::write(
+                                        install_dir,
+                                        diagnostics::LogLevel::Warn,
+                                        &error,
+                                    );
+                                }
+                            }
+                            let message = format!(
+                                "Installed {}. Previous version: {}",
+                                installed.active.version,
+                                installed
+                                    .previous
+                                    .as_ref()
+                                    .map(|previous| previous.version.as_str())
+                                    .unwrap_or("none")
                             );
-                            let message = "Installing files...".to_string();
                             let _ = diagnostics::write(
                                 install_dir,
                                 diagnostics::LogLevel::Info,
                                 &message,
                             );
-                            report_background_activity(ui, message);
-                            let install_result = if repair_current {
-                                repair_release_from_extracted_archive(
-                                    &extracted,
-                                    install_dir,
-                                    &release,
-                                    release_source,
-                                )
-                            } else {
-                                install_extracted_archive(
-                                    &extracted,
-                                    install_dir,
-                                    &release,
-                                    release_source,
-                                )
-                            };
-                            match install_result {
-                                Ok(installed) => {
-                                    match update_download_cache(
-                                        install_dir,
-                                        &release.asset.name,
-                                        config.download_cache_limit,
-                                    ) {
-                                        Ok(removed) => {
-                                            for archive in removed {
-                                                let _ = diagnostics::write(
-                                                    install_dir,
-                                                    diagnostics::LogLevel::Info,
-                                                    &format!(
-                                                        "Removed cached archive {}.",
-                                                        archive.display()
-                                                    ),
-                                                );
-                                            }
-                                        }
-                                        Err(error) => {
-                                            let _ = diagnostics::write(
-                                                install_dir,
-                                                diagnostics::LogLevel::Warn,
-                                                &error,
-                                            );
-                                        }
-                                    }
-                                    let message = format!(
-                                        "Installed {}. Previous version: {}",
-                                        installed.active.version,
-                                        installed
-                                            .previous
-                                            .as_ref()
-                                            .map(|previous| previous.version.as_str())
-                                            .unwrap_or("none")
-                                    );
-                                    let _ = diagnostics::write(
-                                        install_dir,
-                                        diagnostics::LogLevel::Info,
-                                        &message,
-                                    );
-                                    message
-                                }
-                                Err(error) => error,
-                            }
+                            message
                         }
                         Err(error) => error,
                     }
@@ -2604,6 +3006,932 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+fn start_version_history_refresh(
+    ui: &AppWindow,
+    config: LauncherConfig,
+    release_source: ReleaseSource,
+    drh_version_history: Arc<Mutex<Vec<PlatformReleaseHistoryEntry>>>,
+    launcher_version_history: Arc<Mutex<Vec<RepositoryRelease>>>,
+    pending_drh_version_install: Arc<Mutex<Option<String>>>,
+) {
+    log_for_config(
+        &config,
+        diagnostics::LogLevel::Info,
+        "Checking release history.",
+    );
+    ui.set_refresh_version_history_enabled(false);
+    ui.set_version_history_loading(true);
+    ui.set_version_history_status("".into());
+    ui.set_selected_version_action_enabled(false);
+
+    let ui = ui.as_weak();
+    thread::spawn(move || {
+        let platform = Platform::current();
+        let drh_result = discover_platform_release_history(&release_source, platform);
+        let launcher_source = ReleaseSource::launcher();
+        let launcher_result = discover_repository_release_history(&launcher_source);
+
+        let log_status = match (&drh_result, &launcher_result) {
+            (Ok(drh), Ok(launcher)) => {
+                format!(
+                    "Loaded {} DRH release(s) and {} DRH Launcher release(s).",
+                    drh.len(),
+                    launcher.len()
+                )
+            }
+            (Err(drh_error), Ok(launcher)) => {
+                format!(
+                    "Loaded {} DRH Launcher release(s), but DRH history failed: {drh_error}",
+                    launcher.len()
+                )
+            }
+            (Ok(drh), Err(launcher_error)) => {
+                format!(
+                    "Loaded {} DRH release(s), but DRH Launcher history failed: {launcher_error}",
+                    drh.len()
+                )
+            }
+            (Err(drh_error), Err(launcher_error)) => {
+                format!(
+                    "Could not load release history. DRH: {drh_error}. DRH Launcher: {launcher_error}"
+                )
+            }
+        };
+        let status = match (&drh_result, &launcher_result) {
+            (Ok(_), Ok(_)) => String::new(),
+            (Err(drh_error), Ok(_)) => {
+                format!("Could not load DRH releases: {drh_error}")
+            }
+            (Ok(_), Err(launcher_error)) => {
+                format!("Could not load DRH Launcher releases: {launcher_error}")
+            }
+            (Err(drh_error), Err(launcher_error)) => {
+                format!(
+                    "Could not load release history. DRH: {drh_error}. DRH Launcher: {launcher_error}"
+                )
+            }
+        };
+        let level = if drh_result.is_ok() || launcher_result.is_ok() {
+            diagnostics::LogLevel::Info
+        } else {
+            diagnostics::LogLevel::Error
+        };
+        log_for_config(&config, level, &log_status);
+
+        let drh_entries = drh_result.ok();
+        let launcher_entries = launcher_result.ok();
+
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            if let Some(entries) = drh_entries {
+                drh_version_history
+                    .lock()
+                    .expect("DRH version history lock poisoned")
+                    .clone_from(&entries);
+            }
+            if let Some(entries) = launcher_entries {
+                launcher_version_history
+                    .lock()
+                    .expect("launcher version history lock poisoned")
+                    .clone_from(&entries);
+            }
+            pending_drh_version_install
+                .lock()
+                .expect("pending DRH version install lock poisoned")
+                .take();
+            ui.set_version_history_status(status.into());
+            ui.set_version_history_loading(false);
+            ui.set_refresh_version_history_enabled(true);
+            refresh_version_history_selection(
+                &ui,
+                &config,
+                &drh_version_history,
+                &launcher_version_history,
+                &pending_drh_version_install,
+            );
+        });
+    });
+}
+
+fn refresh_version_history_selection(
+    ui: &AppWindow,
+    config: &LauncherConfig,
+    drh_version_history: &Arc<Mutex<Vec<PlatformReleaseHistoryEntry>>>,
+    launcher_version_history: &Arc<Mutex<Vec<RepositoryRelease>>>,
+    pending_drh_version_install: &Arc<Mutex<Option<String>>>,
+) {
+    let drh_entries = drh_version_history
+        .lock()
+        .expect("DRH version history lock poisoned")
+        .clone();
+    let launcher_entries = launcher_version_history
+        .lock()
+        .expect("launcher version history lock poisoned")
+        .clone();
+    let pending_version = pending_drh_version_install
+        .lock()
+        .expect("pending DRH version install lock poisoned")
+        .clone();
+
+    let drh_views = drh_entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| drh_version_entry_view(config, entry, index))
+        .collect::<Vec<_>>();
+    ui.set_drh_version_list_label(release_list_label("DRH releases", drh_views.len()).into());
+    ui.set_drh_version_entries(ModelRc::new(VecModel::from(drh_views)));
+
+    let launcher_views = launcher_entries
+        .iter()
+        .enumerate()
+        .map(|(index, release)| launcher_version_entry_view(release, index))
+        .collect::<Vec<_>>();
+    ui.set_launcher_version_list_label(
+        release_list_label("DRH Launcher releases", launcher_views.len()).into(),
+    );
+    ui.set_launcher_version_entries(ModelRc::new(VecModel::from(launcher_views)));
+
+    apply_selected_version_view(
+        ui,
+        config,
+        &drh_entries,
+        &launcher_entries,
+        pending_version.as_deref(),
+    );
+}
+
+fn refresh_selected_version_view(
+    ui: &AppWindow,
+    config: &LauncherConfig,
+    drh_version_history: &Arc<Mutex<Vec<PlatformReleaseHistoryEntry>>>,
+    launcher_version_history: &Arc<Mutex<Vec<RepositoryRelease>>>,
+    pending_drh_version_install: &Arc<Mutex<Option<String>>>,
+) {
+    let drh_entries = drh_version_history
+        .lock()
+        .expect("DRH version history lock poisoned")
+        .clone();
+    let launcher_entries = launcher_version_history
+        .lock()
+        .expect("launcher version history lock poisoned")
+        .clone();
+    let pending_version = pending_drh_version_install
+        .lock()
+        .expect("pending DRH version install lock poisoned")
+        .clone();
+
+    apply_selected_version_view(
+        ui,
+        config,
+        &drh_entries,
+        &launcher_entries,
+        pending_version.as_deref(),
+    );
+}
+
+fn apply_selected_version_view(
+    ui: &AppWindow,
+    config: &LauncherConfig,
+    drh_entries: &[PlatformReleaseHistoryEntry],
+    launcher_entries: &[RepositoryRelease],
+    pending_version: Option<&str>,
+) {
+    if ui.get_version_history_page() == 0 {
+        let Some(index) =
+            normalize_selected_index(ui.get_selected_drh_version_index(), drh_entries.len())
+        else {
+            ui.set_selected_drh_version_index(-1);
+            clear_selected_version_view(ui);
+            return;
+        };
+        ui.set_selected_drh_version_index(index as i32);
+        apply_selected_drh_version_view(ui, config, &drh_entries[index], pending_version);
+    } else {
+        let Some(index) = normalize_selected_index(
+            ui.get_selected_launcher_version_index(),
+            launcher_entries.len(),
+        ) else {
+            ui.set_selected_launcher_version_index(-1);
+            clear_selected_version_view(ui);
+            return;
+        };
+        ui.set_selected_launcher_version_index(index as i32);
+        apply_selected_launcher_version_view(ui, &launcher_entries[index], index);
+    }
+}
+
+fn normalize_selected_index(current: i32, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    if current < 0 || current as usize >= len {
+        Some(0)
+    } else {
+        Some(current as usize)
+    }
+}
+
+fn release_list_label(label: &str, count: usize) -> String {
+    format!("{label} ({count})")
+}
+
+fn clear_selected_version_view(ui: &AppWindow) {
+    ui.set_selected_version_title("No release selected".into());
+    ui.set_selected_version_detail("".into());
+    ui.set_selected_version_changelog_blocks(ModelRc::new(VecModel::from(markdown_blocks(
+        "Select a release to read its changelog.",
+    ))));
+    ui.set_selected_version_release_enabled(false);
+    ui.set_selected_version_action_text("Install selected version".into());
+    ui.set_selected_version_action_enabled(false);
+    ui.set_selected_version_replace_confirmation_visible(false);
+}
+
+fn drh_version_entry_view(
+    config: &LauncherConfig,
+    entry: &PlatformReleaseHistoryEntry,
+    index: usize,
+) -> VersionEntryView {
+    VersionEntryView {
+        title: release_title(&entry.release.version, &entry.release.name).into(),
+        detail: drh_version_entry_detail(entry).into(),
+        status: drh_version_status(config, entry, index).into(),
+    }
+}
+
+fn launcher_version_entry_view(release: &RepositoryRelease, index: usize) -> VersionEntryView {
+    VersionEntryView {
+        title: release_title(&release.version, &release.name).into(),
+        detail: repository_release_detail(release).into(),
+        status: launcher_version_status(release, index).into(),
+    }
+}
+
+fn apply_selected_drh_version_view(
+    ui: &AppWindow,
+    config: &LauncherConfig,
+    entry: &PlatformReleaseHistoryEntry,
+    pending_version: Option<&str>,
+) {
+    let (action_text, action_enabled, confirmation_visible) =
+        selected_drh_version_action(config, entry, pending_version, version_action_blocker(ui));
+    ui.set_selected_version_title(
+        release_title(&entry.release.version, &entry.release.name).into(),
+    );
+    ui.set_selected_version_detail(selected_drh_version_detail(entry).into());
+    ui.set_selected_version_changelog_blocks(ModelRc::new(VecModel::from(markdown_blocks(
+        &entry.release.body,
+    ))));
+    ui.set_selected_version_release_enabled(true);
+    ui.set_selected_version_action_text(action_text.into());
+    ui.set_selected_version_action_enabled(action_enabled);
+    ui.set_selected_version_replace_confirmation_visible(confirmation_visible);
+}
+
+fn apply_selected_launcher_version_view(ui: &AppWindow, release: &RepositoryRelease, index: usize) {
+    let mut detail = repository_release_detail(release);
+    let status = launcher_version_status(release, index);
+    if !status.is_empty() {
+        detail = format!("{detail} · {status}");
+    }
+
+    ui.set_selected_version_title(release_title(&release.version, &release.name).into());
+    ui.set_selected_version_detail(detail.into());
+    ui.set_selected_version_changelog_blocks(ModelRc::new(VecModel::from(markdown_blocks(
+        &release.body,
+    ))));
+    ui.set_selected_version_release_enabled(true);
+    ui.set_selected_version_action_text("Use Home update banner".into());
+    ui.set_selected_version_action_enabled(false);
+    ui.set_selected_version_replace_confirmation_visible(false);
+}
+
+fn selected_drh_history_entry(
+    ui: &AppWindow,
+    drh_version_history: &Arc<Mutex<Vec<PlatformReleaseHistoryEntry>>>,
+) -> Option<PlatformReleaseHistoryEntry> {
+    let index = ui.get_selected_drh_version_index();
+    if index < 0 {
+        return None;
+    }
+    drh_version_history
+        .lock()
+        .expect("DRH version history lock poisoned")
+        .get(index as usize)
+        .cloned()
+}
+
+fn selected_history_blocked_update_version(
+    latest_version: Option<&str>,
+    selected_version: &str,
+) -> Option<String> {
+    latest_version
+        .filter(|latest_version| latest_version.trim() != selected_version.trim())
+        .map(ToOwned::to_owned)
+}
+
+fn latest_drh_release_version_for_update_block(
+    latest_release: &Arc<Mutex<Option<PlatformRelease>>>,
+    release_source: &ReleaseSource,
+) -> Option<String> {
+    let cached = latest_release
+        .lock()
+        .expect("latest release lock poisoned")
+        .as_ref()
+        .map(|release| release.version.clone());
+    cached.or_else(|| {
+        discover_latest_platform_release(release_source, Platform::current())
+            .ok()
+            .map(|release| release.version)
+    })
+}
+
+fn selected_version_release_url(
+    ui: &AppWindow,
+    drh_version_history: &Arc<Mutex<Vec<PlatformReleaseHistoryEntry>>>,
+    launcher_version_history: &Arc<Mutex<Vec<RepositoryRelease>>>,
+) -> Option<String> {
+    if ui.get_version_history_page() == 0 {
+        selected_drh_history_entry(ui, drh_version_history).map(|entry| entry.release.html_url)
+    } else {
+        let index = ui.get_selected_launcher_version_index();
+        if index < 0 {
+            return None;
+        }
+        launcher_version_history
+            .lock()
+            .expect("launcher version history lock poisoned")
+            .get(index as usize)
+            .map(|release| release.html_url.clone())
+    }
+}
+
+fn drh_version_entry_detail(entry: &PlatformReleaseHistoryEntry) -> String {
+    let mut parts = vec![release_date(&entry.release)];
+    if entry.release.prerelease {
+        parts.push("pre-release".to_string());
+    }
+    match &entry.platform_release {
+        Some(release) => {
+            parts.push(format_bytes(release.asset.size));
+            parts.push(release.metadata_source.label().to_string());
+        }
+        None if entry.manifest_available => {
+            parts.push("manifest metadata".to_string());
+        }
+        None => parts.push(format!("no {} package", Platform::current().id())),
+    }
+    parts.join(" · ")
+}
+
+fn selected_drh_version_detail(entry: &PlatformReleaseHistoryEntry) -> String {
+    let mut parts = vec![format!("Published: {}", release_date(&entry.release))];
+    if entry.release.prerelease {
+        parts.push("Pre-release".to_string());
+    }
+    match &entry.platform_release {
+        Some(release) => {
+            parts.push(format!("Asset: {}", release.asset.name));
+            parts.push(format!("Size: {}", format_bytes(release.asset.size)));
+            parts.push(format!("Metadata: {}", release.metadata_source.label()));
+        }
+        None if entry.manifest_available => {
+            parts.push(
+                "Package details will be resolved from the release manifest before install."
+                    .to_string(),
+            );
+        }
+        None => {
+            parts.push(format!(
+                "Unavailable on {}: {}",
+                Platform::current().id(),
+                entry
+                    .unsupported_reason
+                    .as_deref()
+                    .unwrap_or("no compatible package was found")
+            ));
+        }
+    }
+    parts.join("\n")
+}
+
+fn repository_release_detail(release: &RepositoryRelease) -> String {
+    let mut parts = vec![release_date(release)];
+    if release.prerelease {
+        parts.push("pre-release".to_string());
+    }
+    parts.join(" · ")
+}
+
+fn drh_version_status(
+    config: &LauncherConfig,
+    entry: &PlatformReleaseHistoryEntry,
+    index: usize,
+) -> String {
+    if installed_active_release_version(config)
+        .as_deref()
+        .is_some_and(|version| version.trim() == entry.release.version.trim())
+        || restore_previous_release_version(config)
+            .as_deref()
+            .is_some_and(|version| version.trim() == entry.release.version.trim())
+    {
+        "Installed".to_string()
+    } else if entry.platform_release.is_none() && !entry.manifest_available {
+        "Unavailable".to_string()
+    } else if entry.platform_release.is_none() && entry.manifest_available {
+        "Manifest".to_string()
+    } else if index == 0 {
+        "Latest".to_string()
+    } else if entry.release.prerelease {
+        "Pre-release".to_string()
+    } else {
+        "Older".to_string()
+    }
+}
+
+fn launcher_version_status(release: &RepositoryRelease, index: usize) -> String {
+    if normalized_version_tag(&release.version) == normalized_version_tag(env!("CARGO_PKG_VERSION"))
+    {
+        "Current".to_string()
+    } else if index == 0 {
+        "Latest".to_string()
+    } else if release.prerelease {
+        "Pre-release".to_string()
+    } else {
+        "Older".to_string()
+    }
+}
+
+fn selected_drh_version_action(
+    config: &LauncherConfig,
+    entry: &PlatformReleaseHistoryEntry,
+    pending_version: Option<&str>,
+    blocker: Option<&str>,
+) -> (String, bool, bool) {
+    if entry.platform_release.is_none() && !entry.manifest_available {
+        return ("Unavailable".to_string(), false, false);
+    }
+
+    let version = entry.release.version.as_str();
+    match installed_active_release_version(config) {
+        Some(installed) if installed.trim() == version.trim() => {
+            ("Installed".to_string(), false, false)
+        }
+        _ if restore_previous_release_version(config)
+            .as_deref()
+            .is_some_and(|previous| previous.trim() == version.trim()) =>
+        {
+            ("Use Restore".to_string(), false, false)
+        }
+        _ if let Some(blocker) = blocker => (blocker.to_string(), false, false),
+        Some(_) if pending_version == Some(version) => (format!("Install {version}"), true, true),
+        Some(_) => (format!("Install {version}"), true, false),
+        None => (format!("Install {version}"), true, false),
+    }
+}
+
+fn version_action_blocker(ui: &AppWindow) -> Option<&'static str> {
+    let install_action = ui.get_install_action_text();
+    if install_action == InstallState::Updating.primary_action() {
+        Some("Installing...")
+    } else if install_action == InstallState::Playing.primary_action() {
+        Some("Stop DRH first")
+    } else {
+        None
+    }
+}
+
+fn release_title(version: &str, name: &str) -> String {
+    let name = name.trim();
+    if name.is_empty() || name == version || name.contains(version) {
+        if name.is_empty() {
+            version.to_string()
+        } else {
+            name.to_string()
+        }
+    } else {
+        format!("{version} - {name}")
+    }
+}
+
+fn release_date(release: &RepositoryRelease) -> String {
+    release
+        .published_at
+        .as_deref()
+        .filter(|published_at| published_at.len() >= 10)
+        .map(|published_at| published_at[..10].to_string())
+        .or_else(|| release.published_at.clone())
+        .unwrap_or_else(|| "unknown date".to_string())
+}
+
+fn markdown_blocks(body: &str) -> Vec<MarkdownBlockView> {
+    let body = body.trim().replace("\r\n", "\n");
+    if body.is_empty() {
+        return vec![markdown_block(
+            "No changelog was provided for this release.",
+            MarkdownBlockKind::Paragraph,
+        )];
+    }
+
+    let mut renderer = MarkdownRenderer::default();
+    let options = Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TABLES
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_GFM;
+    for event in Parser::new_ext(&body, options) {
+        renderer.push_event(event);
+    }
+    renderer.finish()
+}
+
+fn normalized_version_tag(version: &str) -> &str {
+    version.trim().trim_start_matches('v')
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MarkdownBlockKind {
+    Paragraph = 0,
+    Heading1 = 1,
+    Heading2 = 2,
+    Heading3 = 3,
+    Bullet = 4,
+    Numbered = 5,
+    Code = 6,
+    Quote = 7,
+    Rule = 8,
+    Image = 9,
+}
+
+impl MarkdownBlockKind {
+    fn from_heading(level: HeadingLevel) -> Self {
+        match level {
+            HeadingLevel::H1 => Self::Heading1,
+            HeadingLevel::H2 => Self::Heading2,
+            HeadingLevel::H3 | HeadingLevel::H4 | HeadingLevel::H5 | HeadingLevel::H6 => {
+                Self::Heading3
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct MarkdownRenderer {
+    blocks: Vec<MarkdownBlockView>,
+    current: Option<MarkdownBlockBuilder>,
+    list_stack: Vec<Option<u64>>,
+    capture_stack: Vec<MarkdownCapture>,
+    link_stack: Vec<String>,
+    quote_depth: usize,
+}
+
+impl MarkdownRenderer {
+    fn push_event(&mut self, event: Event<'_>) {
+        match event {
+            Event::Start(tag) => self.start_tag(tag),
+            Event::End(tag) => self.end_tag(tag),
+            Event::Text(text) => self.push_text(&text),
+            Event::Code(code) => self.push_inline_code(&code),
+            Event::InlineMath(math) => self.push_text(&format!("${math}$")),
+            Event::DisplayMath(math) => self.push_text(&format!("$$\n{math}\n$$")),
+            Event::Html(html) | Event::InlineHtml(html) => self.push_text(&html),
+            Event::FootnoteReference(reference) => self.push_text(&format!("[^{reference}]")),
+            Event::SoftBreak => self.push_text(" "),
+            Event::HardBreak => self.push_text("\n"),
+            Event::Rule => {
+                self.flush_current();
+                self.blocks
+                    .push(markdown_block("", MarkdownBlockKind::Rule));
+            }
+            Event::TaskListMarker(checked) => {
+                self.push_text(if checked { "[x] " } else { "[ ] " });
+            }
+        }
+    }
+
+    fn start_tag(&mut self, tag: Tag<'_>) {
+        match tag {
+            Tag::Paragraph => {
+                if self.current.is_none() {
+                    self.start_block(if self.quote_depth > 0 {
+                        MarkdownBlockKind::Quote
+                    } else {
+                        MarkdownBlockKind::Paragraph
+                    });
+                }
+            }
+            Tag::Heading { level, .. } => self.start_block(MarkdownBlockKind::from_heading(level)),
+            Tag::BlockQuote(_) => {
+                self.flush_current();
+                self.quote_depth += 1;
+            }
+            Tag::CodeBlock(kind) => {
+                self.start_block(MarkdownBlockKind::Code);
+                if let CodeBlockKind::Fenced(language) = kind {
+                    let language = language.trim();
+                    if !language.is_empty() {
+                        self.push_raw_text(language);
+                        self.push_raw_text("\n");
+                    }
+                }
+            }
+            Tag::List(start) => {
+                self.flush_current();
+                self.list_stack.push(start);
+            }
+            Tag::Item => {
+                self.flush_current();
+                let depth = self.list_stack.len().saturating_sub(1);
+                let indent = "  ".repeat(depth);
+                if let Some(Some(number)) = self.list_stack.last_mut() {
+                    let current = *number;
+                    *number += 1;
+                    self.start_block(MarkdownBlockKind::Numbered);
+                    self.push_raw_text(&format!("{indent}{current}. "));
+                } else {
+                    self.start_block(MarkdownBlockKind::Bullet);
+                    self.push_raw_text(&format!("{indent}• "));
+                }
+            }
+            Tag::Link { dest_url, .. } => {
+                self.push_raw_text("[");
+                self.link_stack.push(dest_url.to_string());
+            }
+            Tag::Image { dest_url, .. } => {
+                self.capture_stack
+                    .push(MarkdownCapture::new(MarkdownCaptureKind::Image, &dest_url));
+            }
+            Tag::Table(_)
+            | Tag::TableHead
+            | Tag::TableRow
+            | Tag::TableCell
+            | Tag::DefinitionList
+            | Tag::DefinitionListTitle
+            | Tag::DefinitionListDefinition
+            | Tag::FootnoteDefinition(_)
+            | Tag::MetadataBlock(_) => {
+                if self.current.is_none() {
+                    self.start_block(MarkdownBlockKind::Paragraph);
+                }
+            }
+            Tag::Emphasis => self.push_raw_text("*"),
+            Tag::Strong => self.push_raw_text("**"),
+            Tag::Strikethrough => self.push_raw_text("~~"),
+            Tag::Superscript | Tag::Subscript => {}
+            Tag::HtmlBlock => self.start_block(MarkdownBlockKind::Code),
+        }
+    }
+
+    fn end_tag(&mut self, tag: TagEnd) {
+        match tag {
+            TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::CodeBlock | TagEnd::Item => {
+                self.flush_current();
+            }
+            TagEnd::BlockQuote(_) => {
+                self.flush_current();
+                self.quote_depth = self.quote_depth.saturating_sub(1);
+            }
+            TagEnd::List(_) => {
+                self.flush_current();
+                self.list_stack.pop();
+            }
+            TagEnd::Link => {
+                let url = self.link_stack.pop().unwrap_or_default();
+                self.push_raw_text(&format!("]({})", escape_markdown_link_url(&url)));
+            }
+            TagEnd::Image => self.finish_capture(MarkdownCaptureKind::Image),
+            TagEnd::TableRow => {
+                self.push_text("\n");
+            }
+            TagEnd::TableCell => {
+                self.push_text("  ");
+            }
+            TagEnd::HtmlBlock
+            | TagEnd::FootnoteDefinition
+            | TagEnd::DefinitionList
+            | TagEnd::DefinitionListTitle
+            | TagEnd::DefinitionListDefinition
+            | TagEnd::Table
+            | TagEnd::TableHead
+            | TagEnd::Superscript
+            | TagEnd::Subscript
+            | TagEnd::MetadataBlock(_) => {}
+            TagEnd::Emphasis => self.push_raw_text("*"),
+            TagEnd::Strong => self.push_raw_text("**"),
+            TagEnd::Strikethrough => self.push_raw_text("~~"),
+        }
+    }
+
+    fn start_block(&mut self, kind: MarkdownBlockKind) {
+        self.flush_current();
+        self.current = Some(MarkdownBlockBuilder {
+            text: String::new(),
+            kind,
+        });
+    }
+
+    fn push_text(&mut self, text: &str) {
+        if let Some(capture) = self.capture_stack.last_mut() {
+            capture.text.push_str(text);
+            if capture.kind == MarkdownCaptureKind::Image {
+                return;
+            }
+        }
+
+        let text = if self
+            .current
+            .as_ref()
+            .is_some_and(|current| current.kind == MarkdownBlockKind::Code)
+        {
+            text.to_string()
+        } else {
+            escape_markdown_text(text)
+        };
+        self.push_raw_text(&text);
+    }
+
+    fn push_raw_text(&mut self, text: &str) {
+        if self.current.is_none() {
+            self.start_block(if self.quote_depth > 0 {
+                MarkdownBlockKind::Quote
+            } else {
+                MarkdownBlockKind::Paragraph
+            });
+        }
+        if let Some(current) = &mut self.current {
+            current.text.push_str(text);
+        }
+    }
+
+    fn push_inline_code(&mut self, code: &str) {
+        if let Some(capture) = self.capture_stack.last_mut() {
+            capture.text.push_str(code);
+            if capture.kind == MarkdownCaptureKind::Image {
+                return;
+            }
+        }
+
+        if !code.is_empty() {
+            self.push_raw_text("`");
+            self.push_raw_text(&escape_markdown_code_span(code));
+            self.push_raw_text("`");
+        }
+    }
+
+    fn finish_capture(&mut self, kind: MarkdownCaptureKind) {
+        let Some(capture) = self.capture_stack.pop() else {
+            return;
+        };
+        if capture.kind != kind {
+            return;
+        }
+
+        let label = capture.text.trim();
+        let target = capture.target.trim();
+        if target.is_empty() {
+            return;
+        }
+
+        if kind == MarkdownCaptureKind::Image {
+            self.flush_current();
+            let label = if label.is_empty() { "Image" } else { label };
+            self.blocks.push(markdown_target_block(
+                &format!("Image: {label}"),
+                target,
+                MarkdownBlockKind::Image,
+            ));
+        }
+    }
+
+    fn flush_current(&mut self) {
+        if let Some(current) = self.current.take() {
+            let text = current.text.trim();
+            if !text.is_empty() {
+                self.blocks.push(markdown_block(text, current.kind));
+            }
+        }
+    }
+
+    fn finish(mut self) -> Vec<MarkdownBlockView> {
+        self.flush_current();
+        if self.blocks.is_empty() {
+            self.blocks.push(markdown_block(
+                "No changelog was provided for this release.",
+                MarkdownBlockKind::Paragraph,
+            ));
+        }
+        self.blocks
+    }
+}
+
+struct MarkdownBlockBuilder {
+    text: String,
+    kind: MarkdownBlockKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MarkdownCaptureKind {
+    Image,
+}
+
+struct MarkdownCapture {
+    kind: MarkdownCaptureKind,
+    target: String,
+    text: String,
+}
+
+impl MarkdownCapture {
+    fn new(kind: MarkdownCaptureKind, target: &str) -> Self {
+        Self {
+            kind,
+            target: target.to_string(),
+            text: String::new(),
+        }
+    }
+}
+
+fn markdown_block(text: &str, kind: MarkdownBlockKind) -> MarkdownBlockView {
+    markdown_target_block(text, "", kind)
+}
+
+fn markdown_target_block(text: &str, target: &str, kind: MarkdownBlockKind) -> MarkdownBlockView {
+    MarkdownBlockView {
+        text: markdown_block_text(text, kind),
+        kind: kind as i32,
+        target: target.into(),
+    }
+}
+
+fn markdown_block_text(text: &str, kind: MarkdownBlockKind) -> StyledText {
+    if kind == MarkdownBlockKind::Code || kind == MarkdownBlockKind::Image {
+        return string_to_styled_text(text.to_string());
+    }
+
+    StyledText::parse_interpolated(text, &[] as &[StyledText])
+        .unwrap_or_else(|_| string_to_styled_text(unescape_markdown_text(text)))
+}
+
+fn escape_markdown_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        if matches!(
+            character,
+            '\\' | '`'
+                | '*'
+                | '_'
+                | '{'
+                | '}'
+                | '['
+                | ']'
+                | '('
+                | ')'
+                | '#'
+                | '+'
+                | '-'
+                | '.'
+                | '!'
+                | '<'
+                | '>'
+                | '~'
+                | '|'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
+fn escape_markdown_code_span(text: &str) -> String {
+    text.replace('`', "'")
+}
+
+fn escape_markdown_link_url(url: &str) -> String {
+    url.replace(')', "%29")
+}
+
+fn unescape_markdown_text(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut escaped = false;
+    for character in text.chars() {
+        if escaped {
+            plain.push(character);
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else {
+            plain.push(character);
+        }
+    }
+    if escaped {
+        plain.push('\\');
+    }
+    plain
+}
+
 fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
     let status = inspect_install(config.install_dir.as_deref());
 
@@ -3085,6 +4413,36 @@ mod home_support_text_tests {
     }
 
     #[test]
+    fn renders_markdown_changelog_as_display_blocks() {
+        let blocks = markdown_blocks(
+            r#"# V2
+
+Changes:
+
+- Added **feature**
+- Fixed [bug](https://example.test/bug) with `--safe-mode`
+
+![Preview](https://example.test/preview.png)
+
+```text
+code sample
+```
+"#,
+        );
+
+        assert_eq!(blocks[0].kind, MarkdownBlockKind::Heading1 as i32);
+        assert_eq!(blocks[1].kind, MarkdownBlockKind::Paragraph as i32);
+        assert_eq!(blocks[2].kind, MarkdownBlockKind::Bullet as i32);
+        assert_eq!(blocks[3].kind, MarkdownBlockKind::Bullet as i32);
+        assert!(format!("{:?}", blocks[3].text).contains("Fixed bug with --safe-mode"));
+        assert!(format!("{:?}", blocks[3].text).contains("https://example.test/bug"));
+        assert_eq!(blocks[4].target, "https://example.test/preview.png");
+        assert_eq!(blocks[4].kind, MarkdownBlockKind::Image as i32);
+        assert!(format!("{:?}", blocks[5].text).contains("text\\ncode sample"));
+        assert_eq!(blocks[5].kind, MarkdownBlockKind::Code as i32);
+    }
+
+    #[test]
     fn splits_long_display_lines_without_losing_unicode_content() {
         let line = "é".repeat(11);
         let segments = split_display_line(&line, 4);
@@ -3185,6 +4543,48 @@ mod home_support_text_tests {
     }
 
     #[test]
+    fn historical_install_blocks_latest_loaded_release() {
+        assert_eq!(
+            selected_history_blocked_update_version(Some("V10"), "V7"),
+            Some("V10".to_string())
+        );
+        assert_eq!(
+            selected_history_blocked_update_version(Some("V10"), "V10"),
+            None
+        );
+        assert_eq!(selected_history_blocked_update_version(None, "V7"), None);
+    }
+
+    #[test]
+    fn marks_active_and_previous_history_versions_as_installed() {
+        let temp = tempdir().unwrap();
+        InstalledState {
+            active: test_installed_release("V7"),
+            previous: Some(test_installed_release("V10")),
+            blocked_update_version: Some("V10".to_string()),
+        }
+        .save(temp.path())
+        .unwrap();
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().to_path_buf()),
+            ..LauncherConfig::default()
+        };
+        let active_entry = test_history_entry("V7");
+        let previous_entry = test_history_entry("V10");
+
+        assert_eq!(drh_version_status(&config, &active_entry, 1), "Installed");
+        assert_eq!(drh_version_status(&config, &previous_entry, 0), "Installed");
+        assert_eq!(
+            selected_drh_version_action(&config, &active_entry, None, None),
+            ("Installed".to_string(), false, false)
+        );
+        assert_eq!(
+            selected_drh_version_action(&config, &previous_entry, None, None),
+            ("Use Restore".to_string(), false, false)
+        );
+    }
+
+    #[test]
     fn keeps_restore_visible_when_previous_directory_is_broken() {
         let temp = tempdir().unwrap();
         InstalledState {
@@ -3217,6 +4617,22 @@ mod home_support_text_tests {
                 size: 123,
                 digest: Some("sha256:abc123".to_string()),
             },
+        }
+    }
+
+    fn test_history_entry(version: &str) -> PlatformReleaseHistoryEntry {
+        PlatformReleaseHistoryEntry {
+            release: RepositoryRelease {
+                version: version.to_string(),
+                name: format!("Dungeon Rampage Haxe {version}"),
+                html_url: format!("https://example.test/{version}"),
+                body: format!("Changelog for {version}"),
+                published_at: Some("2026-01-01T00:00:00Z".to_string()),
+                prerelease: false,
+            },
+            platform_release: Some(test_release(version)),
+            manifest_available: false,
+            unsupported_reason: None,
         }
     }
 
