@@ -150,146 +150,23 @@ jobs:
   package:
     name: Package ${{ matrix.kind }} ${{ matrix.name }}
     needs: prepare
-    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.package_matrix) }}
-
-    env:
-      DRHL_UPDATE_ENDPOINT: ${{ matrix.update_endpoint }}
-      DRHL_UPDATE_PUBLIC_KEY: ${{ vars.DRHL_UPDATE_PUBLIC_KEY }}
-      DRHL_PACKAGE_VERSION: ${{ matrix.version }}
-
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-
-      - name: Validate test package configuration
-        shell: bash
-        env:
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
-        run: |
-          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY"
-          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD"
-          test -n "$DRHL_UPDATE_PUBLIC_KEY"
-          test -n "$DRHL_UPDATE_ENDPOINT"
-
-      - name: Set package version
-        shell: python
-        run: |
-          import os
-          import re
-          from pathlib import Path
-
-          version = os.environ["DRHL_PACKAGE_VERSION"]
-          cargo_toml = Path("Cargo.toml")
-          cargo_text, cargo_count = re.subn(
-              r'(?m)^version = "[^"]+"',
-              f'version = "{version}"',
-              cargo_toml.read_text(encoding="utf-8"),
-              count=1,
-          )
-          if cargo_count != 1:
-              raise SystemExit("Could not update Cargo.toml package version")
-          cargo_toml.write_text(cargo_text, encoding="utf-8")
-
-          cargo_lock = Path("Cargo.lock")
-          lock_text, lock_count = re.subn(
-              r'(?m)(\[\[package\]\]\nname = "drh_launcher"\nversion = ")[^"]+(")',
-              lambda match: f"{match.group(1)}{version}{match.group(2)}",
-              cargo_lock.read_text(encoding="utf-8"),
-              count=1,
-          )
-          if lock_count != 1:
-              raise SystemExit("Could not update Cargo.lock package version")
-          cargo_lock.write_text(lock_text, encoding="utf-8")
-
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: test-packages-${{ matrix.kind }}-${{ matrix.platform }}-${{ matrix.version }}
-
-      - name: Install cargo-packager
-        run: cargo install cargo-packager --version 0.11.8 --locked
-
-      - name: Build Linux package
-        if: matrix.platform == 'linux'
-        run: cargo build --release --locked
-
-      - name: Package Linux
-        if: matrix.platform == 'linux'
-        run: cargo packager --release --formats appimage --out-dir dist
-
-      - name: Sign Linux update package
-        if: matrix.kind == 'update' && matrix.platform == 'linux'
-        env:
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
-        run: |
-          artifacts=(dist/*.AppImage)
-          test "${#artifacts[@]}" -eq 1
-          cargo packager signer sign "${artifacts[0]}"
-
-      - name: Build Windows package
-        if: matrix.platform == 'windows'
-        run: cargo build --release --locked
-
-      - name: Package Windows
-        if: matrix.platform == 'windows'
-        run: cargo packager --release --formats nsis --out-dir dist
-
-      - name: Sign Windows update package
-        if: matrix.kind == 'update' && matrix.platform == 'windows'
-        env:
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
-        shell: pwsh
-        run: |
-          $artifacts = @(Get-ChildItem dist -Filter *.exe)
-          if ($artifacts.Count -ne 1) {
-            throw "Expected one NSIS installer, found $($artifacts.Count)"
-          }
-          cargo packager signer sign $artifacts[0].FullName
-
-      - name: Build universal macOS package
-        if: matrix.platform == 'macos'
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "11.0"
-        run: |
-          rustup target add x86_64-apple-darwin aarch64-apple-darwin
-          cargo build --release --locked --target x86_64-apple-darwin
-          cargo build --release --locked --target aarch64-apple-darwin
-          mkdir -p target/universal-apple-darwin/release
-          lipo -create \
-            target/x86_64-apple-darwin/release/DRH-Launcher \
-            target/aarch64-apple-darwin/release/DRH-Launcher \
-            -output target/universal-apple-darwin/release/DRH-Launcher
-
-      - name: Package macOS
-        if: matrix.platform == 'macos'
-        run: |
-          cargo packager \
-              --release \
-              --target universal-apple-darwin \
-              --formats app,dmg \
-              --out-dir dist
-
-      - name: Create and sign macOS update package
-        if: matrix.kind == 'update' && matrix.platform == 'macos'
-        env:
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
-          COPYFILE_DISABLE: "1"
-        run: |
-          tar -czf "dist/DRH Launcher.app.tar.gz" -C dist "DRH Launcher.app"
-          cargo packager signer sign "dist/DRH Launcher.app.tar.gz"
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: drhl-test-${{ matrix.kind }}-${{ matrix.platform }}
-          path: ${{ matrix.upload_pattern }}
-          if-no-files-found: error
+    uses: ./.github/workflows/package-drhl.yml
+    with:
+      artifact_name: drhl-test-${{ matrix.kind }}-${{ matrix.platform }}
+      cache_key: test-packages-${{ matrix.kind }}-${{ matrix.platform }}-${{ matrix.version }}
+      package_kind: ${{ matrix.kind }}
+      package_name: ${{ matrix.kind }} ${{ matrix.name }}
+      package_version: ${{ matrix.version }}
+      platform: ${{ matrix.platform }}
+      runner: ${{ matrix.runner }}
+      sign_update_package: ${{ matrix.kind == 'update' }}
+      update_endpoint: ${{ matrix.update_endpoint }}
+      update_public_key: ${{ vars.DRHL_UPDATE_PUBLIC_KEY }}
+      upload_pattern: ${{ matrix.upload_pattern }}
+    secrets: inherit
 
   update-server:
     name: Create update-server artifact

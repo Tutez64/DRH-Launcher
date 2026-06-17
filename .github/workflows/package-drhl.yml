@@ -1,0 +1,256 @@
+name: Package DRH Launcher
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        required: true
+        type: string
+      cache_key:
+        required: false
+        type: string
+        default: ""
+      package_kind:
+        required: false
+        type: string
+        default: release
+      package_name:
+        required: true
+        type: string
+      package_version:
+        required: false
+        type: string
+        default: ""
+      platform:
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
+      run_clippy:
+        required: false
+        type: boolean
+        default: false
+      run_tests:
+        required: false
+        type: boolean
+        default: false
+      sign_macos_dmg:
+        required: false
+        type: boolean
+        default: false
+      sign_update_package:
+        required: false
+        type: boolean
+        default: false
+      update_endpoint:
+        required: false
+        type: string
+        default: ""
+      update_public_key:
+        required: true
+        type: string
+      upload_pattern:
+        required: true
+        type: string
+      validate_tag:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      CARGO_PACKAGER_SIGN_PRIVATE_KEY:
+        required: true
+      CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ inputs.package_name }}
+    runs-on: ${{ inputs.runner }}
+
+    env:
+      DRHL_UPDATE_PUBLIC_KEY: ${{ inputs.update_public_key }}
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Validate package configuration
+        shell: bash
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+          DRHL_UPDATE_ENDPOINT_INPUT: ${{ inputs.update_endpoint }}
+          PACKAGE_KIND: ${{ inputs.package_kind }}
+        run: |
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY"
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD"
+          test -n "$DRHL_UPDATE_PUBLIC_KEY"
+          if [[ "$PACKAGE_KIND" != "release" ]]; then
+            test -n "$DRHL_UPDATE_ENDPOINT_INPUT"
+          fi
+
+      - name: Validate tag and Cargo version
+        if: inputs.validate_tag
+        shell: python
+        run: |
+          import os
+          import re
+          from pathlib import Path
+
+          cargo_toml = Path("Cargo.toml").read_text(encoding="utf-8")
+          match = re.search(r'(?m)^version = "([^"]+)"', cargo_toml)
+          if not match:
+              raise SystemExit("Could not read Cargo.toml package version")
+          version = match.group(1)
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              raise SystemExit(f"Tag {tag} does not match Cargo version {version}")
+
+      - name: Set package version
+        if: inputs.package_version != ''
+        shell: python
+        env:
+          DRHL_PACKAGE_VERSION: ${{ inputs.package_version }}
+        run: |
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["DRHL_PACKAGE_VERSION"]
+          cargo_toml = Path("Cargo.toml")
+          cargo_text, cargo_count = re.subn(
+              r'(?m)^version = "[^"]+"',
+              f'version = "{version}"',
+              cargo_toml.read_text(encoding="utf-8"),
+              count=1,
+          )
+          if cargo_count != 1:
+              raise SystemExit("Could not update Cargo.toml package version")
+          cargo_toml.write_text(cargo_text, encoding="utf-8")
+
+          cargo_lock = Path("Cargo.lock")
+          lock_text, lock_count = re.subn(
+              r'(?m)(\[\[package\]\]\nname = "drh_launcher"\nversion = ")[^"]+(")',
+              lambda match: f"{match.group(1)}{version}{match.group(2)}",
+              cargo_lock.read_text(encoding="utf-8"),
+              count=1,
+          )
+          if lock_count != 1:
+              raise SystemExit("Could not update Cargo.lock package version")
+          cargo_lock.write_text(lock_text, encoding="utf-8")
+
+      - name: Configure test update endpoint
+        if: inputs.update_endpoint != ''
+        shell: bash
+        env:
+          DRHL_UPDATE_ENDPOINT_INPUT: ${{ inputs.update_endpoint }}
+        run: echo "DRHL_UPDATE_ENDPOINT=$DRHL_UPDATE_ENDPOINT_INPUT" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        if: inputs.cache_key == ''
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        if: inputs.cache_key != ''
+        with:
+          key: ${{ inputs.cache_key }}
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Test
+        if: inputs.run_tests
+        run: cargo test --all-targets --locked
+
+      - name: Clippy
+        if: inputs.run_clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Build Linux package
+        if: inputs.platform == 'linux'
+        run: cargo build --release --locked
+
+      - name: Package Linux
+        if: inputs.platform == 'linux'
+        run: cargo packager --release --formats appimage --out-dir dist
+
+      - name: Sign Linux update package
+        if: inputs.sign_update_package && inputs.platform == 'linux'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          artifacts=(dist/*.AppImage)
+          test "${#artifacts[@]}" -eq 1
+          cargo packager signer sign "${artifacts[0]}"
+
+      - name: Build Windows package
+        if: inputs.platform == 'windows'
+        run: cargo build --release --locked
+
+      - name: Package Windows
+        if: inputs.platform == 'windows'
+        run: cargo packager --release --formats nsis --out-dir dist
+
+      - name: Sign Windows update package
+        if: inputs.sign_update_package && inputs.platform == 'windows'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          $artifacts = @(Get-ChildItem dist -Filter *.exe)
+          if ($artifacts.Count -ne 1) {
+            throw "Expected one NSIS installer, found $($artifacts.Count)"
+          }
+          cargo packager signer sign $artifacts[0].FullName
+
+      - name: Build universal macOS package
+        if: inputs.platform == 'macos'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          cargo build --release --locked --target aarch64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create \
+            target/x86_64-apple-darwin/release/DRH-Launcher \
+            target/aarch64-apple-darwin/release/DRH-Launcher \
+            -output target/universal-apple-darwin/release/DRH-Launcher
+
+      - name: Package macOS
+        if: inputs.platform == 'macos'
+        run: |
+          cargo packager \
+              --release \
+              --target universal-apple-darwin \
+              --formats app,dmg \
+              --out-dir dist
+
+      - name: Create and sign macOS update package
+        if: inputs.sign_update_package && inputs.platform == 'macos'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+          COPYFILE_DISABLE: "1"
+          SIGN_MACOS_DMG: ${{ inputs.sign_macos_dmg }}
+        run: |
+          tar -czf "dist/DRH Launcher.app.tar.gz" -C dist "DRH Launcher.app"
+          cargo packager signer sign "dist/DRH Launcher.app.tar.gz"
+
+          if [[ "$SIGN_MACOS_DMG" == "true" ]]; then
+            artifacts=(dist/*.dmg)
+            test "${#artifacts[@]}" -eq 1
+            cargo packager signer sign "${artifacts[0]}"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.upload_pattern }}
+          if-no-files-found: error
