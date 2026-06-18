@@ -22,6 +22,15 @@ impl LogLevel {
     }
 }
 
+pub(crate) fn is_operation_error_message(message: &str) -> bool {
+    message.starts_with("Could not ")
+        || message.starts_with("No ")
+        || message.contains(" failed")
+        || message.contains(" missing")
+        || message.contains(" mismatch")
+        || message.contains("Mismatch")
+}
+
 pub fn launcher_log_file(install_dir: &Path) -> std::path::PathBuf {
     paths::launcher_log_file(install_dir)
 }
@@ -138,6 +147,17 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn classifies_operation_error_messages() {
+        assert!(is_operation_error_message(
+            "SHA-256 mismatch for asset: expected abc, got def"
+        ));
+        assert!(is_operation_error_message(
+            "Downloaded size mismatch for asset: expected 10 bytes, got 9 bytes"
+        ));
+        assert!(!is_operation_error_message("Installed V2. Previous version: V1"));
+    }
 
     #[test]
     fn writes_and_reads_recent_log_entries() {

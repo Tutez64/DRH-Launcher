@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::install_metadata::InstalledState;
 use crate::install_state::InstallState;
@@ -7,7 +7,6 @@ use crate::paths;
 #[derive(Clone, Debug)]
 pub struct InstallStatus {
     pub state: InstallState,
-    pub install_dir: Option<PathBuf>,
     pub installed_version: Option<String>,
     pub reason: Option<String>,
 }
@@ -16,7 +15,6 @@ impl InstallStatus {
     pub fn not_installed() -> Self {
         Self {
             state: InstallState::NotInstalled,
-            install_dir: None,
             installed_version: None,
             reason: None,
         }
@@ -42,7 +40,6 @@ pub fn inspect_install(install_dir: Option<&Path>) -> InstallStatus {
     if !install_dir.exists() {
         return InstallStatus {
             state: InstallState::NotInstalled,
-            install_dir: Some(install_dir.to_path_buf()),
             installed_version: None,
             reason: Some("Install directory does not exist.".to_string()),
         };
@@ -52,7 +49,6 @@ pub fn inspect_install(install_dir: Option<&Path>) -> InstallStatus {
     if !game_dir.exists() {
         return InstallStatus {
             state: InstallState::NotInstalled,
-            install_dir: Some(install_dir.to_path_buf()),
             installed_version: None,
             reason: Some("Game directory does not exist.".to_string()),
         };
@@ -70,7 +66,6 @@ pub fn inspect_install(install_dir: Option<&Path>) -> InstallStatus {
     if executable_path.is_none() {
         return InstallStatus {
             state: InstallState::BrokenInstall,
-            install_dir: Some(install_dir.to_path_buf()),
             installed_version,
             reason: Some(format!(
                 "Expected game executable is missing. Tried: {}",
@@ -81,7 +76,6 @@ pub fn inspect_install(install_dir: Option<&Path>) -> InstallStatus {
 
     InstallStatus {
         state: InstallState::Installed,
-        install_dir: Some(install_dir.to_path_buf()),
         installed_version,
         reason: None,
     }
