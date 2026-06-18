@@ -2,11 +2,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::archive::ExtractedArchive;
+use crate::diagnostics;
 use crate::game_install::{game_executable_names, is_game_executable};
 use crate::github_releases::PlatformRelease;
 use crate::install_metadata::{InstalledRelease, InstalledState};
 use crate::paths;
 use crate::release_source::ReleaseSource;
+
+fn log_install_step(install_dir: &Path, message: &str) {
+    let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, message);
+}
 
 #[cfg(test)]
 pub fn install_extracted_archive(
@@ -42,6 +47,13 @@ pub fn install_extracted_archive_with_blocked_update(
         .map(|state| state.active);
 
     if previous_game_dir.exists() {
+        log_install_step(
+            install_dir,
+            &format!(
+                "Removing existing previous install at {}.",
+                previous_game_dir.display()
+            ),
+        );
         fs::remove_dir_all(&previous_game_dir).map_err(|error| {
             format!(
                 "Could not remove previous game directory {}: {error}",
@@ -51,6 +63,14 @@ pub fn install_extracted_archive_with_blocked_update(
     }
 
     if game_dir.exists() {
+        log_install_step(
+            install_dir,
+            &format!(
+                "Moving current install {} to {}.",
+                game_dir.display(),
+                previous_game_dir.display()
+            ),
+        );
         fs::rename(&game_dir, &previous_game_dir).map_err(|error| {
             format!(
                 "Could not move {} to {}: {error}",
@@ -60,6 +80,14 @@ pub fn install_extracted_archive_with_blocked_update(
         })?;
     }
 
+    log_install_step(
+        install_dir,
+        &format!(
+            "Installing extracted game from {} to {}.",
+            source_game_dir.display(),
+            game_dir.display()
+        ),
+    );
     fs::rename(&source_game_dir, &game_dir).map_err(|error| {
         if previous_game_dir.exists() {
             let _ = fs::rename(&previous_game_dir, &game_dir);
@@ -79,6 +107,18 @@ pub fn install_extracted_archive_with_blocked_update(
     installed
         .save(install_dir)
         .map_err(|error| format!("Could not write installed metadata: {error}"))?;
+    log_install_step(
+        install_dir,
+        &format!(
+            "Wrote installed metadata for {} (previous: {}).",
+            installed.active.version,
+            installed
+                .previous
+                .as_ref()
+                .map(|previous| previous.version.as_str())
+                .unwrap_or("none")
+        ),
+    );
 
     Ok(installed)
 }
@@ -93,6 +133,14 @@ pub fn restore_previous_version(install_dir: &Path) -> Result<InstalledState, St
     let game_dir = paths::game_dir(install_dir);
     let previous_game_dir = paths::previous_game_dir(install_dir);
     let swap_dir = paths::game_root_dir(install_dir).join(".restore-swap");
+
+    log_install_step(
+        install_dir,
+        &format!(
+            "Restoring previous version {} (replacing {}).",
+            previous_metadata.version, blocked_update_version
+        ),
+    );
 
     if swap_dir.exists() {
         return Err(format!(

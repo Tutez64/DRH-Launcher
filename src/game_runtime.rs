@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -102,10 +102,28 @@ pub(crate) fn process_is_running(
         Ok(Some(status)) => {
             let game = process.take().expect("running game disappeared");
             let _ = game_logs::finish(&game.session_log, &format!("Exited with status: {status}"));
+            if let Some(install_dir) = install_dir_from_session_log(&game.session_log.path) {
+                let _ = diagnostics::write(
+                    &install_dir,
+                    diagnostics::LogLevel::Info,
+                    &format!("DRH exited with status: {status}"),
+                );
+            }
             false
         }
         Err(_) => true,
     }
+}
+
+fn install_dir_from_session_log(session_log: &Path) -> Option<PathBuf> {
+    Some(
+        session_log
+            .parent()?
+            .parent()?
+            .parent()?
+            .parent()?
+            .to_path_buf(),
+    )
 }
 
 pub(crate) fn begin_game_stop(
@@ -126,6 +144,16 @@ pub(crate) fn begin_game_stop(
             .transpose()
             .err()
     };
+    if let Some(game) = game_process.borrow().as_ref() {
+        log_for_config(
+            &config,
+            diagnostics::LogLevel::Info,
+            &format!(
+                "Requesting graceful shutdown for DRH (pid {}).",
+                game.child.id()
+            ),
+        );
+    }
     let started_at = Instant::now();
     let mut forced = false;
     let mut forced_reason =
@@ -207,6 +235,11 @@ pub(crate) fn begin_game_stop(
             "Exited after graceful shutdown request".to_string()
         };
         let result = format!("{stop_kind} with status: {status}");
+        log_for_config(
+            &config,
+            diagnostics::LogLevel::Info,
+            &format!("DRH stop finished: {result}"),
+        );
         let finish_result = game_logs::finish(&game.session_log, &result)
             .map(|_| "DRH stopped.".to_string())
             .map_err(|error| {
