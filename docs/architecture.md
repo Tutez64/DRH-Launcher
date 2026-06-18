@@ -77,7 +77,10 @@ The configured `install_dir` is not the launcher executable location. It is the
 launcher-managed content root containing DRH, downloads, logs and install
 metadata. Keeping application files and managed content separate lets the
 launcher update itself without touching the game rollback directories and lets
-the game update without replacing the launcher.
+the game update without replacing the launcher. DRH Launcher uses a fixed
+default install directory for the current platform and persists it in
+`config.json` on first startup. The UI shows this path for diagnostics, but the
+user does not choose a different install root in the first release.
 
 The intended managed content layout is:
 
@@ -177,7 +180,7 @@ Useful secondary actions:
 - go to options
 - open a compact Help menu for recovery actions such as restore, reinstall and logs
 
-The home UI state should be derived from a small view model rather than scattered direct widget updates. This keeps installed state, latest-release state, process state and temporary progress messages easier to reason about as the launcher grows.
+The home UI state should be derived from a small view model rather than scattered direct widget updates. This keeps installed state, latest-release state, process state and temporary progress messages easier to reason about as the launcher grows. During install, repair, reinstall, or version install operations, the Home title should switch to `DRH is updating` while the support text shows the current step. Home error feedback should stay compact: show a short excerpt of the failure and point users to `Settings > Logs` for the full message.
 
 ### Version History UI
 
@@ -714,7 +717,9 @@ DRH is launched so graphical launches do not silently lose game output.
 
 When no install directory is configured yet, launcher diagnostics should still be
 written under the default install directory path so startup and first-install
-activity is not lost.
+activity is not lost. On first startup, DRH Launcher should persist that default
+install directory in `config.json`, create the managed logs directory, and use
+the same path for log viewing and `Open logs folder`.
 
 Install and update logging should follow a simple split:
 

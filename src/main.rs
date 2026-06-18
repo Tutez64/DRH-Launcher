@@ -51,8 +51,8 @@ use github_releases::{
     discover_platform_release_by_tag_for_install,
 };
 use home_view::{
-    apply_home_view_state, home_view_state, installed_active_release_version, refresh_home_state,
-    set_status_message,
+    apply_home_view_state, apply_updating_home_state, home_view_state, installed_active_release_version,
+    refresh_home_state, set_status_message,
 };
 use install_state::InstallState;
 use installer::{
@@ -128,7 +128,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     slint::set_xdg_app_id(XDG_APP_ID)?;
 
-    let (loaded_config, config_load_warning) = LauncherConfig::load_with_diagnostics();
+    let (mut loaded_config, config_load_warning) = LauncherConfig::load_with_diagnostics();
+    let install_dir_was_unset = loaded_config.install_dir.is_none();
+    let install_dir = loaded_config.ensure_install_dir();
+    let _ = std::fs::create_dir_all(paths::logs_dir(&install_dir));
+    if install_dir_was_unset {
+        let _ = loaded_config.save();
+    }
     let config = Rc::new(RefCell::new(loaded_config));
     let latest_release = Arc::new(Mutex::new(None::<PlatformRelease>));
     let latest_launcher_update = Arc::new(Mutex::new(None::<launcher_update::LauncherUpdate>));
@@ -325,13 +331,8 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             } else {
                 "Checking GitHub releases...".to_string()
             };
-            refresh_home_state(&ui, &config, &initial_message);
+            apply_updating_home_state(&ui, &config, &initial_message);
             let _ = diagnostics::write(&install_dir, diagnostics::LogLevel::Info, &initial_message);
-            ui.set_install_action_enabled(false);
-            ui.set_update_check_enabled(false);
-            ui.set_restore_previous_enabled(false);
-            ui.set_reinstall_current_enabled(false);
-            ui.set_install_action_text(InstallState::Updating.primary_action().into());
 
             let ui = ui.as_weak();
             let config = config.clone();
@@ -697,12 +698,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             };
 
             let config = config.borrow().clone();
-            refresh_home_state(&ui, &config, "Reinstalling current version...");
-            ui.set_install_action_enabled(false);
-            ui.set_update_check_enabled(false);
-            ui.set_restore_previous_enabled(false);
-            ui.set_reinstall_current_enabled(false);
-            ui.set_install_action_text(InstallState::Updating.primary_action().into());
+            apply_updating_home_state(&ui, &config, "Reinstalling current version...");
 
             let ui = ui.as_weak();
             thread::spawn(move || {
@@ -1026,15 +1022,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 return;
             };
 
-            let Some(install_dir) = config.borrow().install_dir.clone() else {
-                log_for_config(
-                    &config.borrow(),
-                    diagnostics::LogLevel::Warn,
-                    "No install directory selected.",
-                );
-                refresh_home_state(&ui, &config.borrow(), "No install directory selected.");
-                return;
-            };
+            let install_dir = config.borrow().effective_install_dir();
 
             match open_folder(&install_dir) {
                 Ok(()) => {
@@ -1061,15 +1049,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 return;
             };
 
-            let Some(install_dir) = config.borrow().install_dir.clone() else {
-                log_for_config(
-                    &config.borrow(),
-                    diagnostics::LogLevel::Warn,
-                    "No install directory selected.",
-                );
-                refresh_home_state(&ui, &config.borrow(), "No install directory selected.");
-                return;
-            };
+            let install_dir = config.borrow().effective_install_dir();
 
             match open_logs_folder(&install_dir) {
                 Ok(()) => {
@@ -1406,25 +1386,16 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             }
 
             let config_snapshot = config.borrow().clone();
-            let Some(install_dir) = config_snapshot.install_dir.clone() else {
-                set_status_message(&ui, "No install directory selected.");
-                return;
-            };
-
+            let install_dir = config_snapshot.effective_install_dir();
             pending_drh_version_install
                 .lock()
                 .expect("pending DRH version install lock poisoned")
                 .take();
-            refresh_home_state(&ui, &config_snapshot, &format!("Installing {version}..."));
-            ui.set_install_action_enabled(false);
-            ui.set_update_check_enabled(false);
-            ui.set_restore_previous_enabled(false);
-            ui.set_reinstall_current_enabled(false);
-            ui.set_install_action_text(InstallState::Updating.primary_action().into());
+            let message = format!("Installing DRH {version}...");
+            apply_updating_home_state(&ui, &config_snapshot, &message);
             ui.set_refresh_version_history_enabled(false);
             ui.set_selected_version_action_enabled(false);
             ui.set_selected_version_replace_confirmation_visible(false);
-            set_status_message(&ui, &format!("Installing DRH {version}..."));
 
             let ui = ui.as_weak();
             let release_source = release_source.clone();
@@ -2306,13 +2277,7 @@ fn refresh_settings_view(ui: &AppWindow, config: &LauncherConfig, save_text: &st
 }
 
 fn install_folder_path_text(config: &LauncherConfig) -> String {
-    match config.install_dir.as_deref() {
-        Some(path) => path.display().to_string(),
-        None => format!(
-            "No install folder selected yet. First install will use {}.",
-            paths::default_install_dir().display()
-        ),
-    }
+    config.effective_install_dir().display().to_string()
 }
 
 fn ui_download_cache_limit(ui: &AppWindow) -> Result<usize, ()> {
@@ -2327,25 +2292,12 @@ pub(crate) fn log_for_config(config: &LauncherConfig, level: diagnostics::LogLev
 }
 
 fn log_for_config_or_default(config: &LauncherConfig, level: diagnostics::LogLevel, message: &str) {
-    if let Some(install_dir) = config.install_dir.as_deref() {
-        let _ = diagnostics::write(install_dir, level, message);
-    } else {
-        let install_dir = paths::default_install_dir();
-        let _ = diagnostics::write(&install_dir, level, message);
-    }
-}
-
-fn is_error_message(message: &str) -> bool {
-    message.starts_with("Could not ")
-        || message.starts_with("No ")
-        || message.contains(" failed")
-        || message.contains(" missing")
-        || message.contains(" mismatch")
-        || message.contains("Mismatch")
+    let install_dir = config.effective_install_dir();
+    let _ = diagnostics::write(&install_dir, level, message);
 }
 
 fn log_install_failure(install_dir: &Path, message: &str) {
-    if is_error_message(message) {
+    if diagnostics::is_operation_error_message(message) {
         let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Error, message);
     }
 }
@@ -2360,8 +2312,7 @@ pub(crate) fn release_update_available(
 }
 
 pub(crate) fn rollback_blocked_update_version(config: &LauncherConfig) -> Option<String> {
-    let install_dir = config.install_dir.as_deref()?;
-    install_metadata::InstalledState::load(install_dir)
+    install_metadata::InstalledState::load(&config.effective_install_dir())
         .ok()
         .and_then(|state| state.blocked_update_version)
 }
@@ -2632,7 +2583,7 @@ mod home_support_text_tests {
         );
         assert_eq!(
             home_support_text("Version: V1", "Could not open logs folder: denied"),
-            "Action failed. Check logs for details."
+            "Could not open logs folder: denied. See Settings → Logs for details."
         );
     }
 
@@ -2652,7 +2603,6 @@ mod home_support_text_tests {
         };
         let status = game_install::InstallStatus {
             state: InstallState::Installed,
-            install_dir: Some(temp.path().to_path_buf()),
             installed_version: Some("V9".to_string()),
             reason: None,
         };
@@ -2705,17 +2655,6 @@ mod home_support_text_tests {
         };
 
         assert!(restore_previous_version_available(&config));
-    }
-
-    #[test]
-    fn classifies_install_failures_as_errors() {
-        assert!(is_error_message(
-            "SHA-256 mismatch for asset: expected abc, got def"
-        ));
-        assert!(is_error_message(
-            "Downloaded size mismatch for asset: expected 10 bytes, got 9 bytes"
-        ));
-        assert!(!is_error_message("Installed V2. Previous version: V1"));
     }
 
     fn test_release(version: &str) -> PlatformRelease {

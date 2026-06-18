@@ -9,11 +9,12 @@ use crate::home_view::{
 };
 use crate::install_state::InstallState;
 use crate::log_view::refresh_logs_view;
-use crate::{AppWindow, diagnostics, game_launch, game_logs, log_for_config};
+use crate::{AppWindow, diagnostics, game_launch, game_logs, log_for_config, paths};
 use slint::{ComponentHandle, Timer, TimerMode};
 
 pub(crate) fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
-    let status = crate::game_install::inspect_install(config.install_dir.as_deref());
+    let install_dir = config.effective_install_dir();
+    let status = crate::game_install::inspect_install(Some(&install_dir));
 
     ui.set_install_status("DRH is running".into());
     ui.set_install_action_text(InstallState::Playing.primary_action().into());
@@ -21,8 +22,10 @@ pub(crate) fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, mes
     ui.set_version_status(status.version_text().into());
     ui.set_update_check_text("Check for updates".into());
     ui.set_update_check_enabled(false);
-    ui.set_open_install_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
-    ui.set_open_logs_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
+    ui.set_open_install_folder_enabled(install_dir.exists());
+    ui.set_open_logs_folder_enabled(
+        paths::logs_dir(&install_dir).exists() || paths::launcher_log_file(&install_dir).exists(),
+    );
     ui.set_restore_previous_enabled(false);
     ui.set_reinstall_current_enabled(false);
     refresh_logs_view(ui, config);

@@ -18,20 +18,9 @@ pub(crate) fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
         ui.get_game_log_wrap_columns()
     }
     .max(20) as usize;
-    let Some(install_dir) = config.install_dir.as_deref() else {
-        ui.set_game_log_sessions(ModelRc::new(VecModel::from(Vec::new())));
-        ui.set_selected_game_log_index(-1);
-        ui.set_selected_game_log_enabled(false);
-        ui.set_selected_game_log_title("No game session selected".into());
-        ui.set_selected_game_log_id("".into());
-        set_log_lines_if_changed(
-            ui,
-            log_lines_from_text("No install directory selected.", wrap_columns),
-        );
-        return;
-    };
+    let install_dir = config.effective_install_dir();
 
-    let sessions = match game_logs::list(install_dir) {
+    let sessions = match game_logs::list(&install_dir) {
         Ok(sessions) => sessions,
         Err(error) => {
             ui.set_game_log_sessions(ModelRc::new(VecModel::from(Vec::new())));
@@ -134,11 +123,8 @@ pub(crate) fn saved_game_log_position(
 }
 
 fn log_lines(config: &LauncherConfig, wrap_columns: usize) -> Vec<LogLineView> {
-    let Some(install_dir) = config.install_dir.as_deref() else {
-        return log_lines_from_text("No install directory selected.", wrap_columns);
-    };
-
-    let content = diagnostics::read_recent(install_dir)
+    let install_dir = config.effective_install_dir();
+    let content = diagnostics::read_recent(&install_dir)
         .unwrap_or_else(|error| format!("Could not read launcher log: {error}"));
     log_lines_from_text(&content, wrap_columns)
 }

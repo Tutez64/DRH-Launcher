@@ -38,21 +38,12 @@ pub fn startup_mode_from_args(
 pub fn run() -> Outcome {
     let (mut config, config_load_warning) = LauncherConfig::load_with_diagnostics();
     let release_source = ReleaseSource::from_environment();
-    let install_dir = match config.install_dir.clone().or_else(|| {
-        let default_dir = paths::default_install_dir();
-        paths::game_dir(&default_dir)
-            .exists()
-            .then_some(default_dir)
-    }) {
-        Some(install_dir) => install_dir,
-        None => {
-            return Outcome::OpenGui(
-                "DRH is not installed yet. Install it from DRH Launcher.".to_string(),
-            );
-        }
-    };
-    config.install_dir = Some(install_dir.clone());
-
+    let install_dir = config.ensure_install_dir();
+    if !paths::game_dir(&install_dir).exists() {
+        return Outcome::OpenGui(
+            "DRH is not installed yet. Install it from DRH Launcher.".to_string(),
+        );
+    }
     if let Some(warning) = &config_load_warning {
         let _ = diagnostics::write(&install_dir, diagnostics::LogLevel::Warn, warning);
     }

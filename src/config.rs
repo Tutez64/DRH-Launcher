@@ -35,6 +35,18 @@ pub fn default_download_cache_limit() -> usize {
 }
 
 impl LauncherConfig {
+    pub fn effective_install_dir(&self) -> PathBuf {
+        self.install_dir
+            .clone()
+            .unwrap_or_else(paths::default_install_dir)
+    }
+
+    pub fn ensure_install_dir(&mut self) -> PathBuf {
+        let install_dir = self.effective_install_dir();
+        self.install_dir = Some(install_dir.clone());
+        install_dir
+    }
+
     pub fn load_with_diagnostics() -> (Self, Option<String>) {
         let path = paths::config_file();
         let contents = match fs::read_to_string(&path) {
@@ -125,6 +137,23 @@ impl LauncherConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effective_install_dir_uses_default_when_unset() {
+        let config = LauncherConfig::default();
+
+        assert_eq!(config.effective_install_dir(), paths::default_install_dir());
+    }
+
+    #[test]
+    fn ensure_install_dir_persists_default_path() {
+        let mut config = LauncherConfig::default();
+
+        let install_dir = config.ensure_install_dir();
+
+        assert_eq!(config.install_dir.as_deref(), Some(install_dir.as_path()));
+        assert_eq!(install_dir, paths::default_install_dir());
+    }
 
     #[test]
     fn defaults_to_recommended_launch_arguments_mode() {

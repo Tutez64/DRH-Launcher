@@ -27,10 +27,8 @@ pub(crate) fn refresh_launch_options_view(
 pub(crate) fn load_installed_launch_options(
     config: &LauncherConfig,
 ) -> Option<ManifestLaunchOptions> {
-    let install_dir = config.install_dir.as_deref()?;
-    install_metadata::InstalledState::load(install_dir)
-        .ok()
-        .and_then(|state| state.active.launch_options)
+    let state = install_metadata::InstalledState::load(&config.effective_install_dir()).ok()?;
+    state.active.launch_options
 }
 
 pub(crate) fn recommended_game_args_from_launch_options(
