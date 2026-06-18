@@ -1699,7 +1699,7 @@ export component AppWindow inherits Window {
                                         }
 
                                         InfoHint {
-                                            text: "These are original Dungeon Rampage launch options.\nGame defaults uses the game's own defaults.\nDRHL recommended is the launcher default.\nCustom lets you adjust known options manually.";
+                                            text: "Original Dungeon Rampage launch options.\nGame defaults: leave them untouched.\nDRHL recommended: use launcher defaults.\nCustom: adjust them manually.";
                                             show-tooltip(text, x, y) => {
                                                 root.info-tooltip-text = text;
                                                 root.info-tooltip-anchor-x = x;
@@ -1915,7 +1915,7 @@ export component AppWindow inherits Window {
                                 vertical-stretch: 1;
 
                                 if root.selected-version-release-enabled : Text {
-                                    text: "Changelog preview may miss some GitHub formatting. Use the button bellow to see the original release notes.";
+                                    text: "Changelog preview may miss some GitHub formatting. Use the button below to see the original release notes.";
                                     color: Theme.text-support;
                                     font-size: 12px;
                                     wrap: word-wrap;
