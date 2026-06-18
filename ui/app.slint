@@ -1144,23 +1144,9 @@ export component AppWindow inherits Window {
                             title: "Mods";
                         }
 
-                        MetricBlock {
-                            label: "Mod management";
-                            value: "Modding isn't supported yet.";
-                        }
-
-                        HorizontalLayout {
-                            spacing: 10px;
-
-                            SecondaryButton {
-                                text: "Import";
-                                enabled: false;
-                            }
-
-                            SecondaryButton {
-                                text: "Open folder";
-                                enabled: false;
-                            }
+                        SettingsCard {
+                            title: "Not available yet";
+                            description: "Launcher-side mod support is planned for a later phase.";
                         }
 
                         Rectangle {

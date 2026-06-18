@@ -423,7 +423,7 @@ export component MarkdownBlock inherits Rectangle {
         default-color: root.heading ? Theme.text-strong : root.code ? Theme.text-secondary : root.quote ? Theme.text-muted : root.target-block ? Theme.text-strong : Theme.text-body;
         default-font-family: root.code ? "Hack" : "";
         default-font-size: root.kind == 1 ? 18px : root.kind == 2 ? 16px : root.kind == 3 ? 14px : 13px;
-        link-color: #f07a37;
+        link-color: Theme.accent-warm;
         link-clicked(link) => {
             root.open-target(link);
         }
