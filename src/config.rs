@@ -35,13 +35,31 @@ pub fn default_download_cache_limit() -> usize {
 }
 
 impl LauncherConfig {
-    pub fn load() -> Self {
+    pub fn load_with_diagnostics() -> (Self, Option<String>) {
         let path = paths::config_file();
-        let Ok(contents) = fs::read_to_string(path) else {
-            return Self::default();
+        let contents = match fs::read_to_string(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return (Self::default(), None);
+            }
+            Err(error) => {
+                return (
+                    Self::default(),
+                    Some(format!("Could not read {}: {error}", path.display())),
+                );
+            }
         };
 
-        serde_json::from_str(&contents).unwrap_or_default()
+        match serde_json::from_str(&contents) {
+            Ok(config) => (config, None),
+            Err(error) => (
+                Self::default(),
+                Some(format!(
+                    "Could not parse {}; using default settings: {error}",
+                    path.display()
+                )),
+            ),
+        }
     }
 
     pub fn save(&self) -> io::Result<()> {

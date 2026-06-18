@@ -2,7 +2,7 @@
 
 Launcher and updater for [Dungeon Rampage Haxe](https://github.com/Tutez64/Dungeon-Rampage-Haxe).
 
-This project is in early development. The first goal is to provide a small desktop application that can install, update and launch DRH. Mod management, Steam shortcut integration and advanced launch options will be added later.
+This project is in early development. The first goal is to provide a small desktop application that can install, update, configure and launch DRH. Mod management and Steam shortcut management will be added later.
 
 ## Development
 
@@ -59,6 +59,7 @@ requiring administrator access.
 - Initial home screen
 - GitHub release discovery
 - Verified archive downloads
+- Configurable launch options and `DRH-Launcher --play`
 - Native launcher packages and signed launcher self-updates
 
 ## Architecture
