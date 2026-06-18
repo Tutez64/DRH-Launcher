@@ -167,7 +167,7 @@ The main navigation is:
 - `Mods`
 - `Settings`
 
-The home screen should stay focused on the primary install/play/update/stop flow. It should not permanently show long logs, install paths or diagnostic details. When extra context is useful, such as download progress, verification, or update availability, it should appear as compact support text near the primary action.
+The home screen should stay focused on the primary install/play/update/stop flow. It should not permanently show long logs, install paths or diagnostic details. When extra context is useful, such as download progress, verification, update availability, repair, reinstall, version install, or stop in progress, it should appear as compact support text near the primary action through `home_support_text()`.
 
 Discord and GitHub links can live in `Settings > About` or another secondary location. They should be easy to find without taking space away from the primary install/play flow.
 
@@ -213,7 +213,9 @@ DRH-Launcher --play
 
 `DRH-Launcher --play` is intended for Steam and shortcuts. It should quickly check required state, apply or prompt for important updates when needed, then launch DRH without forcing the full UI when everything is ready.
 
-When DRH is launched from the launcher UI, DRH Launcher keeps the child process handle and uses it to prevent multiple launches from the same launcher instance. If the process exits normally, the UI returns to the installed state. If the user presses `Stop`, DRH Launcher terminates the tracked process and returns to the installed state.
+For the first release, when an update is available, `--play` opens the full UI with an explanatory message instead of updating silently. Steam shortcut integration itself is deferred until a later phase.
+
+When DRH is launched from the launcher UI, DRH Launcher keeps the child process handle and uses it to prevent multiple launches from the same launcher instance. If the process exits normally, the UI returns to the installed state. If the user presses `Stop`, DRH Launcher terminates the tracked process and returns to the installed state. Stop requests, graceful shutdown, forced termination after timeout, and the final process result should all be written to `launcher.log` in addition to the game-session log.
 
 Closing DRH Launcher while its tracked DRH process is still running requires
 confirmation. Confirming first requests a normal application shutdown, then
@@ -332,7 +334,9 @@ instead.
 needed. Once installed, AppImage management moves under advanced settings.
 Linux uninstall removes the managed AppImage, icon and desktop entry, but
 preserves launcher configuration, DRH installations, downloaded archives and
-logs.
+logs. On Windows and macOS, launcher removal is handled by the platform
+installer or by deleting the installed application bundle; DRHL does not need a
+separate self-uninstall action on those platforms for the first release.
 
 Minisign update signatures do not replace platform code signing:
 
@@ -521,7 +525,9 @@ Dungeon Rampage Haxe/previous/  previous version, if available
 
 For example, if a user updates from `V7` to `V9`, `Dungeon Rampage Haxe/previous/` should contain `V7`, and `installed.json.previous` should record that it is `V7`. This allows the launcher to offer a clear rollback target even if an intermediate release such as `V8` was skipped or known bad.
 
-The UI exposes `Restore previous version` when `Dungeon Rampage Haxe/previous/` exists and matches installed metadata. Restoring swaps `current/` and `previous/`, so the version being replaced remains available as the next rollback target. The replaced version is also recorded as `blocked_update_version`: if the user restores from `V10` to `V9`, `V10` should not be proposed again automatically, but a later release such as `V11` should be offered normally. Full multi-version management can be added later if there is a real need.
+The UI exposes `Restore previous version` when `installed.json.previous` exists, `Dungeon Rampage Haxe/previous/` exists on disk, and the action is otherwise available. Restoring swaps `current/` and `previous/`, so the version being replaced remains available as the next rollback target. The replaced version is also recorded as `blocked_update_version`: if the user restores from `V10` to `V9`, `V10` should not be proposed again automatically, but a later release such as `V11` should be offered normally. Full multi-version management can be added later if there is a real need.
+
+Help-menu recovery actions such as restore and reinstall do not require an extra confirmation dialog in the first release. Restore is reversible in one click and both actions are labeled explicitly from installed metadata.
 
 Destructive or potentially surprising actions should require confirmation, including:
 
@@ -590,7 +596,9 @@ Even so, the launcher should avoid deleting unrelated files in the install direc
 
 ## Steam Integration
 
-Steam integration is best-effort because Steam does not expose a simple public desktop API for non-Steam shortcuts.
+Steam integration is deferred for the first release. The README and UI should continue to treat it as a later phase.
+
+When implemented, it will be best-effort because Steam does not expose a simple public desktop API for non-Steam shortcuts.
 
 Target behavior:
 
@@ -703,6 +711,17 @@ session file while navigating between screens and sessions.
 Launcher log writes should be best-effort: failure to write diagnostics must not
 break install, update or launch flows. A game-session log must be created before
 DRH is launched so graphical launches do not silently lose game output.
+
+When no install directory is configured yet, launcher diagnostics should still be
+written under the default install directory path so startup and first-install
+activity is not lost.
+
+Install and update logging should follow a simple split:
+
+- atomic file operations and metadata writes are logged from the installer layer as they happen
+- the final user-facing outcome for install, repair, reinstall, and restore is logged once from the UI orchestration layer
+
+Hash, size, extraction, and install failures should be written at `ERROR` level at the point of failure. Successful install outcomes should not be logged twice by both the orchestration layer and its caller.
 
 Log entries and session metadata use readable UTC timestamps.
 
