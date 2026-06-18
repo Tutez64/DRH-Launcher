@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::config::LauncherConfig;
 use crate::github_releases::PlatformRelease;
 use crate::install_state::InstallState;
+use crate::paths;
 use crate::{
     AppWindow, game_install, install_metadata, release_update_available,
     rollback_blocked_update_version,
@@ -38,7 +39,12 @@ pub(crate) fn restore_previous_version_text(config: &LauncherConfig) -> String {
 }
 
 pub(crate) fn restore_previous_version_available(config: &LauncherConfig) -> bool {
+    let Some(install_dir) = config.install_dir.as_deref() else {
+        return false;
+    };
+
     restore_previous_release_version(config).is_some()
+        && paths::previous_game_dir(install_dir).exists()
 }
 
 pub(crate) fn restore_previous_release_version(config: &LauncherConfig) -> Option<String> {
@@ -231,6 +237,10 @@ fn is_progress_message(message: &str) -> bool {
         || message.starts_with("Verifying download")
         || message.starts_with("Extracting archive")
         || message.starts_with("Installing files")
+        || message.starts_with("Installing ")
+        || message.starts_with("Repairing ")
+        || message.starts_with("Reinstalling ")
+        || message.starts_with("Stopping ")
 }
 
 fn status_detail(message: &str) -> String {
