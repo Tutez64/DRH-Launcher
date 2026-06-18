@@ -3,6 +3,7 @@ use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::Deserialize;
 use std::time::Duration;
 
+use crate::paths;
 use crate::platform::Platform;
 use crate::release_manifest::{
     ManifestLaunchOptions, ReleaseManifest, is_manifest_asset_name, normalize_sha256,
@@ -271,6 +272,7 @@ fn select_manifest_platform(
     manifest: &ReleaseManifest,
 ) -> Result<PlatformRelease, String> {
     let manifest_platform = manifest.platform(platform)?;
+    validate_manifest_archive_name(&manifest_platform.archive)?;
     let asset = release
         .assets
         .iter()
@@ -335,6 +337,17 @@ fn select_platform_asset_fallback(
             digest: asset.digest,
         },
     })
+}
+
+fn validate_manifest_archive_name(name: &str) -> Result<(), String> {
+    let name = paths::safe_file_name(name, "Manifest archive name")?;
+    if name == "cache.txt" {
+        return Err("Manifest archive name conflicts with the download cache index".to_string());
+    }
+    if name.ends_with(".download") {
+        return Err("Manifest archive name conflicts with temporary downloads".to_string());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -458,6 +471,80 @@ mod tests {
             selected.launch_options.unwrap().game_arguments[0].recommended,
             Some(true)
         );
+    }
+
+    #[test]
+    fn rejects_manifest_archive_paths() {
+        let release = GitHubRelease {
+            tag_name: "V4".to_string(),
+            name: Some("Dungeon Rampage Haxe V4".to_string()),
+            html_url: "https://example.test/release".to_string(),
+            body: None,
+            published_at: None,
+            prerelease: false,
+            draft: false,
+            assets: vec![GitHubAsset {
+                name: "../evil.tar.gz".to_string(),
+                browser_download_url: "https://example.test/evil.tar.gz".to_string(),
+                size: 999,
+                digest: Some("sha256:ignored".to_string()),
+            }],
+        };
+        let manifest = ReleaseManifest::parse(
+            r#"{
+                "version": "V4",
+                "platforms": {
+                    "linux-x64": {
+                        "archive": "../evil.tar.gz",
+                        "sha256": "manifest_hash",
+                        "size": 123
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let error =
+            select_platform_release(release, Platform::LinuxX64, Some(&manifest)).unwrap_err();
+
+        assert!(error.contains("not a file name"));
+    }
+
+    #[test]
+    fn rejects_manifest_archive_reserved_names() {
+        let release = GitHubRelease {
+            tag_name: "V4".to_string(),
+            name: Some("Dungeon Rampage Haxe V4".to_string()),
+            html_url: "https://example.test/release".to_string(),
+            body: None,
+            published_at: None,
+            prerelease: false,
+            draft: false,
+            assets: vec![GitHubAsset {
+                name: "cache.txt".to_string(),
+                browser_download_url: "https://example.test/cache.txt".to_string(),
+                size: 999,
+                digest: Some("sha256:ignored".to_string()),
+            }],
+        };
+        let manifest = ReleaseManifest::parse(
+            r#"{
+                "version": "V4",
+                "platforms": {
+                    "linux-x64": {
+                        "archive": "cache.txt",
+                        "sha256": "manifest_hash",
+                        "size": 123
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let error =
+            select_platform_release(release, Platform::LinuxX64, Some(&manifest)).unwrap_err();
+
+        assert!(error.contains("download cache index"));
     }
 
     #[test]

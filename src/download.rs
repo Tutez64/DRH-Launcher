@@ -30,6 +30,7 @@ pub fn download_and_verify_with_progress(
     mut on_progress: impl FnMut(DownloadProgress),
     mut on_cache_error: impl FnMut(String),
 ) -> Result<VerifiedDownload, String> {
+    let archive_name = safe_archive_file_name(&asset.name)?;
     let expected_sha256 = expected_sha256(asset)?;
     let downloads_dir = paths::downloads_dir(install_dir);
     fs::create_dir_all(&downloads_dir).map_err(|error| {
@@ -39,8 +40,8 @@ pub fn download_and_verify_with_progress(
         )
     })?;
 
-    let final_path = downloads_dir.join(&asset.name);
-    let temp_path = downloads_dir.join(format!("{}.download", asset.name));
+    let final_path = downloads_dir.join(archive_name);
+    let temp_path = downloads_dir.join(format!("{archive_name}.download"));
 
     if final_path.exists() {
         match verify_cached_archive(&final_path, asset, &expected_sha256) {
@@ -137,6 +138,7 @@ pub fn verify_cached_archive_by_metadata(
     expected_size: u64,
     expected_sha256: &str,
 ) -> Result<VerifiedDownload, String> {
+    let archive_name = safe_archive_file_name(archive_name)?;
     let expected_sha256 = normalize_sha256(expected_sha256);
     if expected_size == 0 {
         return Err("Cached archive size is unknown.".to_string());
@@ -201,6 +203,7 @@ pub fn update_download_cache(
     archive_name: &str,
     limit: usize,
 ) -> Result<Vec<PathBuf>, String> {
+    let archive_name = safe_archive_file_name(archive_name)?;
     let downloads_dir = paths::downloads_dir(install_dir);
     fs::create_dir_all(&downloads_dir).map_err(|error| {
         format!(
@@ -247,6 +250,7 @@ fn read_download_cache_index(install_dir: &Path) -> Vec<String> {
                 .lines()
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
+                .filter(|line| safe_archive_file_name(line).is_ok())
                 .map(str::to_string)
                 .collect()
         })
@@ -296,6 +300,17 @@ pub fn expected_sha256(asset: &ReleaseAsset) -> Result<String, String> {
                 asset.name
             )
         })
+}
+
+fn safe_archive_file_name(name: &str) -> Result<&str, String> {
+    let name = paths::safe_file_name(name, "Release archive name")?;
+    if name == "cache.txt" {
+        return Err("Release archive name conflicts with the download cache index".to_string());
+    }
+    if name.ends_with(".download") {
+        return Err("Release archive name conflicts with temporary downloads".to_string());
+    }
+    Ok(name)
 }
 
 pub fn sha256_file(path: &Path) -> io::Result<String> {
@@ -435,6 +450,31 @@ mod tests {
             fs::read_to_string(paths::download_cache_index_file(temp.path())).unwrap(),
             "A.tar.gz"
         );
+    }
+
+    #[test]
+    fn rejects_unsafe_archive_cache_names() {
+        let temp = tempdir().unwrap();
+
+        for name in ["../evil.tar.gz", "/tmp/evil.tar.gz", "C:\\evil.zip"] {
+            let error =
+                verify_cached_archive_by_metadata(temp.path(), name, 1, "abc123").unwrap_err();
+
+            assert!(error.contains("not a file name"));
+        }
+    }
+
+    #[test]
+    fn rejects_archive_names_reserved_for_cache_files() {
+        let temp = tempdir().unwrap();
+
+        let cache_error =
+            verify_cached_archive_by_metadata(temp.path(), "cache.txt", 1, "abc123").unwrap_err();
+        let temp_error =
+            update_download_cache(temp.path(), "archive.tar.gz.download", 3).unwrap_err();
+
+        assert!(cache_error.contains("download cache index"));
+        assert!(temp_error.contains("temporary downloads"));
     }
 
     #[test]

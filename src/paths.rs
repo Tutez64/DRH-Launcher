@@ -1,6 +1,7 @@
 use directories::ProjectDirs;
 use std::env;
 use std::path::PathBuf;
+use std::path::{Component, Path};
 
 pub fn config_file() -> PathBuf {
     project_dirs()
@@ -60,6 +61,29 @@ pub fn previous_game_dir(install_dir: &std::path::Path) -> PathBuf {
 
 pub fn installed_metadata_file(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("installed.json")
+}
+
+pub fn safe_file_name<'a>(name: &'a str, description: &str) -> Result<&'a str, String> {
+    if name.is_empty() {
+        return Err(format!("{description} is empty"));
+    }
+    if name == "." || name == ".." {
+        return Err(format!("{description} is not a file name: {name}"));
+    }
+    if name.contains('/') || name.contains('\\') || name.contains(':') {
+        return Err(format!("{description} is not a file name: {name}"));
+    }
+
+    let path = Path::new(name);
+    if path.is_absolute()
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("{description} is not a file name: {name}"));
+    }
+
+    Ok(name)
 }
 
 fn project_dirs() -> Option<ProjectDirs> {
