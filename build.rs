@@ -1,6 +1,9 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=DRHL_UPDATE_ENDPOINT");
     println!("cargo:rerun-if-env-changed=DRHL_UPDATE_PUBLIC_KEY");
+    println!("cargo:rerun-if-changed=ui/app.slint");
+    println!("cargo:rerun-if-changed=ui/components.slint");
+    println!("cargo:rerun-if-changed=ui/theme.slint");
     println!("cargo:rerun-if-changed=assets/icons/app-icon.ico");
 
     let config = slint_build::CompilerConfiguration::new()
