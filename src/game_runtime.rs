@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::LauncherConfig;
 use crate::home_view::{
-    refresh_home_state, restore_previous_version_available, set_status_message,
+    refresh_home_state, set_status_message,
 };
 use crate::install_state::InstallState;
 use crate::log_view::refresh_logs_view;
@@ -23,7 +23,6 @@ pub(crate) fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, mes
     ui.set_update_check_enabled(false);
     ui.set_open_install_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
     ui.set_open_logs_folder_enabled(status.install_dir.as_deref().is_some_and(Path::exists));
-    ui.set_restore_previous_visible(restore_previous_version_available(config));
     ui.set_restore_previous_enabled(false);
     ui.set_reinstall_current_enabled(false);
     refresh_logs_view(ui, config);

@@ -19,7 +19,6 @@ pub(crate) struct HomeViewState {
     pub(crate) update_check_enabled: bool,
     pub(crate) open_install_folder_enabled: bool,
     pub(crate) open_logs_folder_enabled: bool,
-    pub(crate) restore_previous_visible: bool,
     pub(crate) restore_previous_enabled: bool,
     pub(crate) restore_previous_text: String,
     pub(crate) reinstall_current_enabled: bool,
@@ -94,7 +93,6 @@ pub(crate) fn home_view_state(
         update_check_enabled: true,
         open_install_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
         open_logs_folder_enabled: status.install_dir.as_deref().is_some_and(Path::exists),
-        restore_previous_visible: restore_previous_version_available(config),
         restore_previous_enabled: restore_previous_version_available(config),
         restore_previous_text: restore_previous_version_text(config),
         reinstall_current_enabled: reinstall_current_version_available(config),
@@ -170,7 +168,6 @@ pub(crate) fn apply_home_view_state(ui: &AppWindow, state: HomeViewState) {
     ui.set_update_check_enabled(state.update_check_enabled);
     ui.set_open_install_folder_enabled(state.open_install_folder_enabled);
     ui.set_open_logs_folder_enabled(state.open_logs_folder_enabled);
-    ui.set_restore_previous_visible(state.restore_previous_visible);
     ui.set_restore_previous_enabled(state.restore_previous_enabled);
     ui.set_restore_previous_text(state.restore_previous_text.into());
     ui.set_reinstall_current_enabled(state.reinstall_current_enabled);

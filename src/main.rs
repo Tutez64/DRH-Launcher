@@ -2670,7 +2670,7 @@ mod home_support_text_tests {
     }
 
     #[test]
-    fn hides_restore_when_previous_directory_is_missing() {
+    fn disables_restore_when_previous_directory_is_missing() {
         let temp = tempdir().unwrap();
         InstalledState {
             active: test_installed_release("V9"),
@@ -2689,7 +2689,7 @@ mod home_support_text_tests {
     }
 
     #[test]
-    fn shows_restore_when_previous_directory_exists() {
+    fn enables_restore_when_previous_directory_exists() {
         let temp = tempdir().unwrap();
         InstalledState {
             active: test_installed_release("V9"),

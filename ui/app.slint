@@ -258,7 +258,6 @@ export component AppWindow inherits Window {
         || root.custom-game-args != root.saved-custom-game-args;
     in property <bool> open-install-folder-enabled: false;
     in property <bool> open-logs-folder-enabled: false;
-    in property <bool> restore-previous-visible: false;
     in property <bool> restore-previous-enabled: false;
     in property <string> restore-previous-text: "Restore previous";
     in property <bool> reinstall-current-enabled: false;
@@ -753,7 +752,7 @@ export component AppWindow inherits Window {
                                 height: 38px;
                                 spacing: 10px;
 
-                                if root.restore-previous-visible : SecondaryButton {
+                                SecondaryButton {
                                     min-width: 112px;
                                     horizontal-stretch: 1;
                                     text: root.restore-previous-text;
