@@ -379,12 +379,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     )
                 };
 
-                let level = if is_error_message(&message) {
-                    diagnostics::LogLevel::Error
-                } else {
-                    diagnostics::LogLevel::Info
-                };
-                let _ = diagnostics::write(&install_dir, level, &message);
+                log_install_failure(&install_dir, &message);
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui.upgrade() else {
@@ -717,12 +712,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     config.download_cache_limit,
                 )
                 .unwrap_or_else(|error| format!("Could not reinstall current version: {error}"));
-                let level = if is_error_message(&message) {
-                    diagnostics::LogLevel::Error
-                } else {
-                    diagnostics::LogLevel::Info
-                };
-                let _ = diagnostics::write(&install_dir, level, &message);
+                log_install_failure(&install_dir, &message);
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui.upgrade() else {
@@ -1467,12 +1457,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     ),
                     Err(error) => error,
                 };
-                let level = if is_error_message(&message) {
-                    diagnostics::LogLevel::Error
-                } else {
-                    diagnostics::LogLevel::Info
-                };
-                let _ = diagnostics::write(&install_dir, level, &message);
+                log_install_failure(&install_dir, &message);
 
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui.upgrade() else {
@@ -1992,10 +1977,12 @@ fn install_platform_release(
     if repair_current
         && rollback_blocked_update_version(config).as_deref() == Some(release.version.as_str())
     {
-        return format!(
+        let message = format!(
             "Could not repair from cached archive, and update {} is skipped until a newer release is available.",
             release.version
         );
+        let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Error, &message);
+        return message;
     }
 
     if let Some(latest_release) = latest_release {
@@ -2137,13 +2124,26 @@ fn install_platform_release(
                             );
                             message
                         }
-                        Err(error) => error,
+                        Err(error) => {
+                            let _ = diagnostics::write(
+                                install_dir,
+                                diagnostics::LogLevel::Error,
+                                &error,
+                            );
+                            error
+                        }
                     }
                 }
-                Err(error) => error,
+                Err(error) => {
+                    let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Error, &error);
+                    error
+                }
             }
         }
-        Err(error) => error,
+        Err(error) => {
+            let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Error, &error);
+            error
+        }
     }
 }
 
@@ -2201,10 +2201,12 @@ fn repair_from_cached_active_archive(
         }
     }
 
-    Ok(format!(
+    let message = format!(
         "Repaired {} from cached archive.",
         repaired.active.version
-    ))
+    );
+    let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
+    Ok(message)
 }
 
 fn start_release_check(
@@ -2321,11 +2323,7 @@ fn ui_download_cache_limit(ui: &AppWindow) -> Result<usize, ()> {
 }
 
 pub(crate) fn log_for_config(config: &LauncherConfig, level: diagnostics::LogLevel, message: &str) {
-    let Some(install_dir) = config.install_dir.as_deref() else {
-        return;
-    };
-
-    let _ = diagnostics::write(install_dir, level, message);
+    log_for_config_or_default(config, level, message);
 }
 
 fn log_for_config_or_default(config: &LauncherConfig, level: diagnostics::LogLevel, message: &str) {
@@ -2342,6 +2340,14 @@ fn is_error_message(message: &str) -> bool {
         || message.starts_with("No ")
         || message.contains(" failed")
         || message.contains(" missing")
+        || message.contains(" mismatch")
+        || message.contains("Mismatch")
+}
+
+fn log_install_failure(install_dir: &Path, message: &str) {
+    if is_error_message(message) {
+        let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Error, message);
+    }
 }
 
 pub(crate) fn release_update_available(
@@ -2600,6 +2606,22 @@ mod home_support_text_tests {
             home_support_text("Version: V1", "Installing files..."),
             "Installing files..."
         );
+        assert_eq!(
+            home_support_text("Version: V1", "Installing V3..."),
+            "Installing V3..."
+        );
+        assert_eq!(
+            home_support_text("Version: V1", "Repairing DRH installation..."),
+            "Repairing DRH installation..."
+        );
+        assert_eq!(
+            home_support_text("Version: V1", "Reinstalling current version..."),
+            "Reinstalling current version..."
+        );
+        assert_eq!(
+            home_support_text("Version: V1", "Stopping DRH..."),
+            "Stopping DRH..."
+        );
     }
 
     #[test]
@@ -2648,7 +2670,7 @@ mod home_support_text_tests {
     }
 
     #[test]
-    fn keeps_restore_visible_when_previous_directory_is_broken() {
+    fn hides_restore_when_previous_directory_is_missing() {
         let temp = tempdir().unwrap();
         InstalledState {
             active: test_installed_release("V9"),
@@ -2662,8 +2684,38 @@ mod home_support_text_tests {
             ..LauncherConfig::default()
         };
 
-        assert!(restore_previous_version_available(&config));
+        assert!(!restore_previous_version_available(&config));
         assert_eq!(restore_previous_version_text(&config), "Restore V10");
+    }
+
+    #[test]
+    fn shows_restore_when_previous_directory_exists() {
+        let temp = tempdir().unwrap();
+        InstalledState {
+            active: test_installed_release("V9"),
+            previous: Some(test_installed_release("V10")),
+            blocked_update_version: None,
+        }
+        .save(temp.path())
+        .unwrap();
+        std::fs::create_dir_all(crate::paths::previous_game_dir(temp.path())).unwrap();
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().to_path_buf()),
+            ..LauncherConfig::default()
+        };
+
+        assert!(restore_previous_version_available(&config));
+    }
+
+    #[test]
+    fn classifies_install_failures_as_errors() {
+        assert!(is_error_message(
+            "SHA-256 mismatch for asset: expected abc, got def"
+        ));
+        assert!(is_error_message(
+            "Downloaded size mismatch for asset: expected 10 bytes, got 9 bytes"
+        ));
+        assert!(!is_error_message("Installed V2. Previous version: V1"));
     }
 
     fn test_release(version: &str) -> PlatformRelease {
