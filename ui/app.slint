@@ -200,6 +200,7 @@ export component AppWindow inherits Window {
     in property <string> home-support-text;
     in property <[LogLineView]> log-lines;
     in property <[GameSessionView]> game-log-sessions;
+    in property <string> game-log-sessions-label: "Game sessions";
     in property <[VersionEntryView]> drh-version-entries;
     in property <[VersionEntryView]> launcher-version-entries;
     in property <[MarkdownBlockView]> selected-version-changelog-blocks;
@@ -1454,7 +1455,7 @@ export component AppWindow inherits Window {
                                         spacing: 8px;
 
                                         SmallLabel {
-                                            label: "Game sessions";
+                                            label: root.game-log-sessions-label;
                                         }
 
                                         session-list := ListView {

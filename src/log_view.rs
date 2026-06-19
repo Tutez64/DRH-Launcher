@@ -24,6 +24,7 @@ pub(crate) fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
         Ok(sessions) => sessions,
         Err(error) => {
             ui.set_game_log_sessions(ModelRc::new(VecModel::from(Vec::new())));
+            ui.set_game_log_sessions_label(session_list_label(0).into());
             ui.set_selected_game_log_index(-1);
             ui.set_selected_game_log_enabled(false);
             ui.set_selected_game_log_title("Could not list game sessions".into());
@@ -45,6 +46,7 @@ pub(crate) fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
         })
         .collect::<Vec<_>>();
     ui.set_game_log_sessions(ModelRc::new(VecModel::from(session_views)));
+    ui.set_game_log_sessions_label(session_list_label(sessions.len()).into());
 
     if ui.get_log_source() == 0 {
         ui.set_selected_game_log_enabled(!sessions.is_empty());
@@ -80,6 +82,10 @@ pub(crate) fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
     ui.set_selected_game_log_title(session.title.clone().into());
     ui.set_selected_game_log_id(game_log_session_id(&session.path).into());
     set_log_lines_if_changed(ui, log_lines_from_text(&content, wrap_columns));
+}
+
+fn session_list_label(count: usize) -> String {
+    format!("Game sessions ({count})")
 }
 
 fn set_log_lines_if_changed(ui: &AppWindow, lines: Vec<LogLineView>) {
@@ -218,6 +224,12 @@ fn log_line_color(line: &str) -> Brush {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_game_session_list_label_with_count() {
+        assert_eq!(session_list_label(0), "Game sessions (0)");
+        assert_eq!(session_list_label(3), "Game sessions (3)");
+    }
 
     #[test]
     fn recognizes_all_game_log_levels() {
