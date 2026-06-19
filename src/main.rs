@@ -38,7 +38,7 @@ use std::thread;
 use archive::extract_to_staging;
 use config::{LaunchArgumentsMode, LauncherConfig};
 use download::{
-    DownloadProgress, download_and_verify_with_progress, prune_download_cache,
+    DownloadProgress, VerifiedDownload, download_and_verify_with_progress, prune_download_cache,
     update_download_cache, verify_cached_archive_by_metadata,
 };
 use game_install::inspect_install;
@@ -56,8 +56,9 @@ use home_view::{
 };
 use install_state::InstallState;
 use installer::{
-    install_extracted_archive_with_blocked_update, repair_active_install_from_extracted_archive,
-    repair_release_from_extracted_archive, restore_previous_version,
+    install_extracted_archive_preserving_previous, install_extracted_archive_with_blocked_update,
+    repair_active_install_from_extracted_archive, repair_release_from_extracted_archive,
+    restore_previous_version,
 };
 use launch_options::{
     apply_launch_arguments_mode_to_view, apply_launch_options_to_view, launch_options_from_model,
@@ -72,7 +73,8 @@ use platform::Platform;
 use release_source::ReleaseSource;
 use slint::{CloseRequestResponse, Timer};
 use version_history::{
-    latest_drh_release_version_for_update_block, refresh_selected_version_view,
+    latest_drh_release_version_for_update_block, preserve_previous_slot_on_install,
+    refresh_selected_version_view,
     refresh_version_history_selection, selected_drh_history_entry,
     selected_history_blocked_update_version, selected_version_release_url,
     start_version_history_refresh,
@@ -341,33 +343,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             let repair_from_cache = matches!(install_status.state, InstallState::BrokenInstall);
             thread::spawn(move || {
                 let message = if repair_from_cache {
-                    match repair_from_cached_active_archive(
+                    repair_active_install(
                         &ui,
                         &install_dir,
-                        config.download_cache_limit,
-                    ) {
-                        Ok(message) => message,
-                        Err(error) => {
-                            let message = format!(
-                                "Cached repair unavailable: {error}. Checking GitHub releases."
-                            );
-                            let _ = diagnostics::write(
-                                &install_dir,
-                                diagnostics::LogLevel::Warn,
-                                &message,
-                            );
-                            report_background_activity(&ui, message);
-                            install_latest_release(
-                                &ui,
-                                &install_dir,
-                                &config,
-                                &release_source,
-                                Arc::clone(&latest_release),
-                                release,
-                                true,
-                            )
-                        }
-                    }
+                        &config,
+                        &release_source,
+                    )
+                    .unwrap_or_else(|error| error)
                 } else {
                     install_latest_release(
                         &ui,
@@ -678,6 +660,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
         let game_process = Rc::clone(&game_process);
+        let release_source = release_source.clone();
         ui.unwrap().on_reinstall_current_version(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -701,11 +684,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             apply_updating_home_state(&ui, &config, "Reinstalling current version...");
 
             let ui = ui.as_weak();
+            let release_source = release_source.clone();
             thread::spawn(move || {
-                let message = repair_from_cached_active_archive(
+                let message = repair_active_install(
                     &ui,
                     &install_dir,
-                    config.download_cache_limit,
+                    &config,
+                    &release_source,
                 )
                 .unwrap_or_else(|error| format!("Could not reinstall current version: {error}"));
                 log_install_failure(&install_dir, &message);
@@ -1391,6 +1376,12 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 .lock()
                 .expect("pending DRH version install lock poisoned")
                 .take();
+            let drh_entries = drh_version_history
+                .lock()
+                .expect("DRH version history lock poisoned")
+                .clone();
+            let preserve_previous =
+                preserve_previous_slot_on_install(&drh_entries, &config_snapshot, &version);
             let message = format!("Installing DRH {version}...");
             apply_updating_home_state(&ui, &config_snapshot, &message);
             ui.set_refresh_version_history_enabled(false);
@@ -1426,6 +1417,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                             latest_release: None,
                             release,
                             repair_current: false,
+                            preserve_previous,
                             blocked_update_version: selected_history_blocked_update_version(
                                 latest_version.as_deref(),
                                 version.as_str(),
@@ -1923,6 +1915,7 @@ fn install_latest_release(
                 latest_release: Some(latest_release),
                 release,
                 repair_current,
+                preserve_previous: false,
                 blocked_update_version: None,
             },
         ),
@@ -1934,6 +1927,7 @@ struct InstallPlatformReleaseRequest {
     latest_release: Option<Arc<Mutex<Option<PlatformRelease>>>>,
     release: PlatformRelease,
     repair_current: bool,
+    preserve_previous: bool,
     blocked_update_version: Option<String>,
 }
 
@@ -1948,6 +1942,7 @@ fn install_platform_release(
         latest_release,
         release,
         repair_current,
+        preserve_previous,
         blocked_update_version,
     } = request;
 
@@ -1972,61 +1967,9 @@ fn install_platform_release(
         &format!("Found release {}. Starting install.", release.version),
     );
     report_background_activity(ui, format!("Preparing download for {}...", release.version));
-    let mut last_percent = None::<u64>;
-    let mut last_logged_percent = None::<u64>;
-    let mut reported_verification = false;
-    match download_and_verify_with_progress(
-        &release.asset,
-        install_dir,
-        |progress| {
-            let percent = progress_percent(&progress);
-            if percent != last_percent
-                || progress.downloaded == 0
-                || progress.downloaded == progress.total
-            {
-                last_percent = percent;
-                report_background_activity(
-                    ui,
-                    format_download_progress(&release.asset.name, &progress),
-                );
-            }
-            if should_log_download_progress(percent, last_logged_percent) {
-                last_logged_percent = percent;
-                let _ = diagnostics::write(
-                    install_dir,
-                    diagnostics::LogLevel::Info,
-                    &format_download_progress(&release.asset.name, &progress),
-                );
-            }
-            if !reported_verification && progress.total > 0 && progress.downloaded == progress.total
-            {
-                reported_verification = true;
-                let message = "Verifying download...".to_string();
-                let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
-                report_background_activity(ui, message);
-            }
-        },
-        |cache_error| {
-            let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Warn, &cache_error);
-        },
-    ) {
+    match download_release_with_progress(ui, install_dir, &release) {
         Ok(download) => {
-            let verified_message = if download.reused {
-                format!(
-                    "Reused cached archive: {} ({} bytes, sha256:{})",
-                    download.path.display(),
-                    download.size,
-                    download.sha256
-                )
-            } else {
-                format!(
-                    "Download verified: {} ({} bytes, sha256:{})",
-                    download.path.display(),
-                    download.size,
-                    download.sha256
-                )
-            };
-            let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &verified_message);
+            log_verified_download(install_dir, &download);
             let message = "Extracting archive...".to_string();
             let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
             report_background_activity(ui, message);
@@ -2046,6 +1989,14 @@ fn install_platform_release(
                             install_dir,
                             &release,
                             release_source,
+                        )
+                    } else if preserve_previous {
+                        install_extracted_archive_preserving_previous(
+                            &extracted,
+                            install_dir,
+                            &release,
+                            release_source,
+                            blocked_update_version,
                         )
                     } else {
                         install_extracted_archive_with_blocked_update(
@@ -2109,10 +2060,11 @@ fn install_platform_release(
     }
 }
 
-fn repair_from_cached_active_archive(
+fn repair_active_install(
     ui: &slint::Weak<AppWindow>,
     install_dir: &Path,
-    download_cache_limit: usize,
+    config: &LauncherConfig,
+    release_source: &ReleaseSource,
 ) -> Result<String, String> {
     let installed = install_metadata::InstalledState::load(install_dir)?;
     let active = installed.active;
@@ -2120,19 +2072,39 @@ fn repair_from_cached_active_archive(
     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
     report_background_activity(ui, message);
 
-    let download = verify_cached_archive_by_metadata(
+    let (download, downloaded) = match verify_cached_archive_by_metadata(
         install_dir,
         &active.archive,
         active.archive_size,
         &active.archive_sha256,
-    )?;
-    let message = format!(
-        "Reused cached archive for repair: {} ({} bytes, sha256:{})",
-        download.path.display(),
-        download.size,
-        download.sha256
-    );
-    let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
+    ) {
+        Ok(download) => {
+            let message = format!(
+                "Reused cached archive for repair: {} ({} bytes, sha256:{})",
+                download.path.display(),
+                download.size,
+                download.sha256
+            );
+            let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
+            (download, false)
+        }
+        Err(cache_error) => {
+            let message = format!(
+                "Cached archive unavailable: {cache_error}. Downloading {}...",
+                active.version
+            );
+            let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Warn, &message);
+            report_background_activity(ui, message.clone());
+            let release = discover_platform_release_by_tag_for_install(
+                release_source,
+                Platform::current(),
+                &active.version,
+            )?;
+            let download = download_release_with_progress(ui, install_dir, &release)?;
+            log_verified_download(install_dir, &download);
+            (download, true)
+        }
+    };
 
     let message = "Extracting archive...".to_string();
     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
@@ -2148,7 +2120,7 @@ fn repair_from_cached_active_archive(
     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
     report_background_activity(ui, message);
     let repaired = repair_active_install_from_extracted_archive(&extracted, install_dir)?;
-    match update_download_cache(install_dir, &active.archive, download_cache_limit) {
+    match update_download_cache(install_dir, &active.archive, config.download_cache_limit) {
         Ok(removed) => {
             for archive in removed {
                 let _ = diagnostics::write(
@@ -2163,12 +2135,80 @@ fn repair_from_cached_active_archive(
         }
     }
 
-    let message = format!(
-        "Repaired {} from cached archive.",
-        repaired.active.version
-    );
+    let message = if downloaded {
+        format!("Reinstalled {}.", repaired.active.version)
+    } else {
+        format!(
+            "Repaired {} from cached archive.",
+            repaired.active.version
+        )
+    };
     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
     Ok(message)
+}
+
+fn download_release_with_progress(
+    ui: &slint::Weak<AppWindow>,
+    install_dir: &Path,
+    release: &PlatformRelease,
+) -> Result<VerifiedDownload, String> {
+    let mut last_percent = None::<u64>;
+    let mut last_logged_percent = None::<u64>;
+    let mut reported_verification = false;
+    download_and_verify_with_progress(
+        &release.asset,
+        install_dir,
+        |progress| {
+            let percent = progress_percent(&progress);
+            if percent != last_percent
+                || progress.downloaded == 0
+                || progress.downloaded == progress.total
+            {
+                last_percent = percent;
+                report_background_activity(
+                    ui,
+                    format_download_progress(&release.asset.name, &progress),
+                );
+            }
+            if should_log_download_progress(percent, last_logged_percent) {
+                last_logged_percent = percent;
+                let _ = diagnostics::write(
+                    install_dir,
+                    diagnostics::LogLevel::Info,
+                    &format_download_progress(&release.asset.name, &progress),
+                );
+            }
+            if !reported_verification && progress.total > 0 && progress.downloaded == progress.total
+            {
+                reported_verification = true;
+                let message = "Verifying download...".to_string();
+                let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
+                report_background_activity(ui, message);
+            }
+        },
+        |cache_error| {
+            let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Warn, &cache_error);
+        },
+    )
+}
+
+fn log_verified_download(install_dir: &Path, download: &VerifiedDownload) {
+    let verified_message = if download.reused {
+        format!(
+            "Reused cached archive: {} ({} bytes, sha256:{})",
+            download.path.display(),
+            download.size,
+            download.sha256
+        )
+    } else {
+        format!(
+            "Download verified: {} ({} bytes, sha256:{})",
+            download.path.display(),
+            download.size,
+            download.sha256
+        )
+    };
+    let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &verified_message);
 }
 
 fn start_release_check(

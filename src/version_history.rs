@@ -217,7 +217,7 @@ fn apply_selected_version_view(
             return;
         };
         ui.set_selected_drh_version_index(index as i32);
-        apply_selected_drh_version_view(ui, config, &drh_entries[index], pending_version);
+        apply_selected_drh_version_view(ui, config, &drh_entries[index], pending_version, drh_entries);
     } else {
         let Some(index) = normalize_selected_index(
             ui.get_selected_launcher_version_index(),
@@ -257,6 +257,7 @@ fn clear_selected_version_view(ui: &AppWindow) {
     ui.set_selected_version_action_text("Install selected version".into());
     ui.set_selected_version_action_enabled(false);
     ui.set_selected_version_replace_confirmation_visible(false);
+    ui.set_selected_version_replace_confirmation_text("".into());
 }
 
 fn drh_version_entry_view(
@@ -284,6 +285,7 @@ fn apply_selected_drh_version_view(
     config: &LauncherConfig,
     entry: &PlatformReleaseHistoryEntry,
     pending_version: Option<&str>,
+    drh_entries: &[PlatformReleaseHistoryEntry],
 ) {
     let (action_text, action_enabled, confirmation_visible) =
         selected_drh_version_action(config, entry, pending_version, version_action_blocker(ui));
@@ -298,6 +300,13 @@ fn apply_selected_drh_version_view(
     ui.set_selected_version_action_text(action_text.into());
     ui.set_selected_version_action_enabled(action_enabled);
     ui.set_selected_version_replace_confirmation_visible(confirmation_visible);
+    ui.set_selected_version_replace_confirmation_text(
+        if confirmation_visible {
+            selected_drh_version_replace_confirmation_text(config, drh_entries, entry).into()
+        } else {
+            "".into()
+        },
+    );
 }
 
 fn apply_selected_launcher_version_view(ui: &AppWindow, release: &RepositoryRelease, index: usize) {
@@ -316,6 +325,7 @@ fn apply_selected_launcher_version_view(ui: &AppWindow, release: &RepositoryRele
     ui.set_selected_version_action_text("Use Home update banner".into());
     ui.set_selected_version_action_enabled(false);
     ui.set_selected_version_replace_confirmation_visible(false);
+    ui.set_selected_version_replace_confirmation_text("".into());
 }
 
 pub(crate) fn selected_drh_history_entry(
@@ -502,6 +512,91 @@ fn selected_drh_version_action(
     }
 }
 
+fn drh_history_index(entries: &[PlatformReleaseHistoryEntry], version: &str) -> Option<usize> {
+    entries
+        .iter()
+        .position(|entry| entry.release.version.trim() == version.trim())
+}
+
+pub(crate) fn preserve_previous_slot_on_install(
+    entries: &[PlatformReleaseHistoryEntry],
+    config: &LauncherConfig,
+    target_version: &str,
+) -> bool {
+    let Some(active) = installed_active_release_version(config) else {
+        return false;
+    };
+    let Some(previous) = restore_previous_release_version(config) else {
+        return false;
+    };
+    preserve_previous_slot_on_install_versions(entries, &active, &previous, target_version)
+}
+
+pub(crate) fn preserve_previous_slot_on_install_versions(
+    entries: &[PlatformReleaseHistoryEntry],
+    active_version: &str,
+    previous_version: &str,
+    target_version: &str,
+) -> bool {
+    if target_version.trim() == active_version.trim()
+        || target_version.trim() == previous_version.trim()
+    {
+        return false;
+    }
+
+    let Some(active_idx) = drh_history_index(entries, active_version) else {
+        return false;
+    };
+    let Some(previous_idx) = drh_history_index(entries, previous_version) else {
+        return false;
+    };
+    let Some(target_idx) = drh_history_index(entries, target_version) else {
+        return false;
+    };
+
+    if previous_idx >= active_idx {
+        return false;
+    }
+
+    target_idx > active_idx || (target_idx < active_idx && target_idx > previous_idx)
+}
+
+fn selected_drh_version_replace_confirmation_text(
+    config: &LauncherConfig,
+    entries: &[PlatformReleaseHistoryEntry],
+    entry: &PlatformReleaseHistoryEntry,
+) -> String {
+    let target = entry.release.version.as_str();
+    let active = installed_active_release_version(config).unwrap_or_else(|| "unknown".to_string());
+    let previous = restore_previous_release_version(config);
+    let preserve_previous = preserve_previous_slot_on_install(entries, config, target);
+
+    let mut message = format!("Installing {target} will replace the current version ({active}).");
+
+    if preserve_previous {
+        if let Some(previous) = &previous {
+            message.push_str(&format!(
+                "\n{previous} will remain on disk as the Restore version."
+            ));
+        }
+        message.push_str(&format!("\n{active} will be removed from disk."));
+    } else {
+        message.push_str(&format!(
+            "\n{active} will remain on disk as the Restore version."
+        ));
+        if let Some(previous) = previous {
+            message.push_str(&format!(
+                "\n{previous} (Restore) will be removed from disk."
+            ));
+        }
+    }
+
+    message.push_str(
+        "\n\nOlder releases may no longer connect properly, may miss features or may be unstable.",
+    );
+    message
+}
+
 fn version_action_blocker(ui: &AppWindow) -> Option<&'static str> {
     let install_action = ui.get_install_action_text();
     if install_action == InstallState::Updating.primary_action() {
@@ -587,6 +682,52 @@ mod tests {
             selected_drh_version_action(&config, &previous_entry, None, None),
             ("Use Restore".to_string(), false, false)
         );
+    }
+
+    #[test]
+    fn preserves_previous_slot_after_restore_when_installing_between_versions() {
+        let entries = vec![
+            test_history_entry("V10"),
+            test_history_entry("V9"),
+            test_history_entry("V8"),
+            test_history_entry("V7"),
+        ];
+
+        assert!(preserve_previous_slot_on_install_versions(
+            &entries, "V8", "V10", "V9"
+        ));
+        assert!(preserve_previous_slot_on_install_versions(
+            &entries, "V8", "V10", "V7"
+        ));
+        assert!(!preserve_previous_slot_on_install_versions(
+            &entries, "V10", "V9", "V8"
+        ));
+        assert!(!preserve_previous_slot_on_install_versions(
+            &entries, "V8", "V10", "V10"
+        ));
+    }
+
+    #[test]
+    fn replace_confirmation_mentions_current_as_restore_fallback() {
+        let temp = tempdir().unwrap();
+        InstalledState {
+            active: test_installed_release("V10"),
+            previous: None,
+            blocked_update_version: None,
+        }
+        .save(temp.path())
+        .unwrap();
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().to_path_buf()),
+            ..LauncherConfig::default()
+        };
+        let entries = vec![test_history_entry("V10"), test_history_entry("V9")];
+        let entry = test_history_entry("V9");
+
+        let message = selected_drh_version_replace_confirmation_text(&config, &entries, &entry);
+
+        assert!(message.contains("Installing V9 will replace V10 (current)."));
+        assert!(message.contains("V10 will remain on disk as the Restore version."));
     }
 
     fn test_history_entry(version: &str) -> PlatformReleaseHistoryEntry {

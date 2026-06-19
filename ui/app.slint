@@ -274,6 +274,7 @@ export component AppWindow inherits Window {
     in property <string> selected-version-action-text: "Install selected version";
     in property <bool> selected-version-action-enabled: false;
     in property <bool> selected-version-replace-confirmation-visible: false;
+    in property <string> selected-version-replace-confirmation-text: "";
     in-out property <length> selected-version-replace-popover-anchor-x: 0px;
     in-out property <length> selected-version-replace-popover-anchor-y: 0px;
     in-out property <int> settings-page: 0;
@@ -1770,7 +1771,7 @@ export component AppWindow inherits Window {
                 x: parent.popover-padding;
                 y: parent.popover-padding;
                 width: parent.width - parent.popover-padding * 2;
-                text: "Install older DRH version?";
+                text: "Replace installed version?";
                 color: Theme.text-title;
                 font-size: 14px;
                 font-weight: 800;
@@ -1781,7 +1782,7 @@ export component AppWindow inherits Window {
                 y: replace-popover-title.y + replace-popover-title.preferred-height + parent.popover-spacing;
                 width: parent.width - parent.popover-padding * 2;
                 height: self.preferred-height;
-                text: "Older releases may no longer connect properly, may miss features or may be unstable.";
+                text: root.selected-version-replace-confirmation-text;
                 color: Theme.text-body;
                 font-size: 13px;
                 wrap: word-wrap;

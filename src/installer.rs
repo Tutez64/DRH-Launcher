@@ -123,6 +123,88 @@ pub fn install_extracted_archive_with_blocked_update(
     Ok(installed)
 }
 
+pub fn install_extracted_archive_preserving_previous(
+    extracted: &ExtractedArchive,
+    install_dir: &Path,
+    release: &PlatformRelease,
+    source: &ReleaseSource,
+    blocked_update_version: Option<String>,
+) -> Result<InstalledState, String> {
+    let source_game_dir = find_extracted_game_dir(&extracted.path)?;
+    let game_dir = paths::game_dir(install_dir);
+    let existing = InstalledState::load(install_dir).ok();
+    let previous_metadata = existing.as_ref().and_then(|state| state.previous.clone());
+    let blocked_update_version = blocked_update_version.or_else(|| {
+        existing
+            .as_ref()
+            .and_then(|state| state.blocked_update_version.clone())
+    });
+
+    if let Some(parent) = game_dir.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Could not create game root directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    if game_dir.exists() {
+        log_install_step(
+            install_dir,
+            &format!(
+                "Removing current install at {} (keeping previous).",
+                game_dir.display()
+            ),
+        );
+        fs::remove_dir_all(&game_dir).map_err(|error| {
+            format!(
+                "Could not remove current game directory {}: {error}",
+                game_dir.display()
+            )
+        })?;
+    }
+
+    log_install_step(
+        install_dir,
+        &format!(
+            "Installing extracted game from {} to {}.",
+            source_game_dir.display(),
+            game_dir.display()
+        ),
+    );
+    fs::rename(&source_game_dir, &game_dir).map_err(|error| {
+        format!(
+            "Could not move {} to {}: {error}",
+            source_game_dir.display(),
+            game_dir.display()
+        )
+    })?;
+
+    let installed = InstalledState {
+        active: InstalledRelease::from_platform_release(release, source),
+        previous: previous_metadata,
+        blocked_update_version,
+    };
+    installed
+        .save(install_dir)
+        .map_err(|error| format!("Could not write installed metadata: {error}"))?;
+    log_install_step(
+        install_dir,
+        &format!(
+            "Wrote installed metadata for {} (previous kept: {}).",
+            installed.active.version,
+            installed
+                .previous
+                .as_ref()
+                .map(|previous| previous.version.as_str())
+                .unwrap_or("none")
+        ),
+    );
+
+    Ok(installed)
+}
+
 pub fn restore_previous_version(install_dir: &Path) -> Result<InstalledState, String> {
     let state = InstalledState::load(install_dir)?;
     let previous_metadata = state
@@ -364,6 +446,58 @@ mod tests {
             paths::previous_game_dir(&install_dir)
                 .join(primary_game_executable_name())
                 .exists()
+        );
+    }
+
+    #[test]
+    fn installs_extracted_archive_without_replacing_previous_slot() {
+        let temp = tempdir().unwrap();
+        let install_dir = temp.path().join("install");
+        let current_game = paths::game_dir(&install_dir);
+        let previous_game = paths::previous_game_dir(&install_dir);
+        fs::create_dir_all(&current_game).unwrap();
+        fs::create_dir_all(&previous_game).unwrap();
+        fs::write(current_game.join(primary_game_executable_name()), "current").unwrap();
+        fs::write(
+            previous_game.join(primary_game_executable_name()),
+            "previous",
+        )
+        .unwrap();
+        InstalledState {
+            active: test_installed_release("V8"),
+            previous: Some(test_installed_release("V10")),
+            blocked_update_version: Some("V9".to_string()),
+        }
+        .save(&install_dir)
+        .unwrap();
+
+        let extracted_root = temp.path().join("extracted");
+        let extracted_game = extracted_root.join("game");
+        fs::create_dir_all(&extracted_game).unwrap();
+        fs::write(extracted_game.join(primary_game_executable_name()), "new").unwrap();
+        let extracted = ExtractedArchive {
+            path: extracted_root,
+        };
+
+        let installed = install_extracted_archive_preserving_previous(
+            &extracted,
+            &install_dir,
+            &test_release("V9"),
+            &ReleaseSource::fixtures(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(installed.active.version, "V9");
+        assert_eq!(installed.previous.unwrap().version, "V10");
+        assert_eq!(installed.blocked_update_version.as_deref(), Some("V9"));
+        assert_eq!(
+            fs::read_to_string(current_game.join(primary_game_executable_name())).unwrap(),
+            "new"
+        );
+        assert_eq!(
+            fs::read_to_string(previous_game.join(primary_game_executable_name())).unwrap(),
+            "previous"
         );
     }
 
