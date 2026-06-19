@@ -56,6 +56,9 @@ pub fn download_and_verify_with_progress(
         }
     }
 
+    // In reqwest's blocking client this timeout is applied per `read` call and reset
+    // after each chunk, so it acts as a stall timeout rather than a total deadline:
+    // large archives download fine as long as data keeps flowing.
     let client = Client::builder()
         .timeout(Duration::from_secs(60))
         .build()
@@ -69,67 +72,75 @@ pub fn download_and_verify_with_progress(
         .error_for_status()
         .map_err(|error| format!("Download failed for {}: {error}", asset.name))?;
 
-    let mut file = File::create(&temp_path)
-        .map_err(|error| format!("Could not create {}: {error}", temp_path.display()))?;
+    // Any failure below must not leave a partial `.download` file behind: a stalled
+    // read times out mid-transfer, and the cache pruning would otherwise keep the
+    // orphan around indefinitely.
+    let result = (|| {
+        let mut file = File::create(&temp_path)
+            .map_err(|error| format!("Could not create {}: {error}", temp_path.display()))?;
 
-    let expected_size = asset.size;
-    let mut bytes_written = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-    on_progress(DownloadProgress {
-        downloaded: bytes_written,
-        total: expected_size,
-    });
-    loop {
-        let bytes_read = response
-            .read(&mut buffer)
-            .map_err(|error| format!("Could not download {}: {error}", asset.name))?;
-        if bytes_read == 0 {
-            break;
-        }
-
-        file.write_all(&buffer[..bytes_read])
-            .map_err(|error| format!("Could not write {}: {error}", temp_path.display()))?;
-        bytes_written += bytes_read as u64;
+        let expected_size = asset.size;
+        let mut bytes_written = 0_u64;
+        let mut buffer = [0_u8; 64 * 1024];
         on_progress(DownloadProgress {
             downloaded: bytes_written,
             total: expected_size,
         });
-    }
-    file.flush()
-        .map_err(|error| format!("Could not flush {}: {error}", temp_path.display()))?;
+        loop {
+            let bytes_read = response
+                .read(&mut buffer)
+                .map_err(|error| format!("Could not download {}: {error}", asset.name))?;
+            if bytes_read == 0 {
+                break;
+            }
 
-    if bytes_written != asset.size {
+            file.write_all(&buffer[..bytes_read])
+                .map_err(|error| format!("Could not write {}: {error}", temp_path.display()))?;
+            bytes_written += bytes_read as u64;
+            on_progress(DownloadProgress {
+                downloaded: bytes_written,
+                total: expected_size,
+            });
+        }
+        file.flush()
+            .map_err(|error| format!("Could not flush {}: {error}", temp_path.display()))?;
+
+        if bytes_written != asset.size {
+            return Err(format!(
+                "Downloaded size mismatch for {}: expected {} bytes, got {} bytes",
+                asset.name, asset.size, bytes_written
+            ));
+        }
+
+        let actual_sha256 = sha256_file(&temp_path)
+            .map_err(|error| format!("Could not hash {}: {error}", temp_path.display()))?;
+        if actual_sha256 != expected_sha256 {
+            return Err(format!(
+                "SHA-256 mismatch for {}: expected {}, got {}",
+                asset.name, expected_sha256, actual_sha256
+            ));
+        }
+
+        fs::rename(&temp_path, &final_path).map_err(|error| {
+            format!(
+                "Could not move {} to {}: {error}",
+                temp_path.display(),
+                final_path.display()
+            )
+        })?;
+
+        Ok(VerifiedDownload {
+            path: final_path,
+            sha256: actual_sha256,
+            size: bytes_written,
+            reused: false,
+        })
+    })();
+
+    if result.is_err() {
         let _ = fs::remove_file(&temp_path);
-        return Err(format!(
-            "Downloaded size mismatch for {}: expected {} bytes, got {} bytes",
-            asset.name, asset.size, bytes_written
-        ));
     }
-
-    let actual_sha256 = sha256_file(&temp_path)
-        .map_err(|error| format!("Could not hash {}: {error}", temp_path.display()))?;
-    if actual_sha256 != expected_sha256 {
-        let _ = fs::remove_file(&temp_path);
-        return Err(format!(
-            "SHA-256 mismatch for {}: expected {}, got {}",
-            asset.name, expected_sha256, actual_sha256
-        ));
-    }
-
-    fs::rename(&temp_path, &final_path).map_err(|error| {
-        format!(
-            "Could not move {} to {}: {error}",
-            temp_path.display(),
-            final_path.display()
-        )
-    })?;
-
-    Ok(VerifiedDownload {
-        path: final_path,
-        sha256: actual_sha256,
-        size: bytes_written,
-        reused: false,
-    })
+    result
 }
 
 pub fn verify_cached_archive_by_metadata(
@@ -221,7 +232,9 @@ pub fn update_download_cache(
     fs::write(&cache_file, cache.join("\n"))
         .map_err(|error| format!("Could not write {}: {error}", cache_file.display()))?;
 
-    prune_downloads_dir(&downloads_dir, &cache)
+    // Runs right after a successful download on the same thread, so no other download
+    // is in flight: it is safe to reclaim orphaned `.download` files here.
+    prune_downloads_dir(&downloads_dir, &cache, true)
 }
 
 pub fn prune_download_cache(install_dir: &Path, limit: usize) -> Result<Vec<PathBuf>, String> {
@@ -240,7 +253,9 @@ pub fn prune_download_cache(install_dir: &Path, limit: usize) -> Result<Vec<Path
     fs::write(&cache_file, cache.join("\n"))
         .map_err(|error| format!("Could not write {}: {error}", cache_file.display()))?;
 
-    prune_downloads_dir(&downloads_dir, &cache)
+    // Can be triggered from Settings while a background install download is writing a
+    // `.download` file, so temporary downloads must be preserved here.
+    prune_downloads_dir(&downloads_dir, &cache, false)
 }
 
 fn read_download_cache_index(install_dir: &Path) -> Vec<String> {
@@ -257,7 +272,11 @@ fn read_download_cache_index(install_dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn prune_downloads_dir(downloads_dir: &Path, keep: &[String]) -> Result<Vec<PathBuf>, String> {
+fn prune_downloads_dir(
+    downloads_dir: &Path,
+    keep: &[String],
+    remove_orphan_temps: bool,
+) -> Result<Vec<PathBuf>, String> {
     let mut removed = Vec::new();
     let keep = keep.iter().map(String::as_str).collect::<Vec<_>>();
     for entry in fs::read_dir(downloads_dir)
@@ -273,7 +292,13 @@ fn prune_downloads_dir(downloads_dir: &Path, keep: &[String]) -> Result<Vec<Path
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if name == "cache.txt" || name.ends_with(".download") || keep.contains(&name) {
+        if name == "cache.txt" || keep.contains(&name) {
+            continue;
+        }
+        // A `.download` file is either an orphan from an interrupted download or an
+        // active transfer. Only reclaim it when the caller guarantees no download is in
+        // flight; otherwise leave it so a concurrent download is not corrupted.
+        if name.ends_with(".download") && !remove_orphan_temps {
             continue;
         }
 
@@ -450,6 +475,46 @@ mod tests {
             fs::read_to_string(paths::download_cache_index_file(temp.path())).unwrap(),
             "A.tar.gz"
         );
+    }
+
+    #[test]
+    fn post_install_cache_update_removes_orphaned_temporary_downloads() {
+        let temp = tempdir().unwrap();
+        let downloads_dir = paths::downloads_dir(temp.path());
+        fs::create_dir_all(&downloads_dir).unwrap();
+        fs::write(downloads_dir.join("A.tar.gz"), b"a").unwrap();
+        fs::write(downloads_dir.join("A.tar.gz.download"), b"partial-old").unwrap();
+        fs::write(downloads_dir.join("B.tar.gz.download"), b"partial-other").unwrap();
+
+        let mut removed = update_download_cache(temp.path(), "A.tar.gz", 3).unwrap();
+        removed.sort();
+
+        assert!(downloads_dir.join("A.tar.gz").exists());
+        assert!(!downloads_dir.join("A.tar.gz.download").exists());
+        assert!(!downloads_dir.join("B.tar.gz.download").exists());
+        assert_eq!(
+            removed,
+            vec![
+                downloads_dir.join("A.tar.gz.download"),
+                downloads_dir.join("B.tar.gz.download"),
+            ]
+        );
+    }
+
+    #[test]
+    fn settings_pruning_preserves_in_progress_temporary_downloads() {
+        let temp = tempdir().unwrap();
+        let downloads_dir = paths::downloads_dir(temp.path());
+        fs::create_dir_all(&downloads_dir).unwrap();
+        fs::write(downloads_dir.join("A.tar.gz"), b"a").unwrap();
+        fs::write(downloads_dir.join("A.tar.gz.download"), b"in-progress").unwrap();
+        fs::write(paths::download_cache_index_file(temp.path()), "A.tar.gz\n").unwrap();
+
+        let removed = prune_download_cache(temp.path(), 3).unwrap();
+
+        assert!(downloads_dir.join("A.tar.gz").exists());
+        assert!(downloads_dir.join("A.tar.gz.download").exists());
+        assert!(removed.is_empty());
     }
 
     #[test]
