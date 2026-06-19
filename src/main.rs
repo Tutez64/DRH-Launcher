@@ -1394,8 +1394,14 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             let message = format!("Installing DRH {version}...");
             apply_updating_home_state(&ui, &config_snapshot, &message);
             ui.set_refresh_version_history_enabled(false);
-            ui.set_selected_version_action_enabled(false);
             ui.set_selected_version_replace_confirmation_visible(false);
+            refresh_selected_version_view(
+                &ui,
+                &config_snapshot,
+                &drh_version_history,
+                &launcher_version_history,
+                &pending_drh_version_install,
+            );
 
             let ui = ui.as_weak();
             let release_source = release_source.clone();
