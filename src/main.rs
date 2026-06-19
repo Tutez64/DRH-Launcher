@@ -1954,12 +1954,10 @@ fn install_platform_release(
     if repair_current
         && rollback_blocked_update_version(config).as_deref() == Some(release.version.as_str())
     {
-        let message = format!(
+        return format!(
             "Could not repair from cached archive, and update {} is skipped until a newer release is available.",
             release.version
         );
-        let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Error, &message);
-        return message;
     }
 
     if let Some(latest_release) = latest_release {
@@ -2101,26 +2099,13 @@ fn install_platform_release(
                             );
                             message
                         }
-                        Err(error) => {
-                            let _ = diagnostics::write(
-                                install_dir,
-                                diagnostics::LogLevel::Error,
-                                &error,
-                            );
-                            error
-                        }
+                        Err(error) => error,
                     }
                 }
-                Err(error) => {
-                    let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Error, &error);
-                    error
-                }
+                Err(error) => error,
             }
         }
-        Err(error) => {
-            let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Error, &error);
-            error
-        }
+        Err(error) => error,
     }
 }
 
