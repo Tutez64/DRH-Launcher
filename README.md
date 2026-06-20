@@ -1,67 +1,72 @@
-# DRH Launcher
+<p align="center">
+  <img src="assets/icons/app-icon-128.png" width="96" alt="DRH Launcher" />
+</p>
+<h1 align="center">DRH Launcher</h1>
 
-Launcher and updater for [Dungeon Rampage Haxe](https://github.com/Tutez64/Dungeon-Rampage-Haxe).
+<p align="center">
+Official launcher for <a href="https://github.com/Tutez64/Dungeon-Rampage-Haxe" target="_blank">Dungeon Rampage Haxe</a>.
+Install, update, configure, and play DRH easily.</p>
 
-This project is in early development. The first goal is to provide a small desktop application that can install, update, configure and launch DRH. Mod management and Steam shortcut management will be added later.
+## Installation
+
+Download it for Windows, Linux, or macOS: [latest release](https://github.com/Tutez64/DRH-Launcher/releases/latest).
+
+### Windows
+
+Run the `.exe` installer.
+
+If a **SmartScreen** window appears: choose **More info**, then **Run anyway**.
+
+### Linux
+
+Open the `.AppImage`. If needed, make it executable first:
+
+```bash
+chmod +x DRH-Launcher_*.AppImage
+```
+
+On first launch, choose **Install** when prompted.
+
+### macOS
+
+Open the `.dmg`, drag **DRH Launcher.app** to **Applications**.
+
+**Gatekeeper** may block the `.dmg` or the app the first time. If that happens,
+right-click the blocked item, choose **Open**, then confirm.\
+On newer macOS versions, you may also need to allow it from
+**System Settings > Privacy & Security**.
+
+## Install and play DRH
+
+1. Open **DRH Launcher**.
+2. Click **Install DRH**.
+3. Click **Play**.
+
+## Features
+
+- Install, update, repair, and launch Dungeon Rampage Haxe.
+- Use recommended launch options by default or adjust them as you wish. 
+- Optionally, use a pre-launch command and custom extra game arguments.
+- Show launcher and game session logs.
+- Browse DRH and DRH Launcher release history, read changelogs, and install older DRH versions.
+- Update itself when a new release is available.
+- ...more to come!
 
 ## Development
 
-Requirements:
-
-- [Rust](https://rust-lang.org/fr/)
-- [Slint](https://slint.dev/) LSP / IDE plugin
-
-Run:
-
 ```bash
 cargo run
+cargo test
 ```
 
-Debug builds use the [fixture releases](https://github.com/Tutez64/DRHL-Release-Fixtures) by default. Release builds use the real DRH repository by default.
-
-Override the release source explicitly:
+Debug builds use [fixture releases](https://github.com/Tutez64/DRHL-Release-Fixtures)
+with the same archive layout as production DRH releases. Release builds use the
+real DRH repository by default.
 
 ```bash
 DRHL_RELEASE_SOURCE=drh cargo run
 DRHL_RELEASE_SOURCE=fixtures cargo run
 ```
 
-Check:
-
-```bash
-cargo check
-```
-
-Build:
-
-```bash
-cargo build --release
-```
-
-Package the current platform:
-
-```bash
-cargo install cargo-packager --version 0.11.8 --locked
-cargo packager --release
-```
-
-Release packaging, signing and self-update setup are documented in
-[docs/packaging.md](docs/packaging.md).
-
-The Linux release is an AppImage. On first launch it can install itself for the
-current user and add DRH Launcher to the desktop application menu without
-requiring administrator access.
-
-## Current Scope
-
-- Slint-based desktop UI
-- Local JSON configuration
-- Initial home screen
-- GitHub release discovery
-- Verified archive downloads
-- Configurable launch options and `DRH-Launcher --play`
-- Native launcher packages and signed launcher self-updates
-
-## Architecture
-
-See [docs/architecture.md](docs/architecture.md) for the intended product and technical architecture.
+- Packaging and release workflows: [docs/packaging.md](docs/packaging.md)
+- Architecture: [docs/architecture.md](docs/architecture.md)
