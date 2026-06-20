@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::atomic_file;
 use crate::github_releases::ReleaseAsset;
 use crate::paths;
-use crate::release_manifest::normalize_sha256;
+use crate::release_manifest::validate_sha256;
 
 #[derive(Clone, Debug)]
 pub struct VerifiedDownload {
@@ -151,14 +151,10 @@ pub fn verify_cached_archive_by_metadata(
     expected_sha256: &str,
 ) -> Result<VerifiedDownload, String> {
     let archive_name = safe_archive_file_name(archive_name)?;
-    let expected_sha256 = normalize_sha256(expected_sha256);
+    let expected_sha256 = validate_sha256(expected_sha256, "Cached archive SHA-256")?;
     if expected_size == 0 {
         return Err("Cached archive size is unknown.".to_string());
     }
-    if expected_sha256.is_empty() {
-        return Err("Cached archive SHA-256 is unknown.".to_string());
-    }
-
     let archive_path = paths::downloads_dir(install_dir).join(archive_name);
     if !archive_path.exists() {
         return Err(format!(
@@ -319,7 +315,8 @@ pub fn expected_sha256(asset: &ReleaseAsset) -> Result<String, String> {
     asset
         .digest
         .as_deref()
-        .map(normalize_sha256)
+        .map(|digest| validate_sha256(digest, &format!("Release asset {} digest", asset.name)))
+        .transpose()?
         .ok_or_else(|| {
             format!(
                 "Release asset {} does not provide a SHA-256 digest",
@@ -373,11 +370,22 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    const TEST_SHA256: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
     #[test]
     fn normalizes_expected_asset_digest() {
+        let asset = test_asset(Some(&format!("sha256:{TEST_SHA256}")), 0);
+
+        assert_eq!(expected_sha256(&asset).unwrap(), TEST_SHA256);
+    }
+
+    #[test]
+    fn rejects_short_asset_digest() {
         let asset = test_asset(Some("sha256:abc123"), 0);
 
-        assert_eq!(expected_sha256(&asset).unwrap(), "abc123");
+        let error = expected_sha256(&asset).unwrap_err();
+
+        assert!(error.contains("64-character SHA-256"));
     }
 
     #[test]
@@ -524,7 +532,7 @@ mod tests {
 
         for name in ["../evil.tar.gz", "/tmp/evil.tar.gz", "C:\\evil.zip"] {
             let error =
-                verify_cached_archive_by_metadata(temp.path(), name, 1, "abc123").unwrap_err();
+                verify_cached_archive_by_metadata(temp.path(), name, 1, TEST_SHA256).unwrap_err();
 
             assert!(error.contains("not a file name"));
         }
@@ -535,7 +543,8 @@ mod tests {
         let temp = tempdir().unwrap();
 
         let cache_error =
-            verify_cached_archive_by_metadata(temp.path(), "cache.txt", 1, "abc123").unwrap_err();
+            verify_cached_archive_by_metadata(temp.path(), "cache.txt", 1, TEST_SHA256)
+                .unwrap_err();
         let temp_error =
             update_download_cache(temp.path(), "archive.tar.gz.download", 3).unwrap_err();
 

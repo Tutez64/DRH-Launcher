@@ -61,7 +61,19 @@ pub fn normalize_sha256(value: &str) -> String {
         .strip_prefix("sha256:")
         .unwrap_or(value)
         .trim()
+        .to_ascii_lowercase()
         .to_string()
+}
+
+pub fn validate_sha256(value: &str, description: &str) -> Result<String, String> {
+    let normalized = normalize_sha256(value);
+    if normalized.len() != 64 || !normalized.chars().all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(format!(
+            "{description} must be a 64-character SHA-256 hex digest"
+        ));
+    }
+    Ok(normalized)
 }
 
 #[cfg(test)]
@@ -76,7 +88,7 @@ mod tests {
                 "platforms": {
                     "linux-x64": {
                         "archive": "Dungeon.Rampage.Haxe.V3.Linux.tar.gz",
-                        "sha256": "abc123",
+                        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "size": 123
                     }
                 },
@@ -104,7 +116,10 @@ mod tests {
 
         assert_eq!(manifest.version, "V3");
         assert_eq!(platform.archive, "Dungeon.Rampage.Haxe.V3.Linux.tar.gz");
-        assert_eq!(platform.sha256, "abc123");
+        assert_eq!(
+            platform.sha256,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
         assert_eq!(platform.size, 123);
         let launch_options = manifest.launch_options.unwrap();
         assert_eq!(launch_options.game_arguments.len(), 2);
@@ -131,7 +146,20 @@ mod tests {
 
     #[test]
     fn normalizes_sha256_values() {
-        assert_eq!(normalize_sha256("sha256:abc123"), "abc123");
+        assert_eq!(
+            normalize_sha256("sha256:ABC123"),
+            "abc123"
+        );
         assert_eq!(normalize_sha256("abc123"), "abc123");
+    }
+
+    #[test]
+    fn validates_sha256_values() {
+        assert!(validate_sha256(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "digest"
+        )
+        .is_ok());
+        assert!(validate_sha256("abc123", "digest").is_err());
     }
 }

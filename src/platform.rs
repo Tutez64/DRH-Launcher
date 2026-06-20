@@ -1,3 +1,12 @@
+#[cfg(not(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "windows", target_arch = "x86_64"),
+    target_os = "macos"
+)))]
+compile_error!(
+    "DRH Launcher currently supports linux-x64, windows-x64, and macos-universal targets."
+);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Platform {
     LinuxX64,

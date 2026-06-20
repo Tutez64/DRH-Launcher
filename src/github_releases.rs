@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::paths;
 use crate::platform::Platform;
 use crate::release_manifest::{
-    ManifestLaunchOptions, ReleaseManifest, is_manifest_asset_name, normalize_sha256,
+    ManifestLaunchOptions, ReleaseManifest, is_manifest_asset_name, validate_sha256,
 };
 use crate::release_source::ReleaseSource;
 
@@ -271,8 +271,18 @@ fn select_manifest_platform(
     platform: Platform,
     manifest: &ReleaseManifest,
 ) -> Result<PlatformRelease, String> {
+    if manifest.version.trim() != release.tag_name.trim() {
+        return Err(format!(
+            "Manifest version {} does not match GitHub release tag {}",
+            manifest.version, release.tag_name
+        ));
+    }
     let manifest_platform = manifest.platform(platform)?;
     validate_manifest_archive_name(&manifest_platform.archive)?;
+    let sha256 = validate_sha256(
+        &manifest_platform.sha256,
+        &format!("Manifest {} SHA-256", manifest.version),
+    )?;
     let asset = release
         .assets
         .iter()
@@ -297,10 +307,7 @@ fn select_manifest_platform(
             name: manifest_platform.archive.clone(),
             download_url: asset.browser_download_url.clone(),
             size: manifest_platform.size,
-            digest: Some(format!(
-                "sha256:{}",
-                normalize_sha256(&manifest_platform.sha256)
-            )),
+            digest: Some(format!("sha256:{sha256}")),
         },
     })
 }
@@ -353,6 +360,8 @@ fn validate_manifest_archive_name(name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_SHA256: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     #[test]
     fn selects_asset_matching_platform_naming_rule() {
@@ -428,28 +437,28 @@ mod tests {
                 digest: Some("sha256:ignored".to_string()),
             }],
         };
-        let manifest = ReleaseManifest::parse(
-            r#"{
+        let manifest = ReleaseManifest::parse(&format!(
+            r#"{{
                 "version": "V4",
-                "platforms": {
-                    "linux-x64": {
+                "platforms": {{
+                    "linux-x64": {{
                         "archive": "custom-linux.tar.gz",
-                        "sha256": "manifest_hash",
+                        "sha256": "{TEST_SHA256}",
                         "size": 123
-                    }
-                },
-                "launch_options": {
+                    }}
+                }},
+                "launch_options": {{
                     "game_arguments": [
-                        {
+                        {{
                             "name": "want-zoom",
                             "flag": "--want-zoom",
                             "default": false,
                             "recommended": true
-                        }
+                        }}
                     ]
-                }
-            }"#,
-        )
+                }}
+            }}"#,
+        ))
         .unwrap();
 
         let selected =
@@ -465,7 +474,7 @@ mod tests {
         assert_eq!(selected.asset.size, 123);
         assert_eq!(
             selected.asset.digest.as_deref(),
-            Some("sha256:manifest_hash")
+            Some(format!("sha256:{TEST_SHA256}").as_str())
         );
         assert_eq!(
             selected.launch_options.unwrap().game_arguments[0].recommended,
@@ -490,18 +499,18 @@ mod tests {
                 digest: Some("sha256:ignored".to_string()),
             }],
         };
-        let manifest = ReleaseManifest::parse(
-            r#"{
+        let manifest = ReleaseManifest::parse(&format!(
+            r#"{{
                 "version": "V4",
-                "platforms": {
-                    "linux-x64": {
+                "platforms": {{
+                    "linux-x64": {{
                         "archive": "../evil.tar.gz",
-                        "sha256": "manifest_hash",
+                        "sha256": "{TEST_SHA256}",
                         "size": 123
-                    }
-                }
-            }"#,
-        )
+                    }}
+                }}
+            }}"#,
+        ))
         .unwrap();
 
         let error =
@@ -527,13 +536,87 @@ mod tests {
                 digest: Some("sha256:ignored".to_string()),
             }],
         };
+        let manifest = ReleaseManifest::parse(&format!(
+            r#"{{
+                "version": "V4",
+                "platforms": {{
+                    "linux-x64": {{
+                        "archive": "cache.txt",
+                        "sha256": "{TEST_SHA256}",
+                        "size": 123
+                    }}
+                }}
+            }}"#,
+        ))
+        .unwrap();
+
+        let error =
+            select_platform_release(release, Platform::LinuxX64, Some(&manifest)).unwrap_err();
+
+        assert!(error.contains("download cache index"));
+    }
+
+    #[test]
+    fn rejects_manifest_version_that_does_not_match_tag() {
+        let release = GitHubRelease {
+            tag_name: "V4".to_string(),
+            name: Some("Dungeon Rampage Haxe V4".to_string()),
+            html_url: "https://example.test/release".to_string(),
+            body: None,
+            published_at: None,
+            prerelease: false,
+            draft: false,
+            assets: vec![GitHubAsset {
+                name: "custom-linux.tar.gz".to_string(),
+                browser_download_url: "https://example.test/custom-linux.tar.gz".to_string(),
+                size: 999,
+                digest: None,
+            }],
+        };
+        let manifest = ReleaseManifest::parse(&format!(
+            r#"{{
+                "version": "V5",
+                "platforms": {{
+                    "linux-x64": {{
+                        "archive": "custom-linux.tar.gz",
+                        "sha256": "{TEST_SHA256}",
+                        "size": 123
+                    }}
+                }}
+            }}"#
+        ))
+        .unwrap();
+
+        let error =
+            select_platform_release(release, Platform::LinuxX64, Some(&manifest)).unwrap_err();
+
+        assert!(error.contains("does not match GitHub release tag"));
+    }
+
+    #[test]
+    fn rejects_manifest_with_invalid_sha256() {
+        let release = GitHubRelease {
+            tag_name: "V4".to_string(),
+            name: Some("Dungeon Rampage Haxe V4".to_string()),
+            html_url: "https://example.test/release".to_string(),
+            body: None,
+            published_at: None,
+            prerelease: false,
+            draft: false,
+            assets: vec![GitHubAsset {
+                name: "custom-linux.tar.gz".to_string(),
+                browser_download_url: "https://example.test/custom-linux.tar.gz".to_string(),
+                size: 999,
+                digest: None,
+            }],
+        };
         let manifest = ReleaseManifest::parse(
             r#"{
                 "version": "V4",
                 "platforms": {
                     "linux-x64": {
-                        "archive": "cache.txt",
-                        "sha256": "manifest_hash",
+                        "archive": "custom-linux.tar.gz",
+                        "sha256": "short",
                         "size": 123
                     }
                 }
@@ -544,7 +627,7 @@ mod tests {
         let error =
             select_platform_release(release, Platform::LinuxX64, Some(&manifest)).unwrap_err();
 
-        assert!(error.contains("download cache index"));
+        assert!(error.contains("64-character SHA-256"));
     }
 
     #[test]
