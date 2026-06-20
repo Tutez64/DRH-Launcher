@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod archive;
+mod atomic_file;
 mod changelog_markdown;
 mod config;
 mod diagnostics;
@@ -369,17 +370,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         return;
                     };
 
-                    let installed_launch_options = load_installed_launch_options(&config);
-                    refresh_launch_options_view(
-                        &ui,
-                        &config,
-                        installed_launch_options.as_ref(),
-                        "Save",
-                    );
-                    refresh_home_state(&ui, &config, &message);
-                    ui.set_install_action_enabled(true);
-                    ui.set_update_check_enabled(true);
-                    ui.set_update_check_text("Check for updates".into());
+                    finish_install_operation_view(&ui, &config, &message);
                 });
             });
         });
@@ -700,17 +691,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         return;
                     };
 
-                    let installed_launch_options = load_installed_launch_options(&config);
-                    refresh_launch_options_view(
-                        &ui,
-                        &config,
-                        installed_launch_options.as_ref(),
-                        "Save",
-                    );
-                    refresh_home_state(&ui, &config, &message);
-                    ui.set_install_action_enabled(true);
-                    ui.set_update_check_enabled(true);
-                    ui.set_update_check_text("Check for updates".into());
+                    finish_install_operation_view(&ui, &config, &message);
                 });
             });
         });
@@ -1433,17 +1414,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         return;
                     };
 
-                    let installed_launch_options = load_installed_launch_options(&config_snapshot);
-                    refresh_launch_options_view(
-                        &ui,
-                        &config_snapshot,
-                        installed_launch_options.as_ref(),
-                        "Save",
-                    );
-                    refresh_home_state(&ui, &config_snapshot, &message);
-                    ui.set_install_action_enabled(true);
-                    ui.set_update_check_enabled(true);
-                    ui.set_update_check_text("Check for updates".into());
+                    finish_install_operation_view(&ui, &config_snapshot, &message);
                     ui.set_refresh_version_history_enabled(true);
                     set_status_message(&ui, &message);
                     refresh_version_history_selection(
@@ -2331,6 +2302,15 @@ fn log_install_failure(install_dir: &Path, message: &str) {
     if diagnostics::is_operation_error_message(message) {
         let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Error, message);
     }
+}
+
+fn finish_install_operation_view(ui: &AppWindow, config: &LauncherConfig, message: &str) {
+    let installed_launch_options = load_installed_launch_options(config);
+    refresh_launch_options_view(ui, config, installed_launch_options.as_ref(), "Save");
+    refresh_home_state(ui, config, message);
+    ui.set_install_action_enabled(true);
+    ui.set_update_check_enabled(true);
+    ui.set_update_check_text("Check for updates".into());
 }
 
 pub(crate) fn release_update_available(

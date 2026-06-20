@@ -3,6 +3,7 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use crate::atomic_file;
 use crate::paths;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -82,7 +83,7 @@ impl LauncherConfig {
 
         let contents = serde_json::to_string_pretty(self)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        fs::write(path, contents)
+        atomic_file::write(&path, contents.as_bytes())
     }
 }
 
@@ -191,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn non_custom_modes_append_saved_extra_arguments() {
+    fn non_custom_modes_append_extra_arguments() {
         let config = LauncherConfig {
             game_args: vec!["--debug".to_string()],
             ..LauncherConfig::default()
@@ -200,6 +201,20 @@ mod tests {
         assert_eq!(
             config.effective_game_args_with_recommended(&["--want-zoom".to_string()]),
             vec!["--want-zoom".to_string(), "--debug".to_string()]
+        );
+    }
+
+    #[test]
+    fn game_defaults_keep_extra_arguments_only() {
+        let config = LauncherConfig {
+            launch_arguments_mode: LaunchArgumentsMode::GameDefaults,
+            game_args: vec!["--debug".to_string()],
+            ..LauncherConfig::default()
+        };
+
+        assert_eq!(
+            config.effective_game_args_with_recommended(&["--want-zoom".to_string()]),
+            vec!["--debug".to_string()]
         );
     }
 }

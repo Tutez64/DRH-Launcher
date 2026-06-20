@@ -6,6 +6,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::atomic_file;
 use crate::github_releases::ReleaseAsset;
 use crate::paths;
 use crate::release_manifest::normalize_sha256;
@@ -229,7 +230,7 @@ pub fn update_download_cache(
     cache.truncate(limit);
 
     let cache_file = paths::download_cache_index_file(install_dir);
-    fs::write(&cache_file, cache.join("\n"))
+    atomic_file::write(&cache_file, cache.join("\n").as_bytes())
         .map_err(|error| format!("Could not write {}: {error}", cache_file.display()))?;
 
     // Runs right after a successful download on the same thread, so no other download
@@ -250,7 +251,7 @@ pub fn prune_download_cache(install_dir: &Path, limit: usize) -> Result<Vec<Path
     cache.truncate(limit);
 
     let cache_file = paths::download_cache_index_file(install_dir);
-    fs::write(&cache_file, cache.join("\n"))
+    atomic_file::write(&cache_file, cache.join("\n").as_bytes())
         .map_err(|error| format!("Could not write {}: {error}", cache_file.display()))?;
 
     // Can be triggered from Settings while a background install download is writing a

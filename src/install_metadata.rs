@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::atomic_file;
+use crate::diagnostics;
 use crate::github_releases::PlatformRelease;
 use crate::paths;
 use crate::release_manifest::{ManifestLaunchOptions, normalize_sha256};
@@ -34,7 +35,7 @@ impl InstalledState {
         }
         let contents = serde_json::to_string_pretty(self)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        fs::write(path, contents)
+        atomic_file::write(&path, contents.as_bytes())
     }
 }
 
@@ -74,11 +75,7 @@ impl InstalledRelease {
 }
 
 fn current_timestamp() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    format!("unix:{seconds}")
+    diagnostics::format_system_time_utc(std::time::SystemTime::now())
 }
 
 #[cfg(test)]
