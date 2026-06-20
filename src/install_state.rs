@@ -23,13 +23,13 @@ impl InstallState {
 
     pub fn status_text(&self) -> &'static str {
         match self {
-            Self::NotInstalled => "DRH is not installed",
-            Self::Installed => "DRH is installed",
-            Self::UpdateAvailable => "A DRH update is available",
-            Self::Updating => "DRH is updating",
-            Self::Playing => "DRH is running",
-            Self::BrokenInstall => "DRH installation is incomplete",
-            Self::LaunchableButMaybeOutdated => "DRH is launchable, but update status is unknown",
+            Self::NotInstalled => "Not installed",
+            Self::Installed => "Ready",
+            Self::UpdateAvailable => "Update available",
+            Self::Updating => "Updating...",
+            Self::Playing => "Running",
+            Self::BrokenInstall => "Install incomplete",
+            Self::LaunchableButMaybeOutdated => "Update status unknown",
         }
     }
 }

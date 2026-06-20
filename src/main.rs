@@ -311,7 +311,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                             ),
                         );
                         game_process.borrow_mut().replace(game);
-                        refresh_playing_state(&ui, &config, "DRH is running.");
+                        refresh_playing_state(&ui, &config, "Running.");
                         start_game_monitor(
                             Rc::clone(&game_monitor),
                             ui.as_weak(),

@@ -132,7 +132,8 @@ fn apply_release_to_home_view_state(
         InstallState::Installed | InstallState::LaunchableButMaybeOutdated => {
             match status.installed_version.as_deref() {
                 Some(installed_version) if release_update_available(config, status, release) => {
-                    state.install_status = "A DRH update is available".to_string();
+                    state.install_status =
+                        InstallState::UpdateAvailable.status_text().to_string();
                     state.install_action_text =
                         InstallState::UpdateAvailable.primary_action().to_string();
                     state.home_support_text = format!(
@@ -195,7 +196,7 @@ pub(crate) fn set_status_message(ui: &AppWindow, message: &str) {
 }
 
 pub(crate) fn home_support_text(version_text: &str, message: &str) -> String {
-    if message.starts_with("Ready.") || message.starts_with("DRH is running.") {
+    if message.starts_with("Ready.") || message.starts_with("Running.") {
         return version_text.to_string();
     }
 

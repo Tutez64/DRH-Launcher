@@ -16,7 +16,7 @@ pub(crate) fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, mes
     let install_dir = config.effective_install_dir();
     let status = crate::game_install::inspect_install(Some(&install_dir));
 
-    ui.set_install_status("DRH is running".into());
+    ui.set_install_status(InstallState::Playing.status_text().into());
     ui.set_install_action_text(InstallState::Playing.primary_action().into());
     ui.set_install_action_enabled(true);
     ui.set_version_status(status.version_text().into());
