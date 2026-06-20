@@ -571,7 +571,7 @@ fn selected_drh_version_replace_confirmation_text(
     let previous = restore_previous_release_version(config);
     let preserve_previous = preserve_previous_slot_on_install(entries, config, target);
 
-    let mut message = format!("Installing {target} will replace the current version ({active}).");
+    let mut message = format!("Installing {target} will replace {active} (current).");
 
     if preserve_previous {
         if let Some(previous) = &previous {

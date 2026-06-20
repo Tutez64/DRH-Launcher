@@ -33,6 +33,7 @@ pub fn install_extracted_archive_with_blocked_update(
     let source_game_dir = find_extracted_game_dir(&extracted.path)?;
     let game_dir = paths::game_dir(install_dir);
     let previous_game_dir = paths::previous_game_dir(install_dir);
+    let retired_previous_dir = paths::game_root_dir(install_dir).join(".previous-replaced");
     if let Some(parent) = game_dir.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!(
@@ -40,6 +41,13 @@ pub fn install_extracted_archive_with_blocked_update(
                 parent.display()
             )
         })?;
+    }
+
+    if retired_previous_dir.exists() {
+        return Err(format!(
+            "Temporary previous install directory already exists: {}",
+            retired_previous_dir.display()
+        ));
     }
 
     let previous_metadata = InstalledState::load(install_dir)
@@ -54,10 +62,11 @@ pub fn install_extracted_archive_with_blocked_update(
                 previous_game_dir.display()
             ),
         );
-        fs::remove_dir_all(&previous_game_dir).map_err(|error| {
+        fs::rename(&previous_game_dir, &retired_previous_dir).map_err(|error| {
             format!(
-                "Could not remove previous game directory {}: {error}",
-                previous_game_dir.display()
+                "Could not move {} to {}: {error}",
+                previous_game_dir.display(),
+                retired_previous_dir.display()
             )
         })?;
     }
@@ -72,6 +81,9 @@ pub fn install_extracted_archive_with_blocked_update(
             ),
         );
         fs::rename(&game_dir, &previous_game_dir).map_err(|error| {
+            if retired_previous_dir.exists() {
+                let _ = fs::rename(&retired_previous_dir, &previous_game_dir);
+            }
             format!(
                 "Could not move {} to {}: {error}",
                 game_dir.display(),
@@ -88,25 +100,36 @@ pub fn install_extracted_archive_with_blocked_update(
             game_dir.display()
         ),
     );
-    fs::rename(&source_game_dir, &game_dir).map_err(|error| {
+    if let Err(error) = fs::rename(&source_game_dir, &game_dir) {
         if previous_game_dir.exists() {
             let _ = fs::rename(&previous_game_dir, &game_dir);
         }
-        format!(
+        if retired_previous_dir.exists() {
+            let _ = fs::rename(&retired_previous_dir, &previous_game_dir);
+        }
+        return Err(format!(
             "Could not move {} to {}: {error}",
             source_game_dir.display(),
             game_dir.display()
-        )
-    })?;
+        ));
+    }
 
     let installed = InstalledState {
         active: InstalledRelease::from_platform_release(release, source),
         previous: previous_metadata,
         blocked_update_version,
     };
-    installed
-        .save(install_dir)
-        .map_err(|error| format!("Could not write installed metadata: {error}"))?;
+    if let Err(error) = installed.save(install_dir) {
+        let _ = fs::remove_dir_all(&game_dir);
+        if previous_game_dir.exists() {
+            let _ = fs::rename(&previous_game_dir, &game_dir);
+        }
+        if retired_previous_dir.exists() {
+            let _ = fs::rename(&retired_previous_dir, &previous_game_dir);
+        }
+        return Err(format!("Could not write installed metadata: {error}"));
+    }
+    cleanup_replaced_dir(install_dir, &retired_previous_dir, "replaced previous install");
     log_install_step(
         install_dir,
         &format!(
@@ -132,6 +155,7 @@ pub fn install_extracted_archive_preserving_previous(
 ) -> Result<InstalledState, String> {
     let source_game_dir = find_extracted_game_dir(&extracted.path)?;
     let game_dir = paths::game_dir(install_dir);
+    let backup_game_dir = paths::game_root_dir(install_dir).join(".preserve-current-backup");
     let existing = InstalledState::load(install_dir).ok();
     let previous_metadata = existing.as_ref().and_then(|state| state.previous.clone());
     let blocked_update_version = blocked_update_version.or_else(|| {
@@ -149,6 +173,13 @@ pub fn install_extracted_archive_preserving_previous(
         })?;
     }
 
+    if backup_game_dir.exists() {
+        return Err(format!(
+            "Temporary current install directory already exists: {}",
+            backup_game_dir.display()
+        ));
+    }
+
     if game_dir.exists() {
         log_install_step(
             install_dir,
@@ -157,10 +188,11 @@ pub fn install_extracted_archive_preserving_previous(
                 game_dir.display()
             ),
         );
-        fs::remove_dir_all(&game_dir).map_err(|error| {
+        fs::rename(&game_dir, &backup_game_dir).map_err(|error| {
             format!(
-                "Could not remove current game directory {}: {error}",
-                game_dir.display()
+                "Could not move {} to {}: {error}",
+                game_dir.display(),
+                backup_game_dir.display()
             )
         })?;
     }
@@ -173,22 +205,30 @@ pub fn install_extracted_archive_preserving_previous(
             game_dir.display()
         ),
     );
-    fs::rename(&source_game_dir, &game_dir).map_err(|error| {
-        format!(
+    if let Err(error) = fs::rename(&source_game_dir, &game_dir) {
+        if backup_game_dir.exists() {
+            let _ = fs::rename(&backup_game_dir, &game_dir);
+        }
+        return Err(format!(
             "Could not move {} to {}: {error}",
             source_game_dir.display(),
             game_dir.display()
-        )
-    })?;
+        ));
+    }
 
     let installed = InstalledState {
         active: InstalledRelease::from_platform_release(release, source),
         previous: previous_metadata,
         blocked_update_version,
     };
-    installed
-        .save(install_dir)
-        .map_err(|error| format!("Could not write installed metadata: {error}"))?;
+    if let Err(error) = installed.save(install_dir) {
+        let _ = fs::remove_dir_all(&game_dir);
+        if backup_game_dir.exists() {
+            let _ = fs::rename(&backup_game_dir, &game_dir);
+        }
+        return Err(format!("Could not write installed metadata: {error}"));
+    }
+    cleanup_replaced_dir(install_dir, &backup_game_dir, "replaced current install");
     log_install_step(
         install_dir,
         &format!(
@@ -271,9 +311,14 @@ pub fn restore_previous_version(install_dir: &Path) -> Result<InstalledState, St
         previous,
         blocked_update_version: Some(blocked_update_version),
     };
-    restored
-        .save(install_dir)
-        .map_err(|error| format!("Could not write installed metadata: {error}"))?;
+    if let Err(error) = restored.save(install_dir) {
+        let _ = fs::rename(&previous_game_dir, &swap_dir);
+        let _ = fs::rename(&game_dir, &previous_game_dir);
+        if had_current_game_dir {
+            let _ = fs::rename(&swap_dir, &game_dir);
+        }
+        return Err(format!("Could not write installed metadata: {error}"));
+    }
 
     Ok(restored)
 }
@@ -310,6 +355,7 @@ fn repair_extracted_archive_with_state(
 ) -> Result<InstalledState, String> {
     let source_game_dir = find_extracted_game_dir(&extracted.path)?;
     let game_dir = paths::game_dir(install_dir);
+    let backup_game_dir = paths::game_root_dir(install_dir).join(".repair-current-backup");
     if let Some(parent) = game_dir.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!(
@@ -319,28 +365,60 @@ fn repair_extracted_archive_with_state(
         })?;
     }
 
+    if backup_game_dir.exists() {
+        return Err(format!(
+            "Temporary repair directory already exists: {}",
+            backup_game_dir.display()
+        ));
+    }
+
     if game_dir.exists() {
-        fs::remove_dir_all(&game_dir).map_err(|error| {
+        fs::rename(&game_dir, &backup_game_dir).map_err(|error| {
             format!(
-                "Could not remove broken game directory {}: {error}",
-                game_dir.display()
+                "Could not move {} to {}: {error}",
+                game_dir.display(),
+                backup_game_dir.display()
             )
         })?;
     }
 
-    fs::rename(&source_game_dir, &game_dir).map_err(|error| {
-        format!(
+    if let Err(error) = fs::rename(&source_game_dir, &game_dir) {
+        if backup_game_dir.exists() {
+            let _ = fs::rename(&backup_game_dir, &game_dir);
+        }
+        return Err(format!(
             "Could not move {} to {}: {error}",
             source_game_dir.display(),
             game_dir.display()
-        )
-    })?;
+        ));
+    }
 
-    state
-        .save(install_dir)
-        .map_err(|error| format!("Could not write installed metadata: {error}"))?;
+    if let Err(error) = state.save(install_dir) {
+        let _ = fs::remove_dir_all(&game_dir);
+        if backup_game_dir.exists() {
+            let _ = fs::rename(&backup_game_dir, &game_dir);
+        }
+        return Err(format!("Could not write installed metadata: {error}"));
+    }
+    cleanup_replaced_dir(install_dir, &backup_game_dir, "replaced current install");
 
     Ok(state)
+}
+
+fn cleanup_replaced_dir(install_dir: &Path, path: &Path, description: &str) {
+    if !path.exists() {
+        return;
+    }
+
+    if let Err(error) = fs::remove_dir_all(path) {
+        log_install_step(
+            install_dir,
+            &format!(
+                "Could not remove {description} at {} after successful replacement: {error}",
+                path.display()
+            ),
+        );
+    }
 }
 
 pub fn find_extracted_game_dir(extracted_dir: &Path) -> Result<PathBuf, String> {
