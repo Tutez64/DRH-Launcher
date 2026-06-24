@@ -130,7 +130,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let game_dir = paths::game_dir(temp.path());
         fs::create_dir_all(&game_dir).unwrap();
-        fs::write(game_dir.join(primary_game_executable_name()), "").unwrap();
+        create_game_executable(&game_dir.join(primary_game_executable_name()));
 
         let status = inspect_install(Some(temp.path()));
 
@@ -162,7 +162,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let game_dir = paths::game_dir(temp.path());
         fs::create_dir_all(&game_dir).unwrap();
-        fs::write(game_dir.join(primary_game_executable_name()), "").unwrap();
+        create_game_executable(&game_dir.join(primary_game_executable_name()));
 
         let status = inspect_install(Some(temp.path()));
 
@@ -173,5 +173,13 @@ mod tests {
 
     fn primary_game_executable_name() -> &'static str {
         game_executable_names()[0]
+    }
+
+    fn create_game_executable(path: &Path) {
+        if cfg!(target_os = "macos") {
+            fs::create_dir_all(path).unwrap();
+        } else {
+            fs::write(path, "").unwrap();
+        }
     }
 }

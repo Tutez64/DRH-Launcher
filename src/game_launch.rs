@@ -471,6 +471,7 @@ mod tests {
         fs::create_dir_all(&game_dir).unwrap();
         let executable = game_dir.join(game_executable_names()[0]);
         create_executable(&executable);
+        let launch_executable = resolve_launch_executable(&executable).unwrap();
         let config = LauncherConfig {
             install_dir: Some(temp.path().to_path_buf()),
             launch_arguments_mode: LaunchArgumentsMode::Custom,
@@ -480,7 +481,9 @@ mod tests {
 
         let summary = launch_command_summary_with_recommended_args(&config, &[]).unwrap();
 
-        assert!(summary.contains(&quote_command_part(&executable.display().to_string())));
+        assert!(summary.contains(&quote_command_part(
+            &launch_executable.display().to_string()
+        )));
         assert!(summary.contains("'Dungeon Rampage'"));
         assert!(!summary.contains("<DRH executable>"));
     }
@@ -521,7 +524,10 @@ mod tests {
 
     fn create_executable(path: &Path) {
         if cfg!(target_os = "macos") {
-            fs::create_dir_all(path).unwrap();
+            let macos_dir = path.join("Contents").join("MacOS");
+            fs::create_dir_all(&macos_dir).unwrap();
+            let executable_name = path.file_stem().unwrap();
+            fs::write(macos_dir.join(executable_name), "").unwrap();
         } else {
             fs::write(path, "").unwrap();
         }

@@ -467,7 +467,7 @@ mod tests {
     #[test]
     fn finds_game_dir_at_extracted_root() {
         let temp = tempdir().unwrap();
-        fs::write(temp.path().join(primary_game_executable_name()), "").unwrap();
+        create_game_executable(&temp.path().join(primary_game_executable_name()), "");
 
         assert_eq!(find_extracted_game_dir(temp.path()).unwrap(), temp.path());
     }
@@ -477,7 +477,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let game = temp.path().join("game");
         fs::create_dir(&game).unwrap();
-        fs::write(game.join(primary_game_executable_name()), "").unwrap();
+        create_game_executable(&game.join(primary_game_executable_name()), "");
 
         assert_eq!(find_extracted_game_dir(temp.path()).unwrap(), game);
     }
@@ -489,7 +489,7 @@ mod tests {
         fs::create_dir_all(&install_dir).unwrap();
         let current_game = paths::game_dir(&install_dir);
         fs::create_dir_all(&current_game).unwrap();
-        fs::write(current_game.join(primary_game_executable_name()), "old").unwrap();
+        create_game_executable(&current_game.join(primary_game_executable_name()), "old");
         let previous = InstalledState {
             active: test_installed_release("V7"),
             previous: None,
@@ -500,7 +500,7 @@ mod tests {
         let extracted_root = temp.path().join("extracted");
         let extracted_game = extracted_root.join("game");
         fs::create_dir_all(&extracted_game).unwrap();
-        fs::write(extracted_game.join(primary_game_executable_name()), "new").unwrap();
+        create_game_executable(&extracted_game.join(primary_game_executable_name()), "new");
         let extracted = ExtractedArchive {
             path: extracted_root,
         };
@@ -535,12 +535,14 @@ mod tests {
         let previous_game = paths::previous_game_dir(&install_dir);
         fs::create_dir_all(&current_game).unwrap();
         fs::create_dir_all(&previous_game).unwrap();
-        fs::write(current_game.join(primary_game_executable_name()), "current").unwrap();
-        fs::write(
-            previous_game.join(primary_game_executable_name()),
+        create_game_executable(
+            &current_game.join(primary_game_executable_name()),
+            "current",
+        );
+        create_game_executable(
+            &previous_game.join(primary_game_executable_name()),
             "previous",
-        )
-        .unwrap();
+        );
         InstalledState {
             active: test_installed_release("V8"),
             previous: Some(test_installed_release("V10")),
@@ -552,7 +554,7 @@ mod tests {
         let extracted_root = temp.path().join("extracted");
         let extracted_game = extracted_root.join("game");
         fs::create_dir_all(&extracted_game).unwrap();
-        fs::write(extracted_game.join(primary_game_executable_name()), "new").unwrap();
+        create_game_executable(&extracted_game.join(primary_game_executable_name()), "new");
         let extracted = ExtractedArchive {
             path: extracted_root,
         };
@@ -570,11 +572,11 @@ mod tests {
         assert_eq!(installed.previous.unwrap().version, "V10");
         assert_eq!(installed.blocked_update_version.as_deref(), Some("V9"));
         assert_eq!(
-            fs::read_to_string(current_game.join(primary_game_executable_name())).unwrap(),
+            read_game_executable(&current_game.join(primary_game_executable_name())),
             "new"
         );
         assert_eq!(
-            fs::read_to_string(previous_game.join(primary_game_executable_name())).unwrap(),
+            read_game_executable(&previous_game.join(primary_game_executable_name())),
             "previous"
         );
     }
@@ -587,12 +589,14 @@ mod tests {
         let previous_game = paths::previous_game_dir(&install_dir);
         fs::create_dir_all(&current_game).unwrap();
         fs::create_dir_all(&previous_game).unwrap();
-        fs::write(current_game.join(primary_game_executable_name()), "current").unwrap();
-        fs::write(
-            previous_game.join(primary_game_executable_name()),
+        create_game_executable(
+            &current_game.join(primary_game_executable_name()),
+            "current",
+        );
+        create_game_executable(
+            &previous_game.join(primary_game_executable_name()),
             "previous",
-        )
-        .unwrap();
+        );
         InstalledState {
             active: test_installed_release("V9"),
             previous: Some(test_installed_release("V7")),
@@ -607,11 +611,11 @@ mod tests {
         assert_eq!(restored.previous.unwrap().version, "V9");
         assert_eq!(restored.blocked_update_version.as_deref(), Some("V9"));
         assert_eq!(
-            fs::read_to_string(current_game.join(primary_game_executable_name())).unwrap(),
+            read_game_executable(&current_game.join(primary_game_executable_name())),
             "previous"
         );
         assert_eq!(
-            fs::read_to_string(previous_game.join(primary_game_executable_name())).unwrap(),
+            read_game_executable(&previous_game.join(primary_game_executable_name())),
             "current"
         );
         let metadata = InstalledState::load(&install_dir).unwrap();
@@ -628,7 +632,10 @@ mod tests {
         let previous_game = paths::previous_game_dir(&install_dir);
         fs::create_dir_all(&current_game).unwrap();
         fs::create_dir_all(&previous_game).unwrap();
-        fs::write(current_game.join(primary_game_executable_name()), "current").unwrap();
+        create_game_executable(
+            &current_game.join(primary_game_executable_name()),
+            "current",
+        );
         fs::write(previous_game.join("broken.txt"), "broken").unwrap();
         InstalledState {
             active: test_installed_release("V9"),
@@ -655,11 +662,10 @@ mod tests {
         fs::create_dir_all(&current_game).unwrap();
         fs::create_dir_all(&previous_game).unwrap();
         fs::write(current_game.join("broken.txt"), "broken").unwrap();
-        fs::write(
-            previous_game.join(primary_game_executable_name()),
+        create_game_executable(
+            &previous_game.join(primary_game_executable_name()),
             "previous",
-        )
-        .unwrap();
+        );
         InstalledState {
             active: test_installed_release("V9"),
             previous: Some(test_installed_release("V7")),
@@ -671,11 +677,10 @@ mod tests {
         let extracted_root = temp.path().join("extracted");
         let extracted_game = extracted_root.join("game");
         fs::create_dir_all(&extracted_game).unwrap();
-        fs::write(
-            extracted_game.join(primary_game_executable_name()),
+        create_game_executable(
+            &extracted_game.join(primary_game_executable_name()),
             "repaired",
-        )
-        .unwrap();
+        );
         let extracted = ExtractedArchive {
             path: extracted_root,
         };
@@ -687,11 +692,11 @@ mod tests {
         assert_eq!(repaired.previous.unwrap().version, "V7");
         assert_eq!(repaired.blocked_update_version.as_deref(), Some("V10"));
         assert_eq!(
-            fs::read_to_string(current_game.join(primary_game_executable_name())).unwrap(),
+            read_game_executable(&current_game.join(primary_game_executable_name())),
             "repaired"
         );
         assert_eq!(
-            fs::read_to_string(previous_game.join(primary_game_executable_name())).unwrap(),
+            read_game_executable(&previous_game.join(primary_game_executable_name())),
             "previous"
         );
     }
@@ -705,11 +710,10 @@ mod tests {
         fs::create_dir_all(&current_game).unwrap();
         fs::create_dir_all(&previous_game).unwrap();
         fs::write(current_game.join("broken.txt"), "broken").unwrap();
-        fs::write(
-            previous_game.join(primary_game_executable_name()),
+        create_game_executable(
+            &previous_game.join(primary_game_executable_name()),
             "previous",
-        )
-        .unwrap();
+        );
         InstalledState {
             active: test_installed_release("V9"),
             previous: Some(test_installed_release("V7")),
@@ -721,11 +725,10 @@ mod tests {
         let extracted_root = temp.path().join("extracted-release");
         let extracted_game = extracted_root.join("game");
         fs::create_dir_all(&extracted_game).unwrap();
-        fs::write(
-            extracted_game.join(primary_game_executable_name()),
+        create_game_executable(
+            &extracted_game.join(primary_game_executable_name()),
             "release",
-        )
-        .unwrap();
+        );
         let extracted = ExtractedArchive {
             path: extracted_root,
         };
@@ -742,11 +745,11 @@ mod tests {
         assert_eq!(repaired.previous.unwrap().version, "V7");
         assert!(repaired.blocked_update_version.is_none());
         assert_eq!(
-            fs::read_to_string(current_game.join(primary_game_executable_name())).unwrap(),
+            read_game_executable(&current_game.join(primary_game_executable_name())),
             "release"
         );
         assert_eq!(
-            fs::read_to_string(previous_game.join(primary_game_executable_name())).unwrap(),
+            read_game_executable(&previous_game.join(primary_game_executable_name())),
             "previous"
         );
     }
@@ -756,15 +759,19 @@ mod tests {
         let temp = tempdir().unwrap();
         let archive_root = temp.path().join(primary_game_executable_name());
         fs::create_dir(&archive_root).unwrap();
-        fs::write(archive_root.join(primary_game_executable_name()), "").unwrap();
+        create_game_executable(&archive_root.join(primary_game_executable_name()), "");
 
-        assert_eq!(find_extracted_game_dir(temp.path()).unwrap(), archive_root);
+        if cfg!(target_os = "macos") {
+            assert_eq!(find_extracted_game_dir(temp.path()).unwrap(), temp.path());
+        } else {
+            assert_eq!(find_extracted_game_dir(temp.path()).unwrap(), archive_root);
+        }
     }
 
     #[test]
     fn accepts_legacy_executable_name() {
         let temp = tempdir().unwrap();
-        fs::write(temp.path().join(legacy_primary_game_executable_name()), "").unwrap();
+        create_game_executable(&temp.path().join(legacy_primary_game_executable_name()), "");
 
         assert_eq!(find_extracted_game_dir(temp.path()).unwrap(), temp.path());
     }
@@ -806,5 +813,30 @@ mod tests {
 
     fn primary_game_executable_name() -> &'static str {
         game_executable_names()[0]
+    }
+
+    fn create_game_executable(path: &Path, contents: &str) {
+        if cfg!(target_os = "macos") {
+            let executable_path = macos_bundle_executable_path(path);
+            fs::create_dir_all(executable_path.parent().unwrap()).unwrap();
+            fs::write(executable_path, contents).unwrap();
+        } else {
+            fs::write(path, contents).unwrap();
+        }
+    }
+
+    fn read_game_executable(path: &Path) -> String {
+        if cfg!(target_os = "macos") {
+            fs::read_to_string(macos_bundle_executable_path(path)).unwrap()
+        } else {
+            fs::read_to_string(path).unwrap()
+        }
+    }
+
+    fn macos_bundle_executable_path(bundle_path: &Path) -> PathBuf {
+        bundle_path
+            .join("Contents")
+            .join("MacOS")
+            .join(bundle_path.file_stem().unwrap())
     }
 }

@@ -415,6 +415,7 @@ pub use platform::*;
 #[cfg(not(target_os = "linux"))]
 mod platform {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[allow(dead_code)]
     pub enum IntegrationState {
         NotAppImage,
         Portable,
