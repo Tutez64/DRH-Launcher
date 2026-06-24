@@ -30,6 +30,20 @@ body:
     validations:
       required: true
 
+  - type: textarea
+    id: system-details
+    attributes:
+      label: System details
+      description: OS version, desktop environment, security software, install path, filesystem, or anything else that may be relevant.
+      placeholder: |
+        OS version:
+        Desktop environment:
+        Security software:
+        Install path:
+        Filesystem:
+    validations:
+      required: false
+
   - type: dropdown
     id: package-type
     attributes:
