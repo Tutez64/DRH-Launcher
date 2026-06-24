@@ -17,12 +17,12 @@ path = "src/main.rs"
 cargo-packager-updater = "0.2.3"
 directories = "6.0.0"
 flate2 = "1.1.9"
-reqwest = { version = "0.13.3", default-features = false, features = ["blocking", "json", "rustls"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
 pulldown-cmark = "0.13.4"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
+serde_json = "1.0.150"
 sha2 = "0.11.0"
-slint = "1.16.1"
+slint = "1.17"
 tar = "0.4.46"
 zip = { version = "9.0.0-pre2", default-features = false, features = ["deflate"] }
 zstd = "0.13.3"

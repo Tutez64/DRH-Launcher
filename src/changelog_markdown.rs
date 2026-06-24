@@ -1,5 +1,5 @@
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
-use slint::private_unstable_api::re_exports::{StyledText, string_to_styled_text};
+use slint::StyledText;
 
 use crate::MarkdownBlockView;
 
@@ -339,11 +339,11 @@ fn markdown_target_block(text: &str, target: &str, kind: MarkdownBlockKind) -> M
 
 fn markdown_block_text(text: &str, kind: MarkdownBlockKind) -> StyledText {
     if kind == MarkdownBlockKind::Code || kind == MarkdownBlockKind::Image {
-        return string_to_styled_text(text.to_string());
+        return StyledText::from_plain_text(text);
     }
 
-    StyledText::parse_interpolated(text, &[] as &[StyledText])
-        .unwrap_or_else(|_| string_to_styled_text(unescape_markdown_text(text)))
+    StyledText::from_markdown(text)
+        .unwrap_or_else(|_| StyledText::from_plain_text(&unescape_markdown_text(text)))
 }
 
 fn escape_markdown_text(text: &str) -> String {

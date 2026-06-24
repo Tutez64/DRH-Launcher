@@ -190,18 +190,16 @@ a compatible package or manifest is available. Replacing an already installed
 DRH version requires an explicit confirmation because older game releases may
 not be playable anymore.
 
-Changelog rendering is intentionally best-effort for now. Slint 1.16 provides
-`StyledText` and Markdown parsing for inline styling and links, but it does not
-cover the full GitHub Markdown surface needed by release notes, such as headings,
-images, block quotes and fenced code blocks as a single runtime Markdown
-document. DRH Launcher therefore keeps a small block-level adapter around
-`pulldown-cmark`: block structure is handled locally, while inline spans are
-rendered through Slint `StyledText`.
+Changelog rendering is intentionally best-effort for now. Slint 1.17 provides
+the public runtime `StyledText::from_markdown` API for inline styling and links,
+but it does not cover the full GitHub Markdown surface needed by release notes,
+such as headings, images, block quotes and fenced code blocks as a single runtime
+Markdown document. DRH Launcher therefore keeps a small block-level adapter
+around `pulldown-cmark`: block structure is handled locally, while inline spans
+are rendered through Slint `StyledText`.
 
-Revisit this once Slint 1.17 is released so DRHL can use the public runtime
-`StyledText` Markdown API instead of Slint's private unstable Rust re-export.
-Revisit it again if Slint later grows a fuller Markdown renderer; at that point
-the local block adapter should be removed or reduced substantially.
+Revisit this if Slint later grows a fuller Markdown renderer; at that point the
+local block adapter should be removed or reduced substantially.
 
 ## Launch Modes
 
