@@ -73,6 +73,55 @@ jobs:
             --output dist/latest.json \
             --checksums-output dist/SHA256SUMS
 
+      - name: Generate release download notes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from urllib.parse import quote
+          import os
+
+          dist = Path("dist")
+          repository = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["GITHUB_REF_NAME"]
+
+          def require_one(pattern: str) -> Path:
+              matches = sorted(path for path in dist.glob(pattern) if path.is_file())
+              if len(matches) != 1:
+                  names = ", ".join(path.name for path in matches) or "none"
+                  raise SystemExit(f"Expected one {pattern} file in {dist}, found: {names}")
+              return matches[0]
+
+          def release_url(path: Path) -> str:
+              return f"https://github.com/{repository}/releases/download/{tag}/{quote(path.name)}"
+
+          downloads = [
+              ("Windows", require_one("*.exe")),
+              ("Linux", require_one("*.AppImage")),
+              ("macOS", require_one("*.dmg")),
+          ]
+
+          lines = [
+              "# Download DRH Launcher",
+              "",
+              "Choose the file for your operating system:",
+              "",
+          ]
+          for label, path in downloads:
+              lines.append(f"- **{label}:** [{path.name}]({release_url(path)})")
+          lines.extend([
+              "",
+              "**Need help installing? [Read the installation instructions](https://github.com/Tutez64/DRH-Launcher#readme).**",
+              "",
+              "## Changelog",
+              "",
+          ])
+
+          Path(os.environ["RUNNER_TEMP"], "release-downloads.md").write_text(
+              "\n".join(lines),
+              encoding="utf-8",
+          )
+          PY
+
       - name: Create draft release
         shell: bash
         run: |
@@ -80,11 +129,13 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
             prerelease=(--prerelease)
           fi
+          release_notes="$(cat "$RUNNER_TEMP/release-downloads.md")"
 
           gh release create "$GITHUB_REF_NAME" \
             --draft \
             --verify-tag \
             --title "DRH Launcher $GITHUB_REF_NAME" \
             --generate-notes \
+            --notes "$release_notes" \
             "${prerelease[@]}" \
             dist/*

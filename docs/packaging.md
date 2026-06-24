@@ -16,6 +16,12 @@ The release workflow builds:
 `latest.json` maps the updater's runtime platform identifiers to those signed
 artifacts. `SHA256SUMS` is provided for manual verification.
 
+The draft GitHub Release notes start with a prominent `Download DRH Launcher`
+section using simple operating-system labels: Linux, Windows and macOS. These
+links point to the three user-facing packages only, followed by a bold Markdown
+link to the README installation instructions and a `Changelog` section for the
+generated release notes.
+
 ## Linux User Installation
 
 The AppImage is the only officially supported Linux package for the first
@@ -104,7 +110,10 @@ git push origin master v0.1.0
 
 The tag must exactly equal `v` followed by the Cargo version. GitHub Actions
 builds on native runners, creates `latest.json`, then creates a draft GitHub
-Release containing all artifacts.
+Release containing all artifacts. The generated release notes include a
+prominent download section that points users to the Linux AppImage, Windows
+installer and macOS DMG so they do not need to choose among updater and checksum
+files.
 
 Pre-release Cargo versions such as `0.2.0-alpha` use matching tags such as
 `v0.2.0-alpha`. The workflow marks these GitHub Releases as pre-releases.
