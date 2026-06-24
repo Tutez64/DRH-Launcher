@@ -52,6 +52,11 @@ On newer macOS versions, you may also need to allow it from
 - Update itself when a new release is available.
 - ...more to come!
 
+## Community
+
+Join the [Discord server](https://discord.gg/VvWbNspZrQ) to discuss DRH and DRH Launcher,
+get update notifications, and see occasional previews.
+
 ## Development
 
 ```bash
