@@ -1,0 +1,48 @@
+name: Feature request / Suggestion
+description: Suggest an improvement for DRH Launcher.
+title: "[Suggestion]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Short, practical requests are welcome.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Pick the closest match, if any.
+      options:
+        - Installation / updates
+        - Launch options
+        - Logs / session history
+        - Release history
+        - UI / accessibility
+        - Other
+    validations:
+      required: false
+
+  - type: textarea
+    id: improvement
+    attributes:
+      label: What would you like to improve?
+      description: Describe the feature or change you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: usefulness
+    attributes:
+      label: Why would this be useful?
+      description: Explain the problem it would solve or the workflow it would improve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Additional details
+      description: Add mockups, examples, alternatives, or platform-specific notes if useful.
+    validations:
+      required: false
