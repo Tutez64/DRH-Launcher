@@ -14,12 +14,27 @@ pub struct RunningGame {
 
 #[cfg(unix)]
 pub fn request_graceful_shutdown(child: &Child) -> Result<(), String> {
-    let result = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+    signal_process_group(child, libc::SIGTERM, "SIGTERM")
+}
+
+#[cfg(unix)]
+pub fn force_shutdown(child: &mut Child) -> Result<(), std::io::Error> {
+    signal_process_group(child, libc::SIGKILL, "SIGKILL").map_err(std::io::Error::other)
+}
+
+#[cfg(unix)]
+fn signal_process_group(
+    child: &Child,
+    signal: libc::c_int,
+    signal_name: &str,
+) -> Result<(), String> {
+    let process_group = -(child.id() as libc::pid_t);
+    let result = unsafe { libc::kill(process_group, signal) };
     if result == 0 {
         Ok(())
     } else {
         Err(format!(
-            "Could not send SIGTERM to DRH: {}",
+            "Could not send {signal_name} to DRH process group: {}",
             std::io::Error::last_os_error()
         ))
     }
@@ -65,6 +80,11 @@ pub fn request_graceful_shutdown(child: &Child) -> Result<(), String> {
     } else {
         Err("Could not find a DRH window to close.".to_string())
     }
+}
+
+#[cfg(windows)]
+pub fn force_shutdown(child: &mut Child) -> Result<(), std::io::Error> {
+    child.kill()
 }
 
 pub fn launch_game_with_recommended_args(
@@ -114,6 +134,7 @@ pub fn launch_game_with_recommended_args(
 
     command.current_dir(&game_dir);
     configure_game_process_environment(&mut command, &launch_executable);
+    configure_game_process_group(&mut command);
     command.stdout(Stdio::from(log_file));
     command.stderr(Stdio::from(stderr_file));
     let child = command.spawn().map_err(|error| {
@@ -123,6 +144,18 @@ pub fn launch_game_with_recommended_args(
 
     Ok(RunningGame { child, session_log })
 }
+
+#[cfg(unix)]
+fn configure_game_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    // Pre-launch helpers such as prime-run may spawn the actual game as a child.
+    // Giving each launch its own process group lets Stop target the whole launch tree.
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_game_process_group(_command: &mut Command) {}
 
 fn configure_game_process_environment(command: &mut Command, launch_executable: &Path) {
     if !cfg!(target_os = "linux") {
@@ -520,6 +553,76 @@ mod tests {
         assert!(contents.contains("stdout line"));
         assert!(contents.contains("stderr line"));
         assert!(contents.contains("Version: V-test"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn graceful_shutdown_reaches_game_started_by_pre_launch_wrapper() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::Duration;
+
+        let temp = tempdir().unwrap();
+        let game_dir = paths::game_dir(temp.path());
+        fs::create_dir_all(&game_dir).unwrap();
+
+        let term_marker = temp.path().join("game-term-marker");
+        let game_started_marker = temp.path().join("game-started-marker");
+        let executable = game_dir.join(game_executable_names()[0]);
+        fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\n\
+                 trap 'printf term > \"{}\"; exit 0' TERM\n\
+                 printf started > \"{}\"\n\
+                 while :; do sleep 1; done\n",
+                term_marker.display(),
+                game_started_marker.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+
+        let wrapper = temp.path().join("pre-launch-wrapper");
+        fs::write(
+            &wrapper,
+            "#!/bin/sh\n\
+             \"$@\" &\n\
+             child=$!\n\
+             wait \"$child\"\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&wrapper).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&wrapper, permissions).unwrap();
+
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().to_path_buf()),
+            pre_launch_command: wrapper.display().to_string(),
+            ..LauncherConfig::default()
+        };
+        let mut game = launch_game_with_recommended_args(&config, &[], Some("V-test")).unwrap();
+
+        assert!(wait_for_path(&game_started_marker, Duration::from_secs(2)));
+
+        request_graceful_shutdown(&game.child).unwrap();
+        let status = game.child.wait().unwrap();
+
+        assert!(!status.success());
+        assert!(wait_for_path(&term_marker, Duration::from_secs(2)));
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wait_for_path(path: &Path, timeout: std::time::Duration) -> bool {
+        let started_at = std::time::Instant::now();
+        while started_at.elapsed() < timeout {
+            if path.exists() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        path.exists()
     }
 
     fn create_executable(path: &Path) {

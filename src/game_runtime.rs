@@ -192,7 +192,7 @@ pub(crate) fn begin_game_stop(
                         forced_reason = Some("graceful shutdown timed out".to_string());
                     }
                     if !forced && forced_reason.is_some() {
-                        match game.child.kill() {
+                        match game_launch::force_shutdown(&mut game.child) {
                             Ok(()) => forced = true,
                             Err(error) => {
                                 failure = Some(format!("Could not stop DRH: {error}"));
