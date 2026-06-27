@@ -91,8 +91,11 @@ jobs:
                   raise SystemExit(f"Expected one {pattern} file in {dist}, found: {names}")
               return matches[0]
 
+          def github_asset_name(path: Path) -> str:
+              return path.name.replace(" ", ".")
+
           def release_url(path: Path) -> str:
-              return f"https://github.com/{repository}/releases/download/{tag}/{quote(path.name)}"
+              return f"https://github.com/{repository}/releases/download/{tag}/{quote(github_asset_name(path))}"
 
           downloads = [
               ("Windows", require_one("*.exe")),

@@ -50,7 +50,7 @@ def signature_for(artifact: Path) -> str:
 
 
 def github_download_url(repository: str, version: str, artifact: Path) -> str:
-    encoded_name = quote(artifact.name)
+    encoded_name = quote(github_asset_name(artifact))
     return f"https://github.com/{repository}/releases/download/v{version}/{encoded_name}"
 
 
@@ -72,6 +72,16 @@ def download_url(args: argparse.Namespace, version: str, artifact: Path, platfor
     if args.repository:
         return github_download_url(args.repository, version, artifact)
     return base_url_download_url(platform_base_url(args, platform), artifact)
+
+
+def github_asset_name(artifact: Path) -> str:
+    return artifact.name.replace(" ", ".")
+
+
+def checksum_name(args: argparse.Namespace, artifact: Path) -> str:
+    if args.repository:
+        return github_asset_name(artifact)
+    return artifact.name
 
 
 def sha256_file(path: Path) -> str:
@@ -151,7 +161,9 @@ def main() -> None:
         and path != args.checksums_output
         and not path.name.endswith(".sig")
     )
-    checksums = "".join(f"{sha256_file(path)}  {path.name}\n" for path in checksum_files)
+    checksums = "".join(
+        f"{sha256_file(path)}  {checksum_name(args, path)}\n" for path in checksum_files
+    )
     args.checksums_output.write_text(checksums, encoding="utf-8")
 
 
