@@ -2,7 +2,7 @@
 mod platform {
     use directories::BaseDirs;
     use std::env;
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -272,16 +272,65 @@ mod platform {
 
     fn refresh_desktop_caches(paths: &IntegrationPaths) {
         if let Some(applications_dir) = paths.desktop_entry.parent() {
-            let _ = Command::new("update-desktop-database")
+            let _ = desktop_cache_command("update-desktop-database")
                 .arg(applications_dir)
                 .status();
         }
 
         if let Some(hicolor_dir) = paths.icons.first().and_then(|icon| icon.ancestors().nth(3)) {
-            let _ = Command::new("gtk-update-icon-cache")
+            let _ = desktop_cache_command("gtk-update-icon-cache")
                 .args(["--force", "--ignore-theme-index"])
                 .arg(hicolor_dir)
                 .status();
+        }
+
+        // KDE keeps its own service/menu cache. Without this, a freshly installed
+        // desktop entry can be searchable while missing from the Game menu until
+        // the next session restart.
+        if !desktop_cache_command("kbuildsycoca6")
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            let _ = desktop_cache_command("kbuildsycoca5").status();
+        }
+    }
+
+    fn desktop_cache_command(program: &str) -> Command {
+        let mut command = Command::new(program);
+        clear_appimage_environment(&mut command, env::var_os("APPDIR").as_deref().map(Path::new));
+        command
+    }
+
+    fn clear_appimage_environment(command: &mut Command, appdir: Option<&Path>) {
+        for name in ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] {
+            command.env_remove(name);
+        }
+
+        let Some(appdir) = appdir else {
+            return;
+        };
+        remove_path_entries_under(command, "LD_LIBRARY_PATH", appdir);
+        remove_path_entries_under(command, "PATH", appdir);
+    }
+
+    fn remove_path_entries_under(command: &mut Command, name: &str, parent: &Path) {
+        let Some(value) = env::var_os(name) else {
+            return;
+        };
+        match path_entries_without_parent(&value, parent) {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
+
+    fn path_entries_without_parent(value: &OsStr, parent: &Path) -> Option<OsString> {
+        let entries = env::split_paths(value)
+            .filter(|entry| !entry.starts_with(parent))
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            None
+        } else {
+            env::join_paths(entries).ok()
         }
     }
 
@@ -343,6 +392,23 @@ mod platform {
                 bundled_icon_path(app_dir, 256),
                 app_dir.join("usr/share/icons/hicolor/256x256/apps/DRH-Launcher.png")
             );
+        }
+
+        #[test]
+        fn removes_appimage_paths_from_desktop_cache_tool_environment() {
+            let appdir = Path::new("/tmp/DRH-Launcher.AppDir");
+            let value = std::env::join_paths([
+                Path::new("/tmp/DRH-Launcher.AppDir/usr/bin"),
+                Path::new("/usr/bin"),
+                Path::new("/tmp/DRH-Launcher.AppDir/usr/lib"),
+                Path::new("/bin"),
+            ])
+            .unwrap();
+
+            let filtered = path_entries_without_parent(&value, appdir).unwrap();
+            let entries = std::env::split_paths(&filtered).collect::<Vec<_>>();
+
+            assert_eq!(entries, vec![Path::new("/usr/bin"), Path::new("/bin")]);
         }
 
         #[test]
