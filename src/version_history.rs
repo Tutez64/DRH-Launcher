@@ -325,13 +325,35 @@ fn apply_selected_launcher_version_view(ui: &AppWindow, release: &RepositoryRele
     ui.set_selected_version_title(release_title(&release.version, &release.name).into());
     ui.set_selected_version_detail(detail.into());
     ui.set_selected_version_changelog_blocks(ModelRc::new(VecModel::from(markdown_blocks(
-        &release.body,
+        launcher_release_changelog_body(&release.body),
     ))));
     ui.set_selected_version_release_enabled(true);
     ui.set_selected_version_action_text("Use Home update banner".into());
     ui.set_selected_version_action_enabled(false);
     ui.set_selected_version_replace_confirmation_visible(false);
     ui.set_selected_version_replace_confirmation_text("".into());
+}
+
+fn launcher_release_changelog_body(body: &str) -> &str {
+    let mut offset = 0;
+    for segment in body.split_inclusive('\n') {
+        let line = segment.trim_end_matches('\n').trim_end_matches('\r');
+        offset += segment.len();
+        if is_changelog_heading(line) {
+            return body[offset..].trim_start();
+        }
+    }
+
+    body
+}
+
+fn is_changelog_heading(line: &str) -> bool {
+    let line = line.trim_start();
+    let Some(rest) = line.strip_prefix('#') else {
+        return false;
+    };
+    let rest = rest.trim_start_matches('#').trim();
+    rest.eq_ignore_ascii_case("changelog")
 }
 
 pub(crate) fn selected_drh_history_entry(
@@ -734,6 +756,33 @@ mod tests {
 
         assert!(message.contains("Installing V9 will replace V10 (current)."));
         assert!(message.contains("V10 will remain on disk as the Restore version."));
+    }
+
+    #[test]
+    fn launcher_release_changelog_skips_download_section() {
+        let body = "# Download DRH Launcher\n\n- Linux: appimage\n\n## Changelog\n\n- Fixed stuff\n";
+
+        let changelog = launcher_release_changelog_body(body);
+
+        assert_eq!(changelog, "- Fixed stuff\n");
+    }
+
+    #[test]
+    fn launcher_release_changelog_handles_crlf_without_offset_drift() {
+        let body = "# Download DRH Launcher\r\n\r\n**Need help? [Read the README](https://example.test/readme).**\r\n\r\n## Changelog\r\n\r\n- Fixed stuff\r\n";
+
+        let changelog = launcher_release_changelog_body(body);
+
+        assert_eq!(changelog, "- Fixed stuff\r\n");
+    }
+
+    #[test]
+    fn launcher_release_changelog_keeps_body_without_changelog_heading() {
+        let body = "- Fixed stuff\n";
+
+        let changelog = launcher_release_changelog_body(body);
+
+        assert_eq!(changelog, body);
     }
 
     fn test_history_entry(version: &str) -> PlatformReleaseHistoryEntry {
