@@ -18,6 +18,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 pub(crate) fn start_version_history_refresh(
     ui: &AppWindow,
     config: LauncherConfig,
+    app_shutting_down: std::sync::Arc<std::sync::atomic::AtomicBool>,
     release_source: ReleaseSource,
     drh_version_history: Arc<Mutex<Vec<PlatformReleaseHistoryEntry>>>,
     launcher_version_history: Arc<Mutex<Vec<RepositoryRelease>>>,
@@ -90,7 +91,8 @@ pub(crate) fn start_version_history_refresh(
         let drh_entries = drh_result.ok();
         let launcher_entries = launcher_result.ok();
 
-        let _ = slint::invoke_from_event_loop(move || {
+        let event_config = config.clone();
+        crate::invoke_on_event_loop(&config, &app_shutting_down, move || {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
@@ -116,7 +118,7 @@ pub(crate) fn start_version_history_refresh(
             ui.set_refresh_version_history_enabled(true);
             refresh_version_history_selection(
                 &ui,
-                &config,
+                &event_config,
                 &drh_version_history,
                 &launcher_version_history,
                 &pending_drh_version_install,
@@ -217,7 +219,13 @@ fn apply_selected_version_view(
             return;
         };
         ui.set_selected_drh_version_index(index as i32);
-        apply_selected_drh_version_view(ui, config, &drh_entries[index], pending_version, drh_entries);
+        apply_selected_drh_version_view(
+            ui,
+            config,
+            &drh_entries[index],
+            pending_version,
+            drh_entries,
+        );
     } else {
         let Some(index) = normalize_selected_index(
             ui.get_selected_launcher_version_index(),
@@ -300,13 +308,11 @@ fn apply_selected_drh_version_view(
     ui.set_selected_version_action_text(action_text.into());
     ui.set_selected_version_action_enabled(action_enabled);
     ui.set_selected_version_replace_confirmation_visible(confirmation_visible);
-    ui.set_selected_version_replace_confirmation_text(
-        if confirmation_visible {
-            selected_drh_version_replace_confirmation_text(config, drh_entries, entry).into()
-        } else {
-            "".into()
-        },
-    );
+    ui.set_selected_version_replace_confirmation_text(if confirmation_visible {
+        selected_drh_version_replace_confirmation_text(config, drh_entries, entry).into()
+    } else {
+        "".into()
+    });
 }
 
 fn apply_selected_launcher_version_view(ui: &AppWindow, release: &RepositoryRelease, index: usize) {

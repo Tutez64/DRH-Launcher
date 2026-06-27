@@ -33,7 +33,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread;
 
 use archive::extract_to_staging;
@@ -52,8 +55,8 @@ use github_releases::{
     discover_platform_release_by_tag_for_install,
 };
 use home_view::{
-    apply_home_view_state, apply_updating_home_state, home_view_state, installed_active_release_version,
-    refresh_home_state, set_status_message,
+    apply_home_view_state, apply_updating_home_state, home_view_state,
+    installed_active_release_version, refresh_home_state, set_status_message,
 };
 use install_state::InstallState;
 use installer::{
@@ -75,8 +78,7 @@ use release_source::ReleaseSource;
 use slint::{CloseRequestResponse, Timer};
 use version_history::{
     latest_drh_release_version_for_update_block, preserve_previous_slot_on_install,
-    refresh_selected_version_view,
-    refresh_version_history_selection, selected_drh_history_entry,
+    refresh_selected_version_view, refresh_version_history_selection, selected_drh_history_entry,
     selected_history_blocked_update_version, selected_version_release_url,
     start_version_history_refresh,
 };
@@ -144,6 +146,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     let drh_version_history = Arc::new(Mutex::new(Vec::<PlatformReleaseHistoryEntry>::new()));
     let launcher_version_history = Arc::new(Mutex::new(Vec::<RepositoryRelease>::new()));
     let pending_drh_version_install = Arc::new(Mutex::new(None::<String>));
+    let app_shutting_down = Arc::new(AtomicBool::new(false));
     let game_process = Rc::new(RefCell::new(None::<game_launch::RunningGame>));
     let game_monitor = Rc::new(Timer::default());
     let game_stop_timer = Rc::new(Timer::default());
@@ -197,6 +200,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let game_process = Rc::clone(&game_process);
         let game_monitor = Rc::clone(&game_monitor);
         let game_stop_timer = Rc::clone(&game_stop_timer);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         let release_source = release_source.clone();
         ui.unwrap().on_install_or_play(move || {
             let Some(ui) = ui.upgrade() else {
@@ -342,12 +346,14 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             let latest_release = Arc::clone(&latest_release);
             let release_source = release_source.clone();
             let repair_from_cache = matches!(install_status.state, InstallState::BrokenInstall);
+            let app_shutting_down = Arc::clone(&app_shutting_down);
             thread::spawn(move || {
                 let message = if repair_from_cache {
                     repair_active_install(
                         &ui,
                         &install_dir,
                         &config,
+                        &app_shutting_down,
                         &release_source,
                     )
                     .unwrap_or_else(|error| error)
@@ -356,6 +362,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         &ui,
                         &install_dir,
                         &config,
+                        &app_shutting_down,
                         &release_source,
                         Arc::clone(&latest_release),
                         release,
@@ -365,12 +372,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
 
                 log_install_failure(&install_dir, &message);
 
-                let _ = slint::invoke_from_event_loop(move || {
+                let event_config = config.clone();
+                invoke_on_event_loop(&config, &app_shutting_down, move || {
                     let Some(ui) = ui.upgrade() else {
                         return;
                     };
 
-                    finish_install_operation_view(&ui, &config, &message);
+                    finish_install_operation_view(&ui, &event_config, &message);
                 });
             });
         });
@@ -442,6 +450,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
         let game_process = Rc::clone(&game_process);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         ui.unwrap().on_confirm_appimage_action(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -460,6 +469,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             ui.set_appimage_dialog_error("".into());
             let ui = ui.as_weak();
             let config = config.borrow().clone();
+            let app_shutting_down = Arc::clone(&app_shutting_down);
             thread::spawn(move || {
                 let result = if mode == 2 {
                     linux_appimage::uninstall()
@@ -469,7 +479,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
 
                 if let Err(error) = result {
                     log_for_config(&config, diagnostics::LogLevel::Error, &error);
-                    let _ = slint::invoke_from_event_loop(move || {
+                    invoke_on_event_loop(&config, &app_shutting_down, move || {
                         let Some(ui) = ui.upgrade() else {
                             return;
                         };
@@ -517,6 +527,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let config = Rc::clone(&config);
         let game_process = Rc::clone(&game_process);
         let latest_launcher_update = Arc::clone(&latest_launcher_update);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         ui.unwrap().on_launcher_update_action(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -541,6 +552,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 start_launcher_update_check(
                     &ui,
                     config.borrow().clone(),
+                    Arc::clone(&app_shutting_down),
                     Arc::clone(&latest_launcher_update),
                 );
                 return;
@@ -555,10 +567,11 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
 
             let ui = ui.as_weak();
             let config = config.borrow().clone();
+            let app_shutting_down = Arc::clone(&app_shutting_down);
             thread::spawn(move || {
                 if let Err(error) = update.install_and_restart() {
                     log_for_config(&config, diagnostics::LogLevel::Error, &error);
-                    let _ = slint::invoke_from_event_loop(move || {
+                    invoke_on_event_loop(&config, &app_shutting_down, move || {
                         let Some(ui) = ui.upgrade() else {
                             return;
                         };
@@ -575,6 +588,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
         let latest_release = Arc::clone(&latest_release);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         let release_source = release_source.clone();
         ui.unwrap().on_check_updates(move || {
             let Some(ui) = ui.upgrade() else {
@@ -588,6 +602,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             start_release_check(
                 &ui,
                 config.borrow().clone(),
+                Arc::clone(&app_shutting_down),
                 Arc::clone(&latest_release),
                 release_source.clone(),
             );
@@ -652,6 +667,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let config = Rc::clone(&config);
         let game_process = Rc::clone(&game_process);
         let release_source = release_source.clone();
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         ui.unwrap().on_reinstall_current_version(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -676,22 +692,25 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
 
             let ui = ui.as_weak();
             let release_source = release_source.clone();
+            let app_shutting_down = Arc::clone(&app_shutting_down);
             thread::spawn(move || {
                 let message = repair_active_install(
                     &ui,
                     &install_dir,
                     &config,
+                    &app_shutting_down,
                     &release_source,
                 )
                 .unwrap_or_else(|error| format!("Could not reinstall current version: {error}"));
                 log_install_failure(&install_dir, &message);
 
-                let _ = slint::invoke_from_event_loop(move || {
+                let event_config = config.clone();
+                invoke_on_event_loop(&config, &app_shutting_down, move || {
                     let Some(ui) = ui.upgrade() else {
                         return;
                     };
 
-                    finish_install_operation_view(&ui, &config, &message);
+                    finish_install_operation_view(&ui, &event_config, &message);
                 });
             });
         });
@@ -1096,6 +1115,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let drh_version_history = Arc::clone(&drh_version_history);
         let launcher_version_history = Arc::clone(&launcher_version_history);
         let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         let release_source = release_source.clone();
         ui.unwrap().on_ensure_version_history(move || {
             let Some(ui) = ui.upgrade() else {
@@ -1122,6 +1142,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 start_version_history_refresh(
                     &ui,
                     config.borrow().clone(),
+                    Arc::clone(&app_shutting_down),
                     release_source.clone(),
                     Arc::clone(&drh_version_history),
                     Arc::clone(&launcher_version_history),
@@ -1137,6 +1158,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let drh_version_history = Arc::clone(&drh_version_history);
         let launcher_version_history = Arc::clone(&launcher_version_history);
         let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         let release_source = release_source.clone();
         ui.unwrap().on_refresh_version_history(move || {
             let Some(ui) = ui.upgrade() else {
@@ -1150,6 +1172,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             start_version_history_refresh(
                 &ui,
                 config.borrow().clone(),
+                Arc::clone(&app_shutting_down),
                 release_source.clone(),
                 Arc::clone(&drh_version_history),
                 Arc::clone(&launcher_version_history),
@@ -1164,6 +1187,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let drh_version_history = Arc::clone(&drh_version_history);
         let launcher_version_history = Arc::clone(&launcher_version_history);
         let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         let release_source = release_source.clone();
         ui.unwrap().on_select_version_history_source(move |source| {
             let Some(ui) = ui.upgrade() else {
@@ -1193,6 +1217,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 start_version_history_refresh(
                     &ui,
                     config.borrow().clone(),
+                    Arc::clone(&app_shutting_down),
                     release_source.clone(),
                     Arc::clone(&drh_version_history),
                     Arc::clone(&launcher_version_history),
@@ -1292,6 +1317,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let launcher_version_history = Arc::clone(&launcher_version_history);
         let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
         let release_source = release_source.clone();
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         ui.unwrap().on_install_selected_drh_version(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -1381,6 +1407,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             let drh_version_history = Arc::clone(&drh_version_history);
             let launcher_version_history = Arc::clone(&launcher_version_history);
             let pending_drh_version_install = Arc::clone(&pending_drh_version_install);
+            let app_shutting_down = Arc::clone(&app_shutting_down);
             thread::spawn(move || {
                 let latest_version =
                     latest_drh_release_version_for_update_block(&latest_release, &release_source);
@@ -1393,6 +1420,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         &ui,
                         &install_dir,
                         &config_snapshot,
+                        &app_shutting_down,
                         &release_source,
                         InstallPlatformReleaseRequest {
                             latest_release: None,
@@ -1409,17 +1437,18 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 };
                 log_install_failure(&install_dir, &message);
 
-                let _ = slint::invoke_from_event_loop(move || {
+                let event_config = config_snapshot.clone();
+                invoke_on_event_loop(&config_snapshot, &app_shutting_down, move || {
                     let Some(ui) = ui.upgrade() else {
                         return;
                     };
 
-                    finish_install_operation_view(&ui, &config_snapshot, &message);
+                    finish_install_operation_view(&ui, &event_config, &message);
                     ui.set_refresh_version_history_enabled(true);
                     set_status_message(&ui, &message);
                     refresh_version_history_selection(
                         &ui,
-                        &config_snapshot,
+                        &event_config,
                         &drh_version_history,
                         &launcher_version_history,
                         &pending_drh_version_install,
@@ -1577,6 +1606,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let game_process = Rc::clone(&game_process);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         ui.unwrap().window().on_close_requested(move || {
             let Some(ui) = ui.upgrade() else {
                 return CloseRequestResponse::HideWindow;
@@ -1587,6 +1617,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             }
 
             if !process_is_running(&game_process) {
+                app_shutting_down.store(true, Ordering::Relaxed);
                 return CloseRequestResponse::HideWindow;
             }
 
@@ -1619,6 +1650,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let game_process = Rc::clone(&game_process);
         let game_monitor = Rc::clone(&game_monitor);
         let game_stop_timer = Rc::clone(&game_stop_timer);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         ui.unwrap().on_confirm_close(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -1630,6 +1662,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
 
             ui.set_close_confirmation_busy(true);
             ui.set_close_confirmation_error("".into());
+            app_shutting_down.store(true, Ordering::Relaxed);
             game_monitor.stop();
             begin_game_stop(
                 Rc::clone(&game_stop_timer),
@@ -1645,12 +1678,14 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     start_release_check(
         &ui,
         config.borrow().clone(),
+        Arc::clone(&app_shutting_down),
         Arc::clone(&latest_release),
         release_source.clone(),
     );
     start_launcher_update_check(
         &ui,
         config.borrow().clone(),
+        Arc::clone(&app_shutting_down),
         Arc::clone(&latest_launcher_update),
     );
 
@@ -1754,6 +1789,7 @@ fn show_startup_failure(message: &str) {
 fn start_launcher_update_check(
     ui: &AppWindow,
     config: LauncherConfig,
+    app_shutting_down: Arc<AtomicBool>,
     latest_launcher_update: Arc<Mutex<Option<launcher_update::LauncherUpdate>>>,
 ) {
     latest_launcher_update
@@ -1786,7 +1822,7 @@ fn start_launcher_update_check(
         };
         log_for_config(&config, level, &message);
 
-        let _ = slint::invoke_from_event_loop(move || {
+        invoke_on_event_loop(&config, &app_shutting_down, move || {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
@@ -1866,6 +1902,7 @@ fn install_latest_release(
     ui: &slint::Weak<AppWindow>,
     install_dir: &Path,
     config: &LauncherConfig,
+    app_shutting_down: &AtomicBool,
     release_source: &ReleaseSource,
     latest_release: Arc<Mutex<Option<PlatformRelease>>>,
     release: Option<PlatformRelease>,
@@ -1881,6 +1918,7 @@ fn install_latest_release(
             ui,
             install_dir,
             config,
+            app_shutting_down,
             release_source,
             InstallPlatformReleaseRequest {
                 latest_release: Some(latest_release),
@@ -1906,6 +1944,7 @@ fn install_platform_release(
     ui: &slint::Weak<AppWindow>,
     install_dir: &Path,
     config: &LauncherConfig,
+    app_shutting_down: &AtomicBool,
     release_source: &ReleaseSource,
     request: InstallPlatformReleaseRequest,
 ) -> String {
@@ -1937,13 +1976,18 @@ fn install_platform_release(
         diagnostics::LogLevel::Info,
         &format!("Found release {}. Starting install.", release.version),
     );
-    report_background_activity(ui, format!("Preparing download for {}...", release.version));
-    match download_release_with_progress(ui, install_dir, &release) {
+    report_background_activity(
+        ui,
+        config,
+        app_shutting_down,
+        format!("Preparing download for {}...", release.version),
+    );
+    match download_release_with_progress(ui, install_dir, config, app_shutting_down, &release) {
         Ok(download) => {
             log_verified_download(install_dir, &download);
             let message = "Extracting archive...".to_string();
             let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
-            report_background_activity(ui, message);
+            report_background_activity(ui, config, app_shutting_down, message);
             match extract_to_staging(&download, install_dir) {
                 Ok(extracted) => {
                     let _ = diagnostics::write(
@@ -1953,7 +1997,7 @@ fn install_platform_release(
                     );
                     let message = "Installing files...".to_string();
                     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
-                    report_background_activity(ui, message);
+                    report_background_activity(ui, config, app_shutting_down, message);
                     let install_result = if repair_current {
                         repair_release_from_extracted_archive(
                             &extracted,
@@ -2035,13 +2079,14 @@ fn repair_active_install(
     ui: &slint::Weak<AppWindow>,
     install_dir: &Path,
     config: &LauncherConfig,
+    app_shutting_down: &AtomicBool,
     release_source: &ReleaseSource,
 ) -> Result<String, String> {
     let installed = install_metadata::InstalledState::load(install_dir)?;
     let active = installed.active;
     let message = format!("Checking cached archive for {}...", active.version);
     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
-    report_background_activity(ui, message);
+    report_background_activity(ui, config, app_shutting_down, message);
 
     let (download, downloaded) = match verify_cached_archive_by_metadata(
         install_dir,
@@ -2065,13 +2110,19 @@ fn repair_active_install(
                 active.version
             );
             let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Warn, &message);
-            report_background_activity(ui, message.clone());
+            report_background_activity(ui, config, app_shutting_down, message.clone());
             let release = discover_platform_release_by_tag_for_install(
                 release_source,
                 Platform::current(),
                 &active.version,
             )?;
-            let download = download_release_with_progress(ui, install_dir, &release)?;
+            let download = download_release_with_progress(
+                ui,
+                install_dir,
+                config,
+                app_shutting_down,
+                &release,
+            )?;
             log_verified_download(install_dir, &download);
             (download, true)
         }
@@ -2079,7 +2130,7 @@ fn repair_active_install(
 
     let message = "Extracting archive...".to_string();
     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
-    report_background_activity(ui, message);
+    report_background_activity(ui, config, app_shutting_down, message);
     let extracted = extract_to_staging(&download, install_dir)?;
     let _ = diagnostics::write(
         install_dir,
@@ -2089,7 +2140,7 @@ fn repair_active_install(
 
     let message = "Repairing files...".to_string();
     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
-    report_background_activity(ui, message);
+    report_background_activity(ui, config, app_shutting_down, message);
     let repaired = repair_active_install_from_extracted_archive(&extracted, install_dir)?;
     match update_download_cache(install_dir, &active.archive, config.download_cache_limit) {
         Ok(removed) => {
@@ -2109,10 +2160,7 @@ fn repair_active_install(
     let message = if downloaded {
         format!("Reinstalled {}.", repaired.active.version)
     } else {
-        format!(
-            "Repaired {} from cached archive.",
-            repaired.active.version
-        )
+        format!("Repaired {} from cached archive.", repaired.active.version)
     };
     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
     Ok(message)
@@ -2121,6 +2169,8 @@ fn repair_active_install(
 fn download_release_with_progress(
     ui: &slint::Weak<AppWindow>,
     install_dir: &Path,
+    config: &LauncherConfig,
+    app_shutting_down: &AtomicBool,
     release: &PlatformRelease,
 ) -> Result<VerifiedDownload, String> {
     let mut last_percent = None::<u64>;
@@ -2138,6 +2188,8 @@ fn download_release_with_progress(
                 last_percent = percent;
                 report_background_activity(
                     ui,
+                    config,
+                    app_shutting_down,
                     format_download_progress(&release.asset.name, &progress),
                 );
             }
@@ -2154,7 +2206,7 @@ fn download_release_with_progress(
                 reported_verification = true;
                 let message = "Verifying download...".to_string();
                 let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &message);
-                report_background_activity(ui, message);
+                report_background_activity(ui, config, app_shutting_down, message);
             }
         },
         |cache_error| {
@@ -2185,6 +2237,7 @@ fn log_verified_download(install_dir: &Path, download: &VerifiedDownload) {
 fn start_release_check(
     ui: &AppWindow,
     config: LauncherConfig,
+    app_shutting_down: Arc<AtomicBool>,
     latest_release: Arc<Mutex<Option<PlatformRelease>>>,
     release_source: ReleaseSource,
 ) {
@@ -2219,7 +2272,8 @@ fn start_release_check(
         };
         log_for_config(&config, level, &message);
 
-        let _ = slint::invoke_from_event_loop(move || {
+        let event_config = config.clone();
+        invoke_on_event_loop(&config, &app_shutting_down, move || {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
@@ -2229,25 +2283,25 @@ fn start_release_check(
                     .lock()
                     .expect("latest release lock poisoned")
                     .replace(release.clone());
-                let installed_launch_options = load_installed_launch_options(&config);
+                let installed_launch_options = load_installed_launch_options(&event_config);
                 refresh_launch_options_view(
                     &ui,
-                    &config,
+                    &event_config,
                     installed_launch_options.as_ref(),
                     "Save",
                 );
-                home_view_state(&config, Some(&release), &message)
+                home_view_state(&event_config, Some(&release), &message)
             } else {
-                let installed_launch_options = load_installed_launch_options(&config);
+                let installed_launch_options = load_installed_launch_options(&event_config);
                 refresh_launch_options_view(
                     &ui,
-                    &config,
+                    &event_config,
                     installed_launch_options.as_ref(),
                     "Save",
                 );
-                let mut state = home_view_state(&config, None, &message);
+                let mut state = home_view_state(&event_config, None, &message);
                 if matches!(
-                    inspect_install(config.install_dir.as_deref()).state,
+                    inspect_install(event_config.install_dir.as_deref()).state,
                     InstallState::Installed
                 ) {
                     state.install_status = InstallState::LaunchableButMaybeOutdated
@@ -2333,15 +2387,53 @@ fn installed_version_needs_update(installed_version: Option<&str>, latest_versio
         .is_some_and(|installed_version| installed_version.trim() != latest_version.trim())
 }
 
-fn report_background_activity(ui: &slint::Weak<AppWindow>, message: String) {
+fn report_background_activity(
+    ui: &slint::Weak<AppWindow>,
+    config: &LauncherConfig,
+    app_shutting_down: &AtomicBool,
+    message: String,
+) {
     let ui = ui.clone();
-    let _ = slint::invoke_from_event_loop(move || {
+    invoke_on_event_loop(config, app_shutting_down, move || {
         let Some(ui) = ui.upgrade() else {
             return;
         };
 
         set_status_message(&ui, &message);
     });
+}
+
+pub(crate) fn invoke_on_event_loop(
+    config: &LauncherConfig,
+    app_shutting_down: &AtomicBool,
+    callback: impl FnOnce() + Send + 'static,
+) {
+    if app_shutting_down.load(Ordering::Relaxed) {
+        log_for_config(
+            config,
+            diagnostics::LogLevel::Info,
+            "Skipped background UI update because DRH Launcher is shutting down.",
+        );
+        return;
+    }
+
+    match slint::invoke_from_event_loop(callback) {
+        Ok(()) => {}
+        Err(slint::EventLoopError::EventLoopTerminated) => {
+            log_for_config(
+                config,
+                diagnostics::LogLevel::Warn,
+                "Skipped background UI update after Slint event loop ended.",
+            );
+        }
+        Err(error) => {
+            log_for_config(
+                config,
+                diagnostics::LogLevel::Warn,
+                &format!("Could not schedule background UI update: {error}"),
+            );
+        }
+    }
 }
 
 fn format_download_progress(asset_name: &str, progress: &DownloadProgress) -> String {
