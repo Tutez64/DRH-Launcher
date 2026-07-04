@@ -307,7 +307,7 @@ fn apply_selected_drh_version_view(
     );
     ui.set_selected_version_detail(selected_drh_version_detail(entry, &status).into());
     ui.set_selected_version_changelog_blocks(ModelRc::new(VecModel::from(markdown_blocks(
-        &entry.release.body,
+        release_changelog_body(&entry.release.body),
     ))));
     ui.set_selected_version_release_enabled(true);
     ui.set_selected_version_action_text(action_text.into());
@@ -326,7 +326,7 @@ fn apply_selected_launcher_version_view(ui: &AppWindow, release: &RepositoryRele
     ui.set_selected_version_title(release_title(&release.version, &release.name).into());
     ui.set_selected_version_detail(selected_repository_release_detail(release, &status).into());
     ui.set_selected_version_changelog_blocks(ModelRc::new(VecModel::from(markdown_blocks(
-        launcher_release_changelog_body(&release.body),
+        release_changelog_body(&release.body),
     ))));
     ui.set_selected_version_release_enabled(true);
     ui.set_selected_version_action_text("Use Home update banner".into());
@@ -335,7 +335,7 @@ fn apply_selected_launcher_version_view(ui: &AppWindow, release: &RepositoryRele
     ui.set_selected_version_replace_confirmation_text("".into());
 }
 
-fn launcher_release_changelog_body(body: &str) -> &str {
+fn release_changelog_body(body: &str) -> &str {
     let mut offset = 0;
     for segment in body.split_inclusive('\n') {
         let line = segment.trim_end_matches('\n').trim_end_matches('\r');
@@ -799,31 +799,40 @@ mod tests {
     }
 
     #[test]
-    fn launcher_release_changelog_skips_download_section() {
+    fn release_changelog_skips_download_section() {
         let body =
             "# Download DRH Launcher\n\n- Linux: appimage\n\n## Changelog\n\n- Fixed stuff\n";
 
-        let changelog = launcher_release_changelog_body(body);
+        let changelog = release_changelog_body(body);
 
         assert_eq!(changelog, "- Fixed stuff\n");
     }
 
     #[test]
-    fn launcher_release_changelog_handles_crlf_without_offset_drift() {
+    fn release_changelog_handles_crlf_without_offset_drift() {
         let body = "# Download DRH Launcher\r\n\r\n**Need help? [Read the README](https://example.test/readme).**\r\n\r\n## Changelog\r\n\r\n- Fixed stuff\r\n";
 
-        let changelog = launcher_release_changelog_body(body);
+        let changelog = release_changelog_body(body);
 
         assert_eq!(changelog, "- Fixed stuff\r\n");
     }
 
     #[test]
-    fn launcher_release_changelog_keeps_body_without_changelog_heading() {
+    fn release_changelog_keeps_body_without_changelog_heading() {
         let body = "- Fixed stuff\n";
 
-        let changelog = launcher_release_changelog_body(body);
+        let changelog = release_changelog_body(body);
 
         assert_eq!(changelog, body);
+    }
+
+    #[test]
+    fn drh_release_changelog_skips_installation_section() {
+        let body = "# Download Dungeon Rampage Haxe\n\nInstall, update, configure...\n\n## Changelog\n\n- Added launch options\n";
+
+        let changelog = release_changelog_body(body);
+
+        assert_eq!(changelog, "- Added launch options\n");
     }
 
     #[test]
