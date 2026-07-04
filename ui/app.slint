@@ -246,6 +246,7 @@ export component AppWindow inherits Window {
     in-out property <int> saved-launch-arguments-mode: 1;
     in-out property <string> saved-custom-game-args;
     in-out property <string> launch-options-save-text: "Save";
+    in property <string> launch-options-empty-text: "No known launch options loaded from the release manifest.";
     in property <[LaunchOptionView]> launch-options;
     in property <float> launch-option-min-width-px: 210;
     in property <float> drhl-metric-min-width-px: 96;
@@ -923,9 +924,10 @@ export component AppWindow inherits Window {
                                     }
 
                                     if root.launch-options.length == 0 : Text {
-                                        text: "No known launch options loaded from the release manifest.";
+                                        text: root.launch-options-empty-text;
                                         color: Theme.text-support;
                                         font-size: 13px;
+                                        wrap: word-wrap;
                                     }
 
                                     SmallLabel {

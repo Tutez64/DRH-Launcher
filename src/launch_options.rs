@@ -1,7 +1,13 @@
 use crate::config::{LaunchArgumentsMode, LauncherConfig};
+use crate::install_state::InstallState;
 use crate::release_manifest::ManifestLaunchOptions;
-use crate::{AppWindow, LaunchOptionView, game_launch, install_metadata};
+use crate::{game_install, game_launch, install_metadata, AppWindow, LaunchOptionView};
 use slint::{Model, ModelRc, VecModel};
+
+const NO_INSTALLED_LAUNCH_OPTIONS_TEXT: &str =
+    "Install DRH from the Home screen first to load and edit its launch options.";
+const NO_KNOWN_LAUNCH_OPTIONS_TEXT: &str =
+    "No known launch options loaded from the release manifest.";
 
 pub(crate) fn refresh_launch_options_view(
     ui: &AppWindow,
@@ -21,6 +27,7 @@ pub(crate) fn refresh_launch_options_view(
     ui.set_launch_arguments_mode(config.launch_arguments_mode.ui_index());
     ui.set_custom_game_args(custom_game_args.into());
     ui.set_launch_options_save_text(save_text.into());
+    ui.set_launch_options_empty_text(empty_launch_options_text(config, launch_options).into());
     apply_launch_options_to_view(ui, view_options, ui.get_custom_game_args().to_string());
 }
 
@@ -185,6 +192,22 @@ fn known_launch_options_game_args(
         .collect()
 }
 
+fn empty_launch_options_text(
+    config: &LauncherConfig,
+    launch_options: Option<&ManifestLaunchOptions>,
+) -> &'static str {
+    if launch_options.is_some() {
+        return NO_KNOWN_LAUNCH_OPTIONS_TEXT;
+    }
+
+    let status = game_install::inspect_install(Some(&config.effective_install_dir()));
+    if status.state == InstallState::NotInstalled {
+        NO_INSTALLED_LAUNCH_OPTIONS_TEXT
+    } else {
+        NO_KNOWN_LAUNCH_OPTIONS_TEXT
+    }
+}
+
 fn default_launch_option_values(launch_options: &ManifestLaunchOptions) -> Vec<bool> {
     launch_options
         .game_arguments
@@ -252,4 +275,49 @@ fn quote_arg_for_display(arg: &str) -> String {
     }
 
     format!("\"{}\"", arg.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paths;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn empty_launch_options_text_points_to_home_before_install() {
+        let temp = tempdir().unwrap();
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().join("missing-install")),
+            ..LauncherConfig::default()
+        };
+
+        assert_eq!(
+            empty_launch_options_text(&config, None),
+            NO_INSTALLED_LAUNCH_OPTIONS_TEXT
+        );
+    }
+
+    #[test]
+    fn empty_launch_options_text_mentions_manifest_when_installed_without_options() {
+        let temp = tempdir().unwrap();
+        let install_dir = temp.path();
+        let game_dir = paths::game_dir(install_dir);
+        fs::create_dir_all(&game_dir).unwrap();
+        let executable = game_dir.join(game_install::game_executable_names()[0]);
+        if cfg!(target_os = "macos") {
+            fs::create_dir_all(&executable).unwrap();
+        } else {
+            fs::write(&executable, b"game").unwrap();
+        }
+        let config = LauncherConfig {
+            install_dir: Some(install_dir.to_path_buf()),
+            ..LauncherConfig::default()
+        };
+
+        assert_eq!(
+            empty_launch_options_text(&config, None),
+            NO_KNOWN_LAUNCH_OPTIONS_TEXT
+        );
+    }
 }
