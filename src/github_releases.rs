@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::paths;
 use crate::platform::Platform;
 use crate::release_manifest::{
-    ManifestLaunchOptions, ReleaseManifest, is_manifest_asset_name, validate_sha256,
+    is_manifest_asset_name, validate_sha256, ManifestLaunchOptions, ReleaseManifest,
 };
 use crate::release_source::ReleaseSource;
 
@@ -52,6 +52,13 @@ pub struct RepositoryRelease {
     pub body: String,
     pub published_at: Option<String>,
     pub prerelease: bool,
+    pub assets: Vec<RepositoryAsset>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RepositoryAsset {
+    pub name: String,
+    pub size: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -218,6 +225,14 @@ fn repository_release_from_github(release: &GitHubRelease) -> RepositoryRelease 
         body: release.body.clone().unwrap_or_default(),
         published_at: release.published_at.clone(),
         prerelease: release.prerelease,
+        assets: release
+            .assets
+            .iter()
+            .map(|asset| RepositoryAsset {
+                name: asset.name.clone(),
+                size: asset.size,
+            })
+            .collect(),
     }
 }
 
@@ -650,5 +665,6 @@ mod tests {
         assert_eq!(entry.body, "Changelog");
         assert_eq!(entry.published_at.as_deref(), Some("2026-06-17T12:00:00Z"));
         assert!(entry.prerelease);
+        assert!(entry.assets.is_empty());
     }
 }

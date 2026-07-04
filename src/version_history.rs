@@ -4,15 +4,15 @@ use std::thread;
 use crate::changelog_markdown::markdown_blocks;
 use crate::config::LauncherConfig;
 use crate::github_releases::{
-    PlatformRelease, PlatformReleaseHistoryEntry, RepositoryRelease,
     discover_latest_platform_release, discover_platform_release_history,
-    discover_repository_release_history,
+    discover_repository_release_history, PlatformRelease, PlatformReleaseHistoryEntry,
+    RepositoryAsset, RepositoryRelease,
 };
 use crate::home_view::{installed_active_release_version, restore_previous_release_version};
 use crate::install_state::InstallState;
 use crate::platform::Platform;
 use crate::release_source::ReleaseSource;
-use crate::{AppWindow, VersionEntryView, diagnostics, format_bytes, log_for_config};
+use crate::{diagnostics, format_bytes, log_for_config, AppWindow, VersionEntryView};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 pub(crate) fn start_version_history_refresh(
@@ -274,7 +274,7 @@ fn drh_version_entry_view(
     index: usize,
 ) -> VersionEntryView {
     VersionEntryView {
-        title: release_title(&entry.release.version, &entry.release.name).into(),
+        title: entry.release.version.clone().into(),
         detail: drh_version_entry_detail(entry).into(),
         status: drh_version_status(config, entry, index).into(),
     }
@@ -282,7 +282,7 @@ fn drh_version_entry_view(
 
 fn launcher_version_entry_view(release: &RepositoryRelease, index: usize) -> VersionEntryView {
     VersionEntryView {
-        title: release_title(&release.version, &release.name).into(),
+        title: release.version.clone().into(),
         detail: repository_release_detail(release).into(),
         status: launcher_version_status(release, index).into(),
     }
@@ -295,12 +295,17 @@ fn apply_selected_drh_version_view(
     pending_version: Option<&str>,
     drh_entries: &[PlatformReleaseHistoryEntry],
 ) {
+    let status = drh_version_status(
+        config,
+        entry,
+        drh_history_index(drh_entries, &entry.release.version).unwrap_or(usize::MAX),
+    );
     let (action_text, action_enabled, confirmation_visible) =
         selected_drh_version_action(config, entry, pending_version, version_action_blocker(ui));
     ui.set_selected_version_title(
         release_title(&entry.release.version, &entry.release.name).into(),
     );
-    ui.set_selected_version_detail(selected_drh_version_detail(entry).into());
+    ui.set_selected_version_detail(selected_drh_version_detail(entry, &status).into());
     ui.set_selected_version_changelog_blocks(ModelRc::new(VecModel::from(markdown_blocks(
         &entry.release.body,
     ))));
@@ -316,14 +321,10 @@ fn apply_selected_drh_version_view(
 }
 
 fn apply_selected_launcher_version_view(ui: &AppWindow, release: &RepositoryRelease, index: usize) {
-    let mut detail = repository_release_detail(release);
     let status = launcher_version_status(release, index);
-    if !status.is_empty() {
-        detail = format!("{detail} · {status}");
-    }
 
     ui.set_selected_version_title(release_title(&release.version, &release.name).into());
-    ui.set_selected_version_detail(detail.into());
+    ui.set_selected_version_detail(selected_repository_release_detail(release, &status).into());
     ui.set_selected_version_changelog_blocks(ModelRc::new(VecModel::from(markdown_blocks(
         launcher_release_changelog_body(&release.body),
     ))));
@@ -418,32 +419,23 @@ pub(crate) fn selected_version_release_url(
 
 fn drh_version_entry_detail(entry: &PlatformReleaseHistoryEntry) -> String {
     let mut parts = vec![release_date(&entry.release)];
-    if entry.release.prerelease {
-        parts.push("pre-release".to_string());
-    }
-    match &entry.platform_release {
-        Some(release) => {
-            parts.push(format_bytes(release.asset.size));
-            parts.push(release.metadata_source.label().to_string());
-        }
-        None if entry.manifest_available => {
-            parts.push("manifest metadata".to_string());
-        }
-        None => parts.push(format!("no {} package", Platform::current().id())),
-    }
+    parts.push(
+        entry
+            .platform_release
+            .as_ref()
+            .map(|release| format_bytes(release.asset.size))
+            .unwrap_or_else(|| "N/A".to_string()),
+    );
     parts.join(" · ")
 }
 
-fn selected_drh_version_detail(entry: &PlatformReleaseHistoryEntry) -> String {
-    let mut parts = vec![format!("Published: {}", release_date(&entry.release))];
-    if entry.release.prerelease {
-        parts.push("Pre-release".to_string());
-    }
+fn selected_drh_version_detail(entry: &PlatformReleaseHistoryEntry, status: &str) -> String {
+    let mut parts = selected_repository_release_detail_parts(&entry.release, status);
     match &entry.platform_release {
         Some(release) => {
             parts.push(format!("Asset: {}", release.asset.name));
             parts.push(format!("Size: {}", format_bytes(release.asset.size)));
-            parts.push(format!("Metadata: {}", release.metadata_source.label()));
+            parts.push(release_manifest_detail(entry.manifest_available));
         }
         None if entry.manifest_available => {
             parts.push(
@@ -465,12 +457,62 @@ fn selected_drh_version_detail(entry: &PlatformReleaseHistoryEntry) -> String {
     parts.join("\n")
 }
 
+fn release_manifest_detail(manifest_available: bool) -> String {
+    if manifest_available {
+        "Release manifest: available".to_string()
+    } else {
+        "Release manifest: not available".to_string()
+    }
+}
+
 fn repository_release_detail(release: &RepositoryRelease) -> String {
     let mut parts = vec![release_date(release)];
-    if release.prerelease {
-        parts.push("pre-release".to_string());
-    }
+    parts.push(
+        launcher_release_asset(release)
+            .map(|asset| format_bytes(asset.size))
+            .unwrap_or_else(|| "N/A".to_string()),
+    );
     parts.join(" · ")
+}
+
+fn selected_repository_release_detail(release: &RepositoryRelease, status: &str) -> String {
+    let mut parts = selected_repository_release_detail_parts(release, status);
+    match launcher_release_asset(release) {
+        Some(asset) => {
+            parts.push(format!("Asset: {}", asset.name));
+            parts.push(format!("Size: {}", format_bytes(asset.size)));
+        }
+        None => {
+            parts.push(format!(
+                "No package found for {}.",
+                Platform::current().id()
+            ));
+        }
+    }
+    parts.join("\n")
+}
+
+fn selected_repository_release_detail_parts(
+    release: &RepositoryRelease,
+    status: &str,
+) -> Vec<String> {
+    let mut parts = vec![format!("Published: {}", release_date(release))];
+    if !status.is_empty() {
+        parts.push(format!("Status: {status}"));
+    }
+    parts
+}
+
+fn launcher_release_asset(release: &RepositoryRelease) -> Option<&RepositoryAsset> {
+    let platform = Platform::current();
+    release.assets.iter().find(|asset| {
+        let name = asset.name.as_str();
+        match platform {
+            Platform::LinuxX64 => name.ends_with(".AppImage"),
+            Platform::WindowsX64 => name.ends_with(".exe"),
+            Platform::MacosUniversal => name.ends_with(".dmg"),
+        }
+    })
 }
 
 fn drh_version_status(
@@ -488,8 +530,6 @@ fn drh_version_status(
         "Installed".to_string()
     } else if entry.platform_release.is_none() && !entry.manifest_available {
         "Unavailable".to_string()
-    } else if entry.platform_release.is_none() && entry.manifest_available {
-        "Manifest".to_string()
     } else if index == 0 {
         "Latest".to_string()
     } else if entry.release.prerelease {
@@ -760,7 +800,8 @@ mod tests {
 
     #[test]
     fn launcher_release_changelog_skips_download_section() {
-        let body = "# Download DRH Launcher\n\n- Linux: appimage\n\n## Changelog\n\n- Fixed stuff\n";
+        let body =
+            "# Download DRH Launcher\n\n- Linux: appimage\n\n## Changelog\n\n- Fixed stuff\n";
 
         let changelog = launcher_release_changelog_body(body);
 
@@ -785,6 +826,84 @@ mod tests {
         assert_eq!(changelog, body);
     }
 
+    #[test]
+    fn unavailable_drh_release_list_detail_uses_na_size() {
+        let mut entry = test_history_entry("V5");
+        entry.platform_release = None;
+        entry.manifest_available = false;
+        entry.unsupported_reason = Some("missing package".to_string());
+
+        assert_eq!(drh_version_entry_detail(&entry), "2026-01-01 · N/A");
+    }
+
+    #[test]
+    fn launcher_release_detail_uses_current_platform_asset() {
+        let expected_asset_name = current_platform_launcher_asset_name("v0.2.0");
+        let release = test_repository_release(
+            "v0.2.0",
+            vec![
+                RepositoryAsset {
+                    name: "latest.json".to_string(),
+                    size: 100,
+                },
+                RepositoryAsset {
+                    name: expected_asset_name.clone(),
+                    size: 2048,
+                },
+            ],
+        );
+
+        assert_eq!(repository_release_detail(&release), "2026-01-01 · 2.0 KiB");
+        let detail = selected_repository_release_detail(&release, "Latest");
+        assert!(detail.contains(&format!("Asset: {expected_asset_name}")));
+        assert!(detail.contains("Size: 2.0 KiB"));
+    }
+
+    #[test]
+    fn launcher_release_without_current_platform_asset_uses_na_size() {
+        let release = test_repository_release(
+            "v0.2.0",
+            vec![
+                RepositoryAsset {
+                    name: "latest.json".to_string(),
+                    size: 100,
+                },
+                RepositoryAsset {
+                    name: "SHA256SUMS".to_string(),
+                    size: 200,
+                },
+            ],
+        );
+
+        assert_eq!(repository_release_detail(&release), "2026-01-01 · N/A");
+        assert!(
+            selected_repository_release_detail(&release, "Latest").contains(&format!(
+                "No package found for {}.",
+                Platform::current().id()
+            ))
+        );
+    }
+
+    fn current_platform_launcher_asset_name(version: &str) -> String {
+        match Platform::current() {
+            Platform::LinuxX64 => format!("DRH-Launcher_{version}_x86_64.AppImage"),
+            Platform::WindowsX64 => format!("DRH-Launcher_{version}_x64-setup.exe"),
+            Platform::MacosUniversal => format!("DRH-Launcher_{version}_universal.dmg"),
+        }
+    }
+
+    fn test_repository_release(version: &str, assets: Vec<RepositoryAsset>) -> RepositoryRelease {
+        RepositoryRelease {
+            version: version.to_string(),
+            name: format!("DRH Launcher {version}"),
+            html_url: format!("https://example.test/{version}"),
+            body: format!("Changelog for {version}"),
+            published_at: Some("2026-01-01T00:00:00Z".to_string()),
+            prerelease: false,
+            assets,
+        }
+    }
+
     fn test_history_entry(version: &str) -> PlatformReleaseHistoryEntry {
         PlatformReleaseHistoryEntry {
             release: RepositoryRelease {
@@ -794,6 +913,7 @@ mod tests {
                 body: format!("Changelog for {version}"),
                 published_at: Some("2026-01-01T00:00:00Z".to_string()),
                 prerelease: false,
+                assets: Vec::new(),
             },
             platform_release: Some(test_release(version)),
             manifest_available: false,
