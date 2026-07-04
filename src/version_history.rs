@@ -439,7 +439,7 @@ fn selected_drh_version_detail(entry: &PlatformReleaseHistoryEntry, status: &str
         }
         None if entry.manifest_available => {
             parts.push(
-                "Package details will be resolved from the release manifest before install."
+                "Package details will be loaded from the release manifest when installing."
                     .to_string(),
             );
         }

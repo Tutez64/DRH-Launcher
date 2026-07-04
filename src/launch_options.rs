@@ -27,6 +27,7 @@ pub(crate) fn refresh_launch_options_view(
     ui.set_launch_arguments_mode(config.launch_arguments_mode.ui_index());
     ui.set_custom_game_args(custom_game_args.into());
     ui.set_launch_options_save_text(save_text.into());
+    ui.set_launch_argument_modes_enabled(launch_options.is_some());
     ui.set_launch_options_empty_text(empty_launch_options_text(config, launch_options).into());
     apply_launch_options_to_view(ui, view_options, ui.get_custom_game_args().to_string());
 }

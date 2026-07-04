@@ -247,6 +247,7 @@ export component AppWindow inherits Window {
     in-out property <string> saved-custom-game-args;
     in-out property <string> launch-options-save-text: "Save";
     in property <string> launch-options-empty-text: "No known launch options loaded from the release manifest.";
+    in property <bool> launch-argument-modes-enabled: false;
     in property <[LaunchOptionView]> launch-options;
     in property <float> launch-option-min-width-px: 210;
     in property <float> drhl-metric-min-width-px: 96;
@@ -871,6 +872,7 @@ export component AppWindow inherits Window {
                                         SegmentedButton {
                                             text: "Game defaults";
                                             active: root.launch-arguments-mode == 0;
+                                            enabled: root.launch-argument-modes-enabled;
                                             clicked => {
                                                 root.select-launch-arguments-mode(0);
                                             }
@@ -879,6 +881,7 @@ export component AppWindow inherits Window {
                                         SegmentedButton {
                                             text: "DRHL recommended";
                                             active: root.launch-arguments-mode == 1;
+                                            enabled: root.launch-argument-modes-enabled;
                                             clicked => {
                                                 root.select-launch-arguments-mode(1);
                                             }
@@ -887,6 +890,7 @@ export component AppWindow inherits Window {
                                         SegmentedButton {
                                             text: "Custom";
                                             active: root.launch-arguments-mode == 2;
+                                            enabled: root.launch-argument-modes-enabled;
                                             clicked => {
                                                 root.select-launch-arguments-mode(2);
                                             }

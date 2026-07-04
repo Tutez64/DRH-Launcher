@@ -665,17 +665,18 @@ export component SmallLabel inherits Text {
 export component SegmentedButton inherits Rectangle {
     in property <string> text;
     in property <bool> active;
+    in property <bool> enabled: true;
     callback clicked();
 
     min-width: 132px;
     height: 34px;
     border-width: 1px;
-    border-color: root.active ? Theme.accent-warm : Theme.border-muted;
-    background: root.active ? Theme.surface-selected : touch.has-hover ? Theme.surface-hover : Theme.panel-background;
+    border-color: !root.enabled ? Theme.border-disabled : root.active ? Theme.accent-warm : Theme.border-muted;
+    background: !root.enabled ? Theme.surface : root.active ? Theme.surface-selected : touch.has-hover ? Theme.surface-hover : Theme.panel-background;
 
     Text {
         text: root.text;
-        color: root.active ? Theme.text-primary : Theme.text-muted;
+        color: !root.enabled ? Theme.text-disabled : root.active ? Theme.text-primary : Theme.text-muted;
         font-size: 13px;
         font-weight: root.active ? 700 : 600;
         horizontal-alignment: center;
@@ -683,6 +684,7 @@ export component SegmentedButton inherits Rectangle {
     }
 
     touch := TouchArea {
+        enabled: root.enabled;
         clicked => {
             root.clicked();
         }
@@ -873,4 +875,3 @@ export component LaunchTextField inherits Rectangle {
         }
     }
 }
-
