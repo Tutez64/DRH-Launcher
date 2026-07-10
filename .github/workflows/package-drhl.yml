@@ -151,6 +151,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
+      - name: Install Linux build dependencies
+        if: inputs.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev
+          pkg-config --modversion fontconfig
+
       - name: Report macOS toolchain
         if: inputs.platform == 'macos'
         shell: bash
