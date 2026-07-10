@@ -42,7 +42,7 @@ concurrency:
 jobs:
   prepare:
     name: Prepare test package versions
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       package_matrix: ${{ steps.prepare.outputs.package_matrix }}
       linux_update_base_url: ${{ steps.prepare.outputs.linux_update_base_url }}
@@ -112,9 +112,9 @@ jobs:
                   raise SystemExit(f"{platform}_update_base_url must be an HTTP(S) URL, got {base_url!r}")
 
           platforms = [
-              ("linux", "Linux x64", "ubuntu-22.04", "dist/*.AppImage", "dist/*.AppImage*"),
+              ("linux", "Linux x64", "ubuntu-24.04", "dist/*.AppImage", "dist/*.AppImage*"),
               ("windows", "Windows x64", "windows-2022", "dist/*.exe", "dist/*.exe*"),
-              ("macos", "macOS universal", "macos-14", "dist/*.dmg", "dist/*.tar.gz*"),
+              ("macos", "macOS universal", "macos-26", "dist/*.dmg", "dist/*.tar.gz*"),
           ]
           matrix = []
           for platform, name, runner, current_pattern, update_pattern in platforms:
@@ -173,7 +173,7 @@ jobs:
     needs:
       - prepare
       - package
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
