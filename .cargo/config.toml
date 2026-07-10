@@ -1,7 +1,17 @@
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v2"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-cpu=x86-64-v2"]
+
 [target.x86_64-pc-windows-msvc]
 # Increase default stack size to avoid running out of stack
 # space in debug builds. The size matches Linux's default.
-rustflags = ["-C", "link-arg=/STACK:8000000"]
+rustflags = [
+    "-C", "link-arg=/STACK:8000000",
+    "-C", "target-cpu=x86-64-v2"
+]
+
 [target.aarch64-pc-windows-msvc]
 # Increase default stack size to avoid running out of stack
 # space in debug builds. The size matches Linux's default.
