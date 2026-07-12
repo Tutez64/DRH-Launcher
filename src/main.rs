@@ -364,9 +364,11 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         &config,
                         &app_shutting_down,
                         &release_source,
-                        Arc::clone(&latest_release),
-                        release,
-                        false,
+                        InstallLatestReleaseRequest {
+                            latest_release: Arc::clone(&latest_release),
+                            release,
+                            repair_current: false,
+                        },
                     )
                 };
 
@@ -1904,10 +1906,13 @@ fn install_latest_release(
     config: &LauncherConfig,
     app_shutting_down: &AtomicBool,
     release_source: &ReleaseSource,
-    latest_release: Arc<Mutex<Option<PlatformRelease>>>,
-    release: Option<PlatformRelease>,
-    repair_current: bool,
+    request: InstallLatestReleaseRequest,
 ) -> String {
+    let InstallLatestReleaseRequest {
+        latest_release,
+        release,
+        repair_current,
+    } = request;
     let release = match release {
         Some(release) if release.metadata_source == ReleaseMetadataSource::Manifest => Ok(release),
         _ => discover_latest_platform_release_for_install(release_source, Platform::current()),
@@ -1930,6 +1935,12 @@ fn install_latest_release(
         ),
         Err(error) => error,
     }
+}
+
+struct InstallLatestReleaseRequest {
+    latest_release: Arc<Mutex<Option<PlatformRelease>>>,
+    release: Option<PlatformRelease>,
+    repair_current: bool,
 }
 
 struct InstallPlatformReleaseRequest {
