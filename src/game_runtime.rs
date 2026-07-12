@@ -4,9 +4,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::config::LauncherConfig;
-use crate::home_view::{
-    refresh_home_state, set_status_message,
-};
+use crate::home_view::{refresh_home_state, set_status_message};
 use crate::install_state::InstallState;
 use crate::log_view::refresh_logs_view;
 use crate::{AppWindow, diagnostics, game_launch, game_logs, log_for_config, paths};

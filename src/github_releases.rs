@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::paths;
 use crate::platform::Platform;
 use crate::release_manifest::{
-    is_manifest_asset_name, validate_sha256, ManifestLaunchOptions, ReleaseManifest,
+    ManifestLaunchOptions, ReleaseManifest, is_manifest_asset_name, validate_sha256,
 };
 use crate::release_source::ReleaseSource;
 

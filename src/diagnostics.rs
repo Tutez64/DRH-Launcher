@@ -156,7 +156,9 @@ mod tests {
         assert!(is_operation_error_message(
             "Downloaded size mismatch for asset: expected 10 bytes, got 9 bytes"
         ));
-        assert!(!is_operation_error_message("Installed V2. Previous version: V1"));
+        assert!(!is_operation_error_message(
+            "Installed V2. Previous version: V1"
+        ));
     }
 
     #[test]

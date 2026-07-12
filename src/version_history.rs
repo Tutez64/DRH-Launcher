@@ -4,15 +4,15 @@ use std::thread;
 use crate::changelog_markdown::markdown_blocks;
 use crate::config::LauncherConfig;
 use crate::github_releases::{
+    PlatformRelease, PlatformReleaseHistoryEntry, RepositoryAsset, RepositoryRelease,
     discover_latest_platform_release, discover_platform_release_history,
-    discover_repository_release_history, PlatformRelease, PlatformReleaseHistoryEntry,
-    RepositoryAsset, RepositoryRelease,
+    discover_repository_release_history,
 };
 use crate::home_view::{installed_active_release_version, restore_previous_release_version};
 use crate::install_state::InstallState;
 use crate::platform::Platform;
 use crate::release_source::ReleaseSource;
-use crate::{diagnostics, format_bytes, log_for_config, AppWindow, VersionEntryView};
+use crate::{AppWindow, VersionEntryView, diagnostics, format_bytes, log_for_config};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 pub(crate) fn start_version_history_refresh(

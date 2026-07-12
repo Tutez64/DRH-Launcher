@@ -297,7 +297,10 @@ mod platform {
 
     fn desktop_cache_command(program: &str) -> Command {
         let mut command = Command::new(program);
-        clear_appimage_environment(&mut command, env::var_os("APPDIR").as_deref().map(Path::new));
+        clear_appimage_environment(
+            &mut command,
+            env::var_os("APPDIR").as_deref().map(Path::new),
+        );
         command
     }
 

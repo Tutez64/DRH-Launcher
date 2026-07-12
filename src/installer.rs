@@ -129,7 +129,11 @@ pub fn install_extracted_archive_with_blocked_update(
         }
         return Err(format!("Could not write installed metadata: {error}"));
     }
-    cleanup_replaced_dir(install_dir, &retired_previous_dir, "replaced previous install");
+    cleanup_replaced_dir(
+        install_dir,
+        &retired_previous_dir,
+        "replaced previous install",
+    );
     log_install_step(
         install_dir,
         &format!(

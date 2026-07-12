@@ -32,13 +32,9 @@ pub(crate) fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, messag
     apply_home_view_state(ui, state);
 }
 
-pub(crate) fn apply_updating_home_state(
-    ui: &AppWindow,
-    config: &LauncherConfig,
-    message: &str,
-) {
-    let version_text = game_install::inspect_install(Some(&config.effective_install_dir()))
-        .version_text();
+pub(crate) fn apply_updating_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
+    let version_text =
+        game_install::inspect_install(Some(&config.effective_install_dir())).version_text();
     ui.set_install_status(InstallState::Updating.status_text().into());
     ui.set_version_status(version_text.clone().into());
     ui.set_home_support_text(home_support_text(&version_text, message).into());
@@ -132,8 +128,7 @@ fn apply_release_to_home_view_state(
         InstallState::Installed | InstallState::LaunchableButMaybeOutdated => {
             match status.installed_version.as_deref() {
                 Some(installed_version) if release_update_available(config, status, release) => {
-                    state.install_status =
-                        InstallState::UpdateAvailable.status_text().to_string();
+                    state.install_status = InstallState::UpdateAvailable.status_text().to_string();
                     state.install_action_text =
                         InstallState::UpdateAvailable.primary_action().to_string();
                     state.home_support_text = format!(

@@ -1,7 +1,7 @@
 use crate::config::{LaunchArgumentsMode, LauncherConfig};
 use crate::install_state::InstallState;
 use crate::release_manifest::ManifestLaunchOptions;
-use crate::{game_install, game_launch, install_metadata, AppWindow, LaunchOptionView};
+use crate::{AppWindow, LaunchOptionView, game_install, game_launch, install_metadata};
 use slint::{Model, ModelRc, VecModel};
 
 const NO_INSTALLED_LAUNCH_OPTIONS_TEXT: &str =
