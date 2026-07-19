@@ -68,7 +68,7 @@ use launch_options::{
     apply_frame_rate_mode_to_view, apply_frame_rate_preset_to_view,
     apply_launch_arguments_mode_to_view, apply_launch_options_to_view,
     frame_rate_preference_from_view, launch_options_from_model, launch_options_game_args,
-    load_installed_launch_options, refresh_launch_options_view,
+    launch_options_saved_message, load_installed_launch_options, refresh_launch_options_view,
 };
 use log_view::{
     LogViewportPosition, game_log_session_id, refresh_logs_view, remember_game_log_position,
@@ -923,6 +923,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             };
 
             let mut config = config.borrow_mut();
+            let previous_config = config.clone();
             config.pre_launch_command = ui.get_pre_launch_command().trim().to_string();
             if let Some(frame_rate) = frame_rate {
                 config.frame_rate = frame_rate;
@@ -932,11 +933,12 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             config.game_args = game_args;
             match config.save() {
                 Ok(()) => {
-                    log_for_config(
+                    let message = launch_options_saved_message(
+                        &previous_config,
                         &config,
-                        diagnostics::LogLevel::Info,
-                        "Launch options saved.",
+                        installed_launch_options.as_ref(),
                     );
+                    log_for_config(&config, diagnostics::LogLevel::Info, &message);
                     refresh_launch_options_view(
                         &ui,
                         &config,

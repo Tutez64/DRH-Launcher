@@ -370,6 +370,100 @@ pub(crate) fn launch_options_game_args(
     Ok(args)
 }
 
+pub(crate) fn launch_options_saved_message(
+    previous: &LauncherConfig,
+    current: &LauncherConfig,
+    manifest_options: Option<&ManifestLaunchOptions>,
+) -> String {
+    let mut changes = Vec::new();
+
+    let previous_frame_rate = frame_rate_preference_label(&previous.frame_rate);
+    let current_frame_rate = frame_rate_preference_label(&current.frame_rate);
+    if previous_frame_rate != current_frame_rate {
+        changes.push(format!(
+            "frame rate: {previous_frame_rate} -> {current_frame_rate}"
+        ));
+    }
+
+    if previous.pre_launch_command != current.pre_launch_command {
+        changes.push(format!(
+            "pre-launch command: {} -> {}",
+            log_value(&previous.pre_launch_command),
+            log_value(&current.pre_launch_command)
+        ));
+    }
+
+    if previous.launch_arguments_mode != current.launch_arguments_mode {
+        changes.push(format!(
+            "argument mode: {} -> {}",
+            launch_arguments_mode_label(previous.launch_arguments_mode),
+            launch_arguments_mode_label(current.launch_arguments_mode)
+        ));
+    }
+
+    let (previous_options, previous_extra_args) =
+        launch_options_view_state(previous, manifest_options);
+    let (current_options, current_extra_args) =
+        launch_options_view_state(current, manifest_options);
+    for (previous_option, current_option) in previous_options.iter().zip(&current_options) {
+        if previous_option.checked != current_option.checked {
+            changes.push(format!(
+                "{}: {} -> {}",
+                current_option.flag,
+                enabled_label(previous_option.checked),
+                enabled_label(current_option.checked)
+            ));
+        }
+    }
+    if previous_extra_args != current_extra_args {
+        changes.push(format!(
+            "extra arguments: {} -> {}",
+            log_value(&previous_extra_args),
+            log_value(&current_extra_args)
+        ));
+    }
+
+    if changes.is_empty() {
+        "Launch options saved: no changes.".to_string()
+    } else {
+        format!("Launch options saved: {}.", changes.join("; "))
+    }
+}
+
+fn frame_rate_preference_label(preference: &FrameRatePreference) -> String {
+    match preference.mode {
+        FrameRateMode::Auto => "Auto".to_string(),
+        FrameRateMode::Preset => frame_rate_value_label("Preset", preference.value),
+        FrameRateMode::Custom => frame_rate_value_label("Custom", preference.value),
+    }
+}
+
+fn frame_rate_value_label(mode: &str, value: Option<u32>) -> String {
+    value
+        .map(|value| format!("{mode} ({value} FPS)"))
+        .unwrap_or_else(|| format!("{mode} (unset)"))
+}
+
+fn launch_arguments_mode_label(mode: LaunchArgumentsMode) -> &'static str {
+    match mode {
+        LaunchArgumentsMode::GameDefaults => "Game defaults",
+        LaunchArgumentsMode::Recommended => "DRHL recommended",
+        LaunchArgumentsMode::Custom => "Custom",
+    }
+}
+
+fn enabled_label(enabled: bool) -> &'static str {
+    if enabled { "enabled" } else { "disabled" }
+}
+
+fn log_value(value: &str) -> String {
+    if value.is_empty() {
+        "<none>".to_string()
+    } else {
+        format!("{value:?}")
+    }
+}
+
 fn contains_controlled_argument(args: &[String], flag: &str) -> bool {
     let assignment_prefix = format!("{flag}=");
     args.iter()
@@ -486,9 +580,75 @@ fn quote_arg_for_display(arg: &str) -> String {
 mod tests {
     use super::*;
     use crate::paths;
-    use crate::release_manifest::{ManifestAutoFrameRate, ManifestFrameRate};
+    use crate::release_manifest::{ManifestAutoFrameRate, ManifestFrameRate, ManifestGameArgument};
     use std::fs;
     use tempfile::tempdir;
+
+    fn manifest_launch_options() -> ManifestLaunchOptions {
+        ManifestLaunchOptions {
+            frame_rate: Some(ManifestFrameRate {
+                flag: "--fps".to_string(),
+                auto: ManifestAutoFrameRate {
+                    fallback: 120,
+                    step: 24,
+                    maximum: 240,
+                },
+                custom_min: 1,
+                custom_max: 10_000,
+            }),
+            game_arguments: vec![
+                ManifestGameArgument {
+                    name: "want-zoom".to_string(),
+                    flag: "--want-zoom".to_string(),
+                    default: false,
+                    recommended: Some(true),
+                    config_key: None,
+                },
+                ManifestGameArgument {
+                    name: "quality-control-button".to_string(),
+                    flag: "--quality-control-button".to_string(),
+                    default: true,
+                    recommended: None,
+                    config_key: None,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn saved_message_lists_effective_launch_option_changes() {
+        let previous = LauncherConfig::default();
+        let current = LauncherConfig {
+            pre_launch_command: "gamemoderun".to_string(),
+            launch_arguments_mode: LaunchArgumentsMode::Custom,
+            frame_rate: FrameRatePreference {
+                mode: FrameRateMode::Preset,
+                value: Some(144),
+            },
+            game_args: vec![
+                "--quality-control-button".to_string(),
+                "false".to_string(),
+                "--debug".to_string(),
+                "Player One".to_string(),
+            ],
+            ..LauncherConfig::default()
+        };
+
+        assert_eq!(
+            launch_options_saved_message(&previous, &current, Some(&manifest_launch_options())),
+            "Launch options saved: frame rate: Auto -> Preset (144 FPS); pre-launch command: <none> -> \"gamemoderun\"; argument mode: DRHL recommended -> Custom; --want-zoom: enabled -> disabled; --quality-control-button: enabled -> disabled; extra arguments: <none> -> \"--debug \\\"Player One\\\"\"."
+        );
+    }
+
+    #[test]
+    fn saved_message_reports_when_nothing_changed() {
+        let config = LauncherConfig::default();
+
+        assert_eq!(
+            launch_options_saved_message(&config, &config, Some(&manifest_launch_options())),
+            "Launch options saved: no changes."
+        );
+    }
 
     #[test]
     fn empty_launch_options_text_points_to_home_before_install() {
