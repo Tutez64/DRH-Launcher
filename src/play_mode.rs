@@ -3,9 +3,7 @@ use std::ffi::OsString;
 use crate::config::LauncherConfig;
 use crate::github_releases::discover_latest_platform_release;
 use crate::install_state::InstallState;
-use crate::launch_options::{
-    load_installed_launch_options, recommended_game_args_from_launch_options,
-};
+use crate::launch_options::load_installed_launch_options;
 use crate::platform::Platform;
 use crate::release_source::ReleaseSource;
 use crate::{diagnostics, game_install, game_launch, game_logs, paths, release_update_available};
@@ -105,15 +103,15 @@ pub fn run() -> Outcome {
     }
 
     let installed_launch_options = load_installed_launch_options(&config);
-    let recommended_game_args =
-        recommended_game_args_from_launch_options(installed_launch_options.as_ref());
-    let command_summary =
-        game_launch::launch_command_summary_with_recommended_args(&config, &recommended_game_args)
-            .unwrap_or_else(|error| format!("command summary unavailable ({error})"));
-
-    let mut game = match game_launch::launch_game_with_recommended_args(
+    let command_summary = game_launch::launch_command_summary_with_options(
         &config,
-        &recommended_game_args,
+        installed_launch_options.as_ref(),
+    )
+    .unwrap_or_else(|error| format!("command summary unavailable ({error})"));
+
+    let mut game = match game_launch::launch_game_with_options(
+        &config,
+        installed_launch_options.as_ref(),
         install_status.installed_version.as_deref(),
     ) {
         Ok(game) => game,

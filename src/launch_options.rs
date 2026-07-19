@@ -1,6 +1,6 @@
-use crate::config::{LaunchArgumentsMode, LauncherConfig};
+use crate::config::{FrameRateMode, FrameRatePreference, LaunchArgumentsMode, LauncherConfig};
 use crate::install_state::InstallState;
-use crate::release_manifest::ManifestLaunchOptions;
+use crate::release_manifest::{ManifestFrameRate, ManifestLaunchOptions};
 use crate::{AppWindow, LaunchOptionView, game_install, game_launch, install_metadata};
 use slint::{Model, ModelRc, VecModel};
 
@@ -17,19 +17,39 @@ pub(crate) fn refresh_launch_options_view(
 ) {
     let (view_options, custom_game_args) = launch_options_view_state(config, launch_options);
     let launch_options_state = launch_options_state(&view_options);
+    let frame_rate = frame_rate_view_state(config, launch_options);
 
     ui.set_saved_pre_launch_command(config.pre_launch_command.clone().into());
+    ui.set_saved_frame_rate_mode(frame_rate.mode.ui_index());
+    ui.set_saved_game_frame_rate(frame_rate.value.to_string().into());
     ui.set_saved_launch_arguments_mode(config.launch_arguments_mode.ui_index());
     ui.set_saved_custom_game_args(custom_game_args.clone().into());
     ui.set_saved_launch_options_state(launch_options_state.clone().into());
 
     ui.set_pre_launch_command(config.pre_launch_command.clone().into());
+    apply_frame_rate_to_view(ui, &frame_rate);
+    ui.set_game_frame_rate_error("".into());
     ui.set_launch_arguments_mode(config.launch_arguments_mode.ui_index());
     ui.set_custom_game_args(custom_game_args.into());
     ui.set_launch_options_save_text(save_text.into());
-    ui.set_launch_argument_modes_enabled(launch_options.is_some());
+    ui.set_launch_argument_controls_visible(frame_rate.controls_visible);
+    ui.set_launch_argument_modes_enabled(has_known_launch_arguments(launch_options));
     ui.set_launch_options_empty_text(empty_launch_options_text(config, launch_options).into());
     apply_launch_options_to_view(ui, view_options, ui.get_custom_game_args().to_string());
+}
+
+fn has_known_launch_arguments(launch_options: Option<&ManifestLaunchOptions>) -> bool {
+    launch_options.is_some_and(|options| !options.game_arguments.is_empty())
+}
+
+struct FrameRateViewState {
+    controls_visible: bool,
+    supported: bool,
+    mode: FrameRateMode,
+    value: u32,
+    preset_index: f32,
+    presets: Vec<u32>,
+    notice: String,
 }
 
 pub(crate) fn load_installed_launch_options(
@@ -39,25 +59,195 @@ pub(crate) fn load_installed_launch_options(
     state.active.launch_options
 }
 
-pub(crate) fn recommended_game_args_from_launch_options(
+fn frame_rate_view_state(
+    config: &LauncherConfig,
     launch_options: Option<&ManifestLaunchOptions>,
-) -> Vec<String> {
-    launch_options
-        .map(recommended_launch_option_args)
-        .unwrap_or_default()
+) -> FrameRateViewState {
+    let controls_visible = game_install::inspect_install(Some(&config.effective_install_dir()))
+        .state
+        != InstallState::NotInstalled;
+    if !controls_visible {
+        return FrameRateViewState {
+            controls_visible: false,
+            supported: false,
+            mode: FrameRateMode::Auto,
+            value: 0,
+            preset_index: 0.5,
+            presets: Vec::new(),
+            notice: "Install DRH from the Home screen first to configure its frame rate."
+                .to_string(),
+        };
+    }
+    let Some(definition) = launch_options.and_then(|options| options.frame_rate.as_ref()) else {
+        return FrameRateViewState {
+            controls_visible: true,
+            supported: false,
+            mode: FrameRateMode::Auto,
+            value: 0,
+            preset_index: 0.5,
+            presets: Vec::new(),
+            notice: "This DRH version does not support configurable frame rates. It will use its built-in frame rate.".to_string(),
+        };
+    };
+
+    let presets = definition.preset_values();
+    let saved_value = config.frame_rate.value.unwrap_or(definition.auto.fallback);
+    let (mode, value) = match config.frame_rate.mode {
+        FrameRateMode::Auto => (FrameRateMode::Auto, definition.auto.fallback),
+        FrameRateMode::Preset if presets.contains(&saved_value) => {
+            (FrameRateMode::Preset, saved_value)
+        }
+        FrameRateMode::Preset | FrameRateMode::Custom
+            if (definition.custom_min..=definition.custom_max).contains(&saved_value) =>
+        {
+            (FrameRateMode::Custom, saved_value)
+        }
+        FrameRateMode::Preset | FrameRateMode::Custom => {
+            (FrameRateMode::Auto, definition.auto.fallback)
+        }
+    };
+    let preset_index = presets
+        .iter()
+        .position(|preset| *preset == value)
+        .or_else(|| {
+            presets
+                .iter()
+                .position(|preset| *preset == definition.auto.fallback)
+        })
+        .unwrap_or(0) as f32;
+
+    FrameRateViewState {
+        controls_visible,
+        supported: true,
+        mode,
+        value,
+        preset_index,
+        presets,
+        notice: frame_rate_notice(mode, definition),
+    }
 }
 
-fn recommended_launch_option_args(launch_options: &ManifestLaunchOptions) -> Vec<String> {
-    launch_options
-        .game_arguments
+fn frame_rate_notice(mode: FrameRateMode, definition: &ManifestFrameRate) -> String {
+    match mode {
+        FrameRateMode::Auto => "DRH will choose a frame rate at startup based on the primary display. The selected value is therefore not shown in the Launcher.".to_string(),
+        FrameRateMode::Preset => format!(
+            "Choose a fixed frame rate in {} FPS increments. The best value depends on your display and system performance.",
+            definition.auto.step
+        ),
+        FrameRateMode::Custom => format!(
+            "Custom values can reduce performance or affect gameplay. Accepted range: {} to {} FPS; standard presets: {} to {} FPS.",
+            definition.custom_min,
+            definition.custom_max,
+            definition.auto.step,
+            definition.auto.maximum
+        ),
+    }
+}
+
+fn apply_frame_rate_to_view(ui: &AppWindow, state: &FrameRateViewState) {
+    ui.set_frame_rate_controls_visible(state.controls_visible);
+    ui.set_frame_rate_supported(state.supported);
+    ui.set_frame_rate_mode(state.mode.ui_index());
+    ui.set_game_frame_rate(state.value.to_string().into());
+    ui.set_frame_rate_preset_index(state.preset_index);
+    ui.set_frame_rate_preset_maximum(state.presets.len().saturating_sub(1).max(1) as f32);
+    ui.set_frame_rate_presets(ModelRc::new(VecModel::from(
+        state
+            .presets
+            .iter()
+            .map(|value| *value as i32)
+            .collect::<Vec<_>>(),
+    )));
+    ui.set_frame_rate_notice(state.notice.clone().into());
+}
+
+pub(crate) fn apply_frame_rate_mode_to_view(
+    ui: &AppWindow,
+    launch_options: Option<&ManifestLaunchOptions>,
+    mode: FrameRateMode,
+) {
+    let Some(definition) = launch_options.and_then(|options| options.frame_rate.as_ref()) else {
+        return;
+    };
+    let presets = definition.preset_values();
+    let current = ui.get_game_frame_rate().trim().parse::<u32>().ok();
+    let value = match mode {
+        FrameRateMode::Auto => definition.auto.fallback,
+        FrameRateMode::Preset => current
+            .filter(|value| presets.contains(value))
+            .unwrap_or(definition.auto.fallback),
+        FrameRateMode::Custom => current.unwrap_or(definition.auto.fallback),
+    };
+    let preset_index = presets
         .iter()
-        .flat_map(|argument| match argument.recommended {
-            Some(recommended) if recommended != argument.default => {
-                vec![argument.flag.clone(), recommended.to_string()]
-            }
-            _ => Vec::new(),
+        .position(|preset| *preset == value)
+        .or_else(|| {
+            presets
+                .iter()
+                .position(|preset| *preset == definition.auto.fallback)
         })
-        .collect()
+        .unwrap_or(0);
+
+    ui.set_frame_rate_mode(mode.ui_index());
+    ui.set_game_frame_rate(value.to_string().into());
+    ui.set_frame_rate_preset_index(preset_index as f32);
+    ui.set_frame_rate_notice(frame_rate_notice(mode, definition).into());
+}
+
+pub(crate) fn apply_frame_rate_preset_to_view(
+    ui: &AppWindow,
+    launch_options: Option<&ManifestLaunchOptions>,
+    index: usize,
+) {
+    let Some(definition) = launch_options.and_then(|options| options.frame_rate.as_ref()) else {
+        return;
+    };
+    let Some(value) = definition.preset_values().get(index).copied() else {
+        return;
+    };
+
+    ui.set_frame_rate_mode(FrameRateMode::Preset.ui_index());
+    ui.set_frame_rate_preset_index(index as f32);
+    ui.set_game_frame_rate(value.to_string().into());
+    ui.set_frame_rate_notice(frame_rate_notice(FrameRateMode::Preset, definition).into());
+}
+
+pub(crate) fn frame_rate_preference_from_view(
+    ui: &AppWindow,
+    launch_options: Option<&ManifestLaunchOptions>,
+) -> Result<Option<FrameRatePreference>, String> {
+    let Some(definition) = launch_options.and_then(|options| options.frame_rate.as_ref()) else {
+        return Ok(None);
+    };
+    let mode = FrameRateMode::from_ui_index(ui.get_frame_rate_mode());
+    if mode == FrameRateMode::Auto {
+        return Ok(Some(FrameRatePreference::default()));
+    }
+
+    let value = ui
+        .get_game_frame_rate()
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| {
+            format!(
+                "Use a whole number between {} and {}.",
+                definition.custom_min, definition.custom_max
+            )
+        })?;
+    if !(definition.custom_min..=definition.custom_max).contains(&value) {
+        return Err(format!(
+            "Use a whole number between {} and {}.",
+            definition.custom_min, definition.custom_max
+        ));
+    }
+    if mode == FrameRateMode::Preset && !definition.preset_values().contains(&value) {
+        return Err("Select one of the frame-rate presets from the slider.".to_string());
+    }
+
+    Ok(Some(FrameRatePreference {
+        mode,
+        value: Some(value),
+    }))
 }
 
 fn launch_options_view_state(
@@ -168,8 +358,22 @@ pub(crate) fn launch_options_game_args(
     };
     let extra_args = game_launch::parse_command_line(ui.get_custom_game_args().trim())
         .map_err(|error| format!("Could not parse extra arguments: {error}"))?;
+    if let Some(frame_rate) = manifest_options.and_then(|options| options.frame_rate.as_ref())
+        && contains_controlled_argument(&extra_args, &frame_rate.flag)
+    {
+        return Err(format!(
+            "Remove {} from Extra arguments and use the Frame rate control instead.",
+            frame_rate.flag
+        ));
+    }
     args.extend(extra_args);
     Ok(args)
+}
+
+fn contains_controlled_argument(args: &[String], flag: &str) -> bool {
+    let assignment_prefix = format!("{flag}=");
+    args.iter()
+        .any(|argument| argument == flag || argument.starts_with(&assignment_prefix))
 }
 
 fn known_launch_options_game_args(
@@ -282,6 +486,7 @@ fn quote_arg_for_display(arg: &str) -> String {
 mod tests {
     use super::*;
     use crate::paths;
+    use crate::release_manifest::{ManifestAutoFrameRate, ManifestFrameRate};
     use std::fs;
     use tempfile::tempdir;
 
@@ -297,6 +502,7 @@ mod tests {
             empty_launch_options_text(&config, None),
             NO_INSTALLED_LAUNCH_OPTIONS_TEXT
         );
+        assert!(!frame_rate_view_state(&config, None).controls_visible);
     }
 
     #[test]
@@ -320,5 +526,79 @@ mod tests {
             empty_launch_options_text(&config, None),
             NO_KNOWN_LAUNCH_OPTIONS_TEXT
         );
+        let options = ManifestLaunchOptions {
+            frame_rate: None,
+            game_arguments: Vec::new(),
+        };
+        assert!(!has_known_launch_arguments(Some(&options)));
+    }
+
+    #[test]
+    fn removed_preset_is_presented_as_a_preserved_custom_value() {
+        let temp = tempdir().unwrap();
+        let install_dir = temp.path();
+        let game_dir = paths::game_dir(install_dir);
+        fs::create_dir_all(&game_dir).unwrap();
+        let executable = game_dir.join(game_install::game_executable_names()[0]);
+        if cfg!(target_os = "macos") {
+            fs::create_dir_all(&executable).unwrap();
+        } else {
+            fs::write(&executable, b"game").unwrap();
+        }
+        let config = LauncherConfig {
+            install_dir: Some(install_dir.to_path_buf()),
+            frame_rate: FrameRatePreference {
+                mode: FrameRateMode::Preset,
+                value: Some(60),
+            },
+            ..LauncherConfig::default()
+        };
+        let options = ManifestLaunchOptions {
+            frame_rate: Some(ManifestFrameRate {
+                flag: "--fps".to_string(),
+                auto: ManifestAutoFrameRate {
+                    fallback: 120,
+                    step: 24,
+                    maximum: 144,
+                },
+                custom_min: 1,
+                custom_max: 10_000,
+            }),
+            game_arguments: Vec::new(),
+        };
+
+        let state = frame_rate_view_state(&config, Some(&options));
+
+        assert_eq!(state.mode, FrameRateMode::Custom);
+        assert_eq!(state.value, 60);
+    }
+
+    #[test]
+    fn old_manifest_uses_disabled_builtin_display_without_changing_config() {
+        let temp = tempdir().unwrap();
+        let install_dir = temp.path();
+        let game_dir = paths::game_dir(install_dir);
+        fs::create_dir_all(&game_dir).unwrap();
+        let executable = game_dir.join(game_install::game_executable_names()[0]);
+        if cfg!(target_os = "macos") {
+            fs::create_dir_all(&executable).unwrap();
+        } else {
+            fs::write(&executable, b"game").unwrap();
+        }
+        let config = LauncherConfig {
+            install_dir: Some(install_dir.to_path_buf()),
+            frame_rate: FrameRatePreference {
+                mode: FrameRateMode::Custom,
+                value: Some(300),
+            },
+            ..LauncherConfig::default()
+        };
+
+        let state = frame_rate_view_state(&config, None);
+
+        assert!(state.controls_visible);
+        assert!(!state.supported);
+        assert_eq!(state.value, 0);
+        assert_eq!(config.frame_rate.value, Some(300));
     }
 }

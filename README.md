@@ -45,6 +45,7 @@ On newer macOS versions, you may also need to allow it from
 ## Features
 
 - Install, update, repair, and launch Dungeon Rampage Haxe.
+- Match the game frame rate to the primary display refresh rate automatically or choose a preset or custom value.
 - Use recommended launch options by default or adjust them as you wish. 
 - Optionally, use a pre-launch command and custom extra game arguments.
 - Show launcher and game session logs.

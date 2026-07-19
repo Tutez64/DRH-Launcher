@@ -3,6 +3,7 @@ import { Theme } from "theme.slint";
 import {
     AppLineEdit,
     CompactMetricBlock,
+    DiscreteSlider,
     GameSessionButton,
     HelpGitHubButton,
     HelpMenuButton,
@@ -240,6 +241,17 @@ export component AppWindow inherits Window {
     property <bool> download-cache-limit-dirty: root.download-cache-limit != root.saved-download-cache-limit;
     property <bool> general-settings-dirty: root.download-cache-limit-dirty;
     in-out property <string> pre-launch-command;
+    in property <bool> frame-rate-controls-visible: false;
+    in property <bool> frame-rate-supported: false;
+    in-out property <int> frame-rate-mode: 0;
+    in-out property <int> saved-frame-rate-mode: 0;
+    in-out property <string> game-frame-rate;
+    in-out property <string> saved-game-frame-rate;
+    in-out property <string> game-frame-rate-error;
+    in property <string> frame-rate-notice;
+    in property <[int]> frame-rate-presets;
+    in-out property <float> frame-rate-preset-index: 0;
+    in property <float> frame-rate-preset-maximum: 1;
     in-out property <int> launch-arguments-mode: 1;
     in-out property <string> custom-game-args;
     in-out property <string> saved-pre-launch-command;
@@ -247,6 +259,7 @@ export component AppWindow inherits Window {
     in-out property <string> saved-custom-game-args;
     in-out property <string> launch-options-save-text: "Save";
     in property <string> launch-options-empty-text: "No known launch options loaded from the release manifest.";
+    in property <bool> launch-argument-controls-visible: false;
     in property <bool> launch-argument-modes-enabled: false;
     in property <[LaunchOptionView]> launch-options;
     in property <float> launch-option-min-width-px: 210;
@@ -255,6 +268,8 @@ export component AppWindow inherits Window {
     in-out property <string> launch-options-state;
     in-out property <string> saved-launch-options-state;
     property <bool> launch-options-dirty: root.pre-launch-command != root.saved-pre-launch-command
+        || root.frame-rate-mode != root.saved-frame-rate-mode
+        || root.game-frame-rate != root.saved-game-frame-rate
         || root.launch-arguments-mode != root.saved-launch-arguments-mode
         || root.launch-options-state != root.saved-launch-options-state
         || root.custom-game-args != root.saved-custom-game-args;
@@ -292,6 +307,7 @@ export component AppWindow inherits Window {
     in-out property <string> appimage-dialog-error;
     property <bool> info-tooltip-visible: false;
     property <string> info-tooltip-text;
+    property <length> info-tooltip-width: 390px;
     property <length> info-tooltip-anchor-x: 0px;
     property <length> info-tooltip-anchor-y: 0px;
 
@@ -329,6 +345,8 @@ export component AppWindow inherits Window {
     callback cancel-general-settings();
     callback restore-previous-version();
     callback reinstall-current-version();
+    callback select-frame-rate-mode(int);
+    callback select-frame-rate-preset(float);
     callback save-launch-options();
     callback select-launch-arguments-mode(int);
     callback toggle-launch-option(int, bool);
@@ -341,6 +359,10 @@ export component AppWindow inherits Window {
 
     changed download-cache-limit => {
         root.download-cache-limit-error = "";
+    }
+
+    changed game-frame-rate => {
+        root.game-frame-rate-error = "";
     }
 
     changed active-page => {
@@ -834,6 +856,151 @@ export component AppWindow inherits Window {
                                 width: options-page-scroll.width;
                                 spacing: 12px;
 
+                                VerticalLayout {
+                                    spacing: 8px;
+
+                                    HorizontalLayout {
+                                        z: 10;
+                                        spacing: 8px;
+                                        alignment: start;
+
+                                        SmallLabel {
+                                            label: "Frame rate";
+                                        }
+
+                                        InfoHint {
+                                            text: "The original Dungeon Rampage mostly runs at 24 FPS, even if counters show 60.\nHigher rates make DRH smoother, but excessive values may reduce performance or slow the game down.";
+                                            show-tooltip(text, x, y) => {
+                                                root.info-tooltip-text = text;
+                                                root.info-tooltip-width = 615px;
+                                                root.info-tooltip-anchor-x = x;
+                                                root.info-tooltip-anchor-y = y;
+                                                root.info-tooltip-visible = true;
+                                            }
+                                            hide-tooltip => {
+                                                root.info-tooltip-visible = false;
+                                            }
+                                        }
+                                    }
+
+                                    if root.frame-rate-controls-visible : HorizontalLayout {
+                                        spacing: 0px;
+
+                                        SegmentedButton {
+                                            text: "Auto";
+                                            active: root.frame-rate-mode == 0;
+                                            enabled: root.frame-rate-supported;
+                                            clicked => {
+                                                root.select-frame-rate-mode(0);
+                                            }
+                                        }
+
+                                        SegmentedButton {
+                                            text: "Preset";
+                                            active: root.frame-rate-mode == 1;
+                                            enabled: root.frame-rate-supported;
+                                            clicked => {
+                                                root.select-frame-rate-mode(1);
+                                            }
+                                        }
+
+                                        SegmentedButton {
+                                            text: "Custom";
+                                            active: root.frame-rate-mode == 2;
+                                            enabled: root.frame-rate-supported;
+                                            clicked => {
+                                                root.select-frame-rate-mode(2);
+                                            }
+                                        }
+                                    }
+
+                                    if root.frame-rate-controls-visible && root.frame-rate-mode != 2 : VerticalLayout {
+                                        spacing: 4px;
+
+                                        HorizontalLayout {
+                                            spacing: 12px;
+
+                                            DiscreteSlider {
+                                                horizontal-stretch: 1;
+                                                enabled: root.frame-rate-supported && root.frame-rate-mode == 1;
+                                                minimum: 0;
+                                                maximum: root.frame-rate-preset-maximum;
+                                                value: root.frame-rate-preset-index;
+                                                changed(value) => {
+                                                    root.select-frame-rate-preset(value);
+                                                }
+                                            }
+
+                                            Text {
+                                                min-width: 68px;
+                                                text: !root.frame-rate-supported
+                                                    ? "Built-in"
+                                                    : root.frame-rate-mode == 0 ? "Auto" : root.game-frame-rate + " FPS";
+                                                color: root.frame-rate-supported ? Theme.text-primary : Theme.text-disabled;
+                                                font-size: 13px;
+                                                font-weight: 700;
+                                                horizontal-alignment: right;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+
+                                        if root.frame-rate-supported : HorizontalLayout {
+                                            spacing: 12px;
+
+                                            preset-labels := Rectangle {
+                                                horizontal-stretch: 1;
+                                                height: 16px;
+
+                                                for preset[index] in root.frame-rate-presets: Text {
+                                                    width: 48px;
+                                                    x: 10px
+                                                        + index * (preset-labels.width - 20px) / max(root.frame-rate-presets.length - 1, 1)
+                                                        - self.width / 2;
+                                                    text: preset;
+                                                    color: Theme.text-support;
+                                                    font-size: 11px;
+                                                    horizontal-alignment: center;
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                width: 68px;
+                                            }
+                                        }
+                                    }
+
+                                    if root.frame-rate-controls-visible && root.frame-rate-mode == 2 : HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+
+                                        NumericTextField {
+                                            width: 72px;
+                                            value <=> root.game-frame-rate;
+                                        }
+
+                                        Text {
+                                            text: "FPS";
+                                            color: Theme.text-body;
+                                            font-size: 13px;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    Text {
+                                        text: root.frame-rate-notice;
+                                        font-size: 13px;
+                                        color: root.frame-rate-mode == 2 ? Theme.accent-warm : Theme.text-support;
+                                        wrap: word-wrap;
+                                    }
+
+                                    if root.game-frame-rate-error != "" : Text {
+                                        text: root.game-frame-rate-error;
+                                        font-size: 13px;
+                                        color: Theme.accent-primary-hover;
+                                        wrap: word-wrap;
+                                    }
+                                }
+
                                 LaunchTextField {
                                     label: "Pre-launch command";
                                     placeholder: "mangohud, gamescope, prime-run...";
@@ -856,6 +1023,7 @@ export component AppWindow inherits Window {
                                             text: "Original Dungeon Rampage launch options.\nGame defaults: leave them untouched.\nDRHL recommended: use launcher defaults.\nCustom: adjust them manually.";
                                             show-tooltip(text, x, y) => {
                                                 root.info-tooltip-text = text;
+                                                root.info-tooltip-width = 270px;
                                                 root.info-tooltip-anchor-x = x;
                                                 root.info-tooltip-anchor-y = y;
                                                 root.info-tooltip-visible = true;
@@ -866,7 +1034,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    HorizontalLayout {
+                                    if root.launch-argument-controls-visible : HorizontalLayout {
                                         spacing: 0px;
 
                                         SegmentedButton {
@@ -897,7 +1065,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    if root.launch-options.length > 0 : option-area := Rectangle {
+                                    if root.launch-argument-controls-visible && root.launch-options.length > 0 : option-area := Rectangle {
                                         horizontal-stretch: 1;
                                         height: option-grid.preferred-height;
 
@@ -927,7 +1095,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    if root.launch-options.length == 0 : Text {
+                                    if !root.launch-argument-controls-visible || root.launch-options.length == 0 : Text {
                                         text: root.launch-options-empty-text;
                                         color: Theme.text-support;
                                         font-size: 13px;
@@ -1722,10 +1890,10 @@ export component AppWindow inherits Window {
     Rectangle {
         z: 1000;
         visible: root.info-tooltip-visible;
-        width: min(390px, root.width - 16px);
+        width: min(root.info-tooltip-width, root.width - 16px);
         height: info-tooltip-text.preferred-height + 16px;
-        x: min(max(root.info-tooltip-anchor-x - 74px, 8px), root.width - self.width - 8px);
-        y: max(root.info-tooltip-anchor-y - self.height - 14px, 8px);
+        x: min(max(root.info-tooltip-anchor-x + 24px, 8px), root.width - self.width - 8px);
+        y: max(root.info-tooltip-anchor-y - self.height, 8px);
         border-radius: 6px;
         border-width: 1px;
         border-color: Theme.border-accent-muted;

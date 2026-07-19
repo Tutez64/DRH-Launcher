@@ -13,8 +13,16 @@ pub struct ReleaseManifest {
 
 impl ReleaseManifest {
     pub fn parse(contents: &str) -> Result<Self, String> {
-        serde_json::from_str(contents)
-            .map_err(|error| format!("Could not parse release manifest: {error}"))
+        let manifest: Self = serde_json::from_str(contents)
+            .map_err(|error| format!("Could not parse release manifest: {error}"))?;
+        if let Some(frame_rate) = manifest
+            .launch_options
+            .as_ref()
+            .and_then(|options| options.frame_rate.as_ref())
+        {
+            frame_rate.validate()?;
+        }
+        Ok(manifest)
     }
 
     pub fn platform(&self, platform: Platform) -> Result<&ManifestPlatform, String> {
@@ -37,8 +45,60 @@ pub struct ManifestPlatform {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ManifestLaunchOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_rate: Option<ManifestFrameRate>,
     #[serde(default)]
     pub game_arguments: Vec<ManifestGameArgument>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ManifestFrameRate {
+    pub flag: String,
+    pub auto: ManifestAutoFrameRate,
+    pub custom_min: u32,
+    pub custom_max: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ManifestAutoFrameRate {
+    pub fallback: u32,
+    pub step: u32,
+    pub maximum: u32,
+}
+
+impl ManifestFrameRate {
+    pub(crate) fn preset_values(&self) -> Vec<u32> {
+        (self.auto.step..=self.auto.maximum)
+            .step_by(self.auto.step as usize)
+            .collect()
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if !self.flag.starts_with("--") || self.flag.len() <= 2 {
+            return Err("Frame-rate flag must start with -- and contain a name".to_string());
+        }
+        if self.custom_min == 0 || self.custom_max < self.custom_min {
+            return Err("Frame-rate custom range is invalid".to_string());
+        }
+        if self.auto.step == 0
+            || self.auto.maximum < self.auto.step
+            || !self.auto.maximum.is_multiple_of(self.auto.step)
+        {
+            return Err("Automatic frame-rate policy is invalid".to_string());
+        }
+        if self.auto.fallback < self.auto.step
+            || self.auto.fallback > self.auto.maximum
+            || !self.auto.fallback.is_multiple_of(self.auto.step)
+        {
+            return Err(
+                "Automatic frame-rate fallback must be one of the generated presets".to_string(),
+            );
+        }
+        if self.auto.step < self.custom_min || self.auto.maximum > self.custom_max {
+            return Err("Frame-rate presets must fit inside the custom range".to_string());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -96,6 +156,16 @@ mod tests {
                     }
                 },
                 "launch_options": {
+                    "frame_rate": {
+                        "flag": "--fps",
+                        "auto": {
+                            "fallback": 120,
+                            "step": 24,
+                            "maximum": 240
+                        },
+                        "custom_min": 1,
+                        "custom_max": 10000
+                    },
                     "game_arguments": [
                         {
                             "name": "want-zoom",
@@ -125,6 +195,14 @@ mod tests {
         );
         assert_eq!(platform.size, 123);
         let launch_options = manifest.launch_options.unwrap();
+        let frame_rate = launch_options.frame_rate.unwrap();
+        assert_eq!(frame_rate.auto.fallback, 120);
+        assert_eq!(frame_rate.auto.step, 24);
+        assert_eq!(
+            frame_rate.preset_values(),
+            vec![24, 48, 72, 96, 120, 144, 168, 192, 216, 240]
+        );
+        assert_eq!(frame_rate.custom_min, 1);
         assert_eq!(launch_options.game_arguments.len(), 2);
         assert_eq!(launch_options.game_arguments[0].flag, "--want-zoom");
         assert_eq!(launch_options.game_arguments[0].recommended, Some(true));
@@ -132,6 +210,28 @@ mod tests {
             launch_options.game_arguments[1].config_key.as_deref(),
             Some("quality-control-button")
         );
+    }
+
+    #[test]
+    fn rejects_invalid_frame_rate_metadata() {
+        let manifest = r#"{
+            "version": "V3",
+            "platforms": {},
+            "launch_options": {
+                "frame_rate": {
+                    "flag": "--fps",
+                    "auto": {
+                        "fallback": 100,
+                        "step": 24,
+                        "maximum": 144
+                    },
+                    "custom_min": 1,
+                    "custom_max": 10000
+                }
+            }
+        }"#;
+
+        assert!(ReleaseManifest::parse(manifest).is_err());
     }
 
     #[test]

@@ -5,6 +5,7 @@ use std::process::{Child, Command, Stdio};
 
 use crate::config::LauncherConfig;
 use crate::game_install::{game_executable_names, is_game_executable};
+use crate::release_manifest::ManifestLaunchOptions;
 use crate::{game_logs, paths, platform::Platform};
 
 pub struct RunningGame {
@@ -87,9 +88,9 @@ pub fn force_shutdown(child: &mut Child) -> Result<(), std::io::Error> {
     child.kill()
 }
 
-pub fn launch_game_with_recommended_args(
+pub fn launch_game_with_options(
     config: &LauncherConfig,
-    recommended_game_args: &[String],
+    launch_options: Option<&ManifestLaunchOptions>,
     installed_version: Option<&str>,
 ) -> Result<RunningGame, String> {
     let install_dir = config
@@ -102,7 +103,7 @@ pub fn launch_game_with_recommended_args(
 
     let pre_launch_command = parse_command_line(&config.pre_launch_command)
         .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
-    let game_args = config.effective_game_args_with_recommended(recommended_game_args);
+    let game_args = config.effective_game_args(launch_options);
 
     let mut command = if !pre_launch_command.is_empty() {
         let mut command = Command::new(&pre_launch_command[0]);
@@ -116,8 +117,7 @@ pub fn launch_game_with_recommended_args(
         command
     };
 
-    let command_summary =
-        launch_command_summary_with_recommended_args(config, recommended_game_args)?;
+    let command_summary = launch_command_summary_with_options(config, launch_options)?;
     let (log_file, session_log) = game_logs::create(
         install_dir,
         installed_version,
@@ -220,9 +220,9 @@ fn path_entries_without_parent(value: &OsStr, parent: &Path) -> Option<OsString>
     }
 }
 
-pub fn launch_command_summary_with_recommended_args(
+pub fn launch_command_summary_with_options(
     config: &LauncherConfig,
-    recommended_game_args: &[String],
+    launch_options: Option<&ManifestLaunchOptions>,
 ) -> Result<String, String> {
     let install_dir = config
         .install_dir
@@ -233,7 +233,7 @@ pub fn launch_command_summary_with_recommended_args(
     let launch_executable = resolve_launch_executable(&executable)?;
     let pre_launch_command = parse_command_line(&config.pre_launch_command)
         .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
-    let game_args = config.effective_game_args_with_recommended(recommended_game_args);
+    let game_args = config.effective_game_args(launch_options);
 
     let mut parts = Vec::new();
     if !pre_launch_command.is_empty() {
@@ -512,7 +512,7 @@ mod tests {
             ..LauncherConfig::default()
         };
 
-        let summary = launch_command_summary_with_recommended_args(&config, &[]).unwrap();
+        let summary = launch_command_summary_with_options(&config, None).unwrap();
 
         assert!(summary.contains(&quote_command_part(
             &launch_executable.display().to_string()
@@ -543,7 +543,7 @@ mod tests {
             ..LauncherConfig::default()
         };
 
-        let mut game = launch_game_with_recommended_args(&config, &[], Some("V-test")).unwrap();
+        let mut game = launch_game_with_options(&config, None, Some("V-test")).unwrap();
         let status = game.child.wait().unwrap();
         let log_path =
             game_logs::finish(&game.session_log, &format!("Exited with status: {status}")).unwrap();
@@ -602,7 +602,7 @@ mod tests {
             pre_launch_command: wrapper.display().to_string(),
             ..LauncherConfig::default()
         };
-        let mut game = launch_game_with_recommended_args(&config, &[], Some("V-test")).unwrap();
+        let mut game = launch_game_with_options(&config, None, Some("V-test")).unwrap();
 
         assert!(wait_for_path(&game_started_marker, Duration::from_secs(2)));
 

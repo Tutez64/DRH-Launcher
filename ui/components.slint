@@ -1,4 +1,4 @@
-import { LineEdit } from "std-widgets.slint";
+import { LineEdit, Slider } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 
 export component PrimaryButton inherits Rectangle {
@@ -81,6 +81,77 @@ export component StepperButton inherits Rectangle {
     touch := TouchArea {
         clicked => {
             root.clicked();
+        }
+    }
+}
+
+export component DiscreteSlider inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <float> minimum: 0;
+    in property <float> maximum: 1;
+    in-out property <float> value: minimum;
+    callback changed(float);
+
+    private property <float> range: max(root.maximum - root.minimum, 1);
+    private property <float> snapped-value: root.enabled
+        ? round(max(root.minimum, min(root.maximum, root.value)))
+        : max(root.minimum, min(root.maximum, root.value));
+    private property <float> progress: (root.snapped-value - root.minimum) / root.range;
+
+    min-height: 24px;
+
+    rail := Rectangle {
+        x: 10px;
+        y: (parent.height - self.height) / 2;
+        width: max(parent.width - 20px, 0px);
+        height: 4px;
+        border-radius: 2px;
+        background: root.enabled ? Theme.border-accent-muted : Theme.border-disabled;
+    }
+
+    Rectangle {
+        x: rail.x;
+        y: rail.y;
+        width: rail.width * root.progress;
+        height: rail.height;
+        border-radius: rail.border-radius;
+        background: root.enabled ? Theme.accent-primary : Theme.accent-disabled;
+    }
+
+    Rectangle {
+        x: rail.x + rail.width * root.progress - self.width / 2;
+        y: (parent.height - self.height) / 2;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        border-width: 2px;
+        border-color: root.enabled ? Theme.accent-primary-hover : Theme.border-disabled;
+        background: root.enabled ? Theme.accent-primary : Theme.accent-disabled;
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: root.enabled ? Theme.text-on-accent : Theme.text-disabled-on-accent;
+        }
+    }
+
+    input := Slider {
+        width: 100%;
+        height: 100%;
+        opacity: 0.001;
+        enabled: root.enabled;
+        minimum: root.minimum;
+        maximum: root.maximum;
+        step: 1;
+        value <=> root.value;
+
+        changed(value) => {
+            let snapped = round(max(root.minimum, min(root.maximum, value)));
+            root.value = snapped;
+            root.changed(snapped);
         }
     }
 }

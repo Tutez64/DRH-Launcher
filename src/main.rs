@@ -40,7 +40,7 @@ use std::sync::{
 use std::thread;
 
 use archive::extract_to_staging;
-use config::{LaunchArgumentsMode, LauncherConfig};
+use config::{FrameRateMode, LaunchArgumentsMode, LauncherConfig};
 use download::{
     DownloadProgress, VerifiedDownload, download_and_verify_with_progress, prune_download_cache,
     update_download_cache, verify_cached_archive_by_metadata,
@@ -65,9 +65,10 @@ use installer::{
     restore_previous_version,
 };
 use launch_options::{
-    apply_launch_arguments_mode_to_view, apply_launch_options_to_view, launch_options_from_model,
-    launch_options_game_args, load_installed_launch_options,
-    recommended_game_args_from_launch_options, refresh_launch_options_view,
+    apply_frame_rate_mode_to_view, apply_frame_rate_preset_to_view,
+    apply_launch_arguments_mode_to_view, apply_launch_options_to_view,
+    frame_rate_preference_from_view, launch_options_from_model, launch_options_game_args,
+    load_installed_launch_options, refresh_launch_options_view,
 };
 use log_view::{
     LogViewportPosition, game_log_session_id, refresh_logs_view, remember_game_log_position,
@@ -291,11 +292,9 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             {
                 let config = config.clone();
                 let installed_launch_options = load_installed_launch_options(&config);
-                let recommended_game_args =
-                    recommended_game_args_from_launch_options(installed_launch_options.as_ref());
-                match game_launch::launch_game_with_recommended_args(
+                match game_launch::launch_game_with_options(
                     &config,
-                    &recommended_game_args,
+                    installed_launch_options.as_ref(),
                     install_status.installed_version.as_deref(),
                 ) {
                     Ok(game) => {
@@ -304,9 +303,9 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                             diagnostics::LogLevel::Info,
                             &format!(
                                 "DRH launched with command: {}. Session log: {}",
-                                game_launch::launch_command_summary_with_recommended_args(
+                                game_launch::launch_command_summary_with_options(
                                     &config,
-                                    &recommended_game_args
+                                    installed_launch_options.as_ref()
                                 )
                                 .unwrap_or_else(|error| format!(
                                     "command summary unavailable ({error})"
@@ -858,19 +857,60 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
+        ui.unwrap().on_select_frame_rate_mode(move |mode| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let installed_launch_options = load_installed_launch_options(&config.borrow());
+            apply_frame_rate_mode_to_view(
+                &ui,
+                installed_launch_options.as_ref(),
+                FrameRateMode::from_ui_index(mode),
+            );
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_select_frame_rate_preset(move |index| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            let installed_launch_options = load_installed_launch_options(&config.borrow());
+            apply_frame_rate_preset_to_view(
+                &ui,
+                installed_launch_options.as_ref(),
+                index.round().max(0.0) as usize,
+            );
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
         ui.unwrap().on_save_launch_options(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
 
-            let mut config = config.borrow_mut();
-            config.pre_launch_command = ui.get_pre_launch_command().trim().to_string();
-            config.launch_arguments_mode =
-                LaunchArgumentsMode::from_ui_index(ui.get_launch_arguments_mode());
-            let installed_launch_options = load_installed_launch_options(&config);
+            let installed_launch_options = load_installed_launch_options(&config.borrow());
+            let frame_rate =
+                match frame_rate_preference_from_view(&ui, installed_launch_options.as_ref()) {
+                    Ok(frame_rate) => frame_rate,
+                    Err(error) => {
+                        ui.set_game_frame_rate_error(error.clone().into());
+                        set_status_message(&ui, &format!("Invalid frame rate: {error}"));
+                        return;
+                    }
+                };
+
             let game_args = match launch_options_game_args(&ui, installed_launch_options.as_ref()) {
                 Ok(args) => args,
                 Err(error) => {
+                    let config = config.borrow();
                     log_for_config(&config, diagnostics::LogLevel::Error, &error);
                     refresh_launch_options_view(
                         &ui,
@@ -882,6 +922,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 }
             };
 
+            let mut config = config.borrow_mut();
+            config.pre_launch_command = ui.get_pre_launch_command().trim().to_string();
+            if let Some(frame_rate) = frame_rate {
+                config.frame_rate = frame_rate;
+            }
+            config.launch_arguments_mode =
+                LaunchArgumentsMode::from_ui_index(ui.get_launch_arguments_mode());
             config.game_args = game_args;
             match config.save() {
                 Ok(()) => {
