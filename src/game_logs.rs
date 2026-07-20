@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crate::{diagnostics, paths};
@@ -103,6 +103,30 @@ pub fn list(install_dir: &Path) -> Result<Vec<GameSessionEntry>, String> {
 pub fn read(path: &Path) -> Result<String, String> {
     let bytes = read_bytes(path)?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub fn path_for_session_id(install_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let session_id = Path::new(session_id);
+    let mut components = session_id.components();
+    if !matches!(components.next(), Some(Component::Normal(_)))
+        || components.next().is_some()
+        || session_id
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("log")
+    {
+        return None;
+    }
+
+    let active_path = paths::game_logs_dir(install_dir).join(session_id);
+    let compressed_path = appended_extension(&active_path, ".zst");
+    if compressed_path.is_file() {
+        Some(compressed_path)
+    } else if active_path.is_file() {
+        Some(active_path)
+    } else {
+        None
+    }
 }
 
 pub fn path_for_external_open(path: &Path) -> Result<PathBuf, String> {
@@ -458,5 +482,35 @@ mod tests {
 
         assert_ne!(next_path, first_path);
         assert!(next_path.ends_with("1970-01-01-00-00-00Z-2.log"));
+    }
+
+    #[test]
+    fn resolves_active_and_compressed_session_ids() {
+        let temp = tempdir().unwrap();
+        let logs_dir = paths::game_logs_dir(temp.path());
+        fs::create_dir_all(&logs_dir).unwrap();
+        let active = logs_dir.join("2026-01-01-00-00-00Z.log");
+        fs::write(&active, "active").unwrap();
+
+        assert_eq!(
+            path_for_session_id(temp.path(), "2026-01-01-00-00-00Z.log"),
+            Some(active.clone())
+        );
+
+        let compressed = appended_extension(&active, ".zst");
+        fs::write(&compressed, "compressed").unwrap();
+        assert_eq!(
+            path_for_session_id(temp.path(), "2026-01-01-00-00-00Z.log"),
+            Some(compressed)
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_session_ids() {
+        let temp = tempdir().unwrap();
+
+        assert_eq!(path_for_session_id(temp.path(), "../session.log"), None);
+        assert_eq!(path_for_session_id(temp.path(), "session.log.zst"), None);
+        assert_eq!(path_for_session_id(temp.path(), "session.txt"), None);
     }
 }

@@ -12,6 +12,14 @@ pub(crate) struct LogViewportPosition {
 }
 
 pub(crate) fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
+    refresh_logs_view_impl(ui, config, true);
+}
+
+pub(crate) fn refresh_log_content(ui: &AppWindow, config: &LauncherConfig) {
+    refresh_logs_view_impl(ui, config, false);
+}
+
+fn refresh_logs_view_impl(ui: &AppWindow, config: &LauncherConfig, refresh_game_sessions: bool) {
     let wrap_columns = if ui.get_log_source() == 0 {
         ui.get_launcher_log_wrap_columns()
     } else {
@@ -20,43 +28,49 @@ pub(crate) fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
     .max(20) as usize;
     let install_dir = config.effective_install_dir();
 
-    let sessions = match game_logs::list(&install_dir) {
-        Ok(sessions) => sessions,
-        Err(error) => {
-            ui.set_game_log_sessions(ModelRc::new(VecModel::from(Vec::new())));
-            ui.set_game_log_sessions_label(session_list_label(0).into());
-            ui.set_selected_game_log_index(-1);
-            ui.set_selected_game_log_enabled(false);
-            ui.set_selected_game_log_title("Could not list game sessions".into());
-            ui.set_selected_game_log_id("".into());
-            let lines = if ui.get_log_source() == 0 {
-                log_lines(config, wrap_columns)
-            } else {
-                log_lines_from_text(&error, wrap_columns)
-            };
-            set_log_lines_if_changed(ui, lines);
-            return;
-        }
-    };
-    let session_views = sessions
-        .iter()
-        .map(|session| GameSessionView {
-            title: session.title.clone().into(),
-            detail: session.detail.clone().into(),
-        })
-        .collect::<Vec<_>>();
-    ui.set_game_log_sessions(ModelRc::new(VecModel::from(session_views)));
-    ui.set_game_log_sessions_label(session_list_label(sessions.len()).into());
+    if refresh_game_sessions {
+        let sessions = match game_logs::list(&install_dir) {
+            Ok(sessions) => sessions,
+            Err(error) => {
+                set_game_log_sessions_if_changed(ui, Vec::new());
+                ui.set_game_log_sessions_label(session_list_label(0).into());
+                ui.set_selected_game_log_index(-1);
+                ui.set_selected_game_log_enabled(false);
+                ui.set_selected_game_log_title("Could not list game sessions".into());
+                ui.set_selected_game_log_id("".into());
+                let lines = if ui.get_log_source() == 0 {
+                    log_lines(config, wrap_columns)
+                } else {
+                    log_lines_from_text(&error, wrap_columns)
+                };
+                set_log_lines_if_changed(ui, lines);
+                return;
+            }
+        };
+        let session_views = sessions
+            .iter()
+            .map(|session| GameSessionView {
+                id: game_log_session_id(&session.path).into(),
+                title: session.title.clone().into(),
+                detail: session.detail.clone().into(),
+            })
+            .collect::<Vec<_>>();
+        let session_count = session_views.len();
+        set_game_log_sessions_if_changed(ui, session_views);
+        ui.set_game_log_sessions_label(session_list_label(session_count).into());
+    }
+
+    let sessions = ui.get_game_log_sessions();
 
     if ui.get_log_source() == 0 {
-        ui.set_selected_game_log_enabled(!sessions.is_empty());
+        ui.set_selected_game_log_enabled(sessions.row_count() != 0);
         set_log_lines_if_changed(ui, log_lines(config, wrap_columns));
         return;
     }
 
     let selected_index = match usize::try_from(ui.get_selected_game_log_index()) {
-        Ok(index) if index < sessions.len() => Some(index),
-        _ if sessions.is_empty() => None,
+        Ok(index) if index < sessions.row_count() => Some(index),
+        _ if sessions.row_count() == 0 => None,
         _ => Some(0),
     };
     let Some(selected_index) = selected_index else {
@@ -74,13 +88,17 @@ pub(crate) fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
         return;
     };
 
-    let session = &sessions[selected_index];
-    let content = game_logs::read(&session.path)
+    let session = sessions
+        .row_data(selected_index)
+        .expect("selected game log disappeared from its model");
+    let content = game_logs::path_for_session_id(&install_dir, session.id.as_str())
+        .ok_or_else(|| format!("Game session log no longer exists: {}", session.id))
+        .and_then(|path| game_logs::read(&path))
         .unwrap_or_else(|error| format!("Could not read game session log: {error}"));
     ui.set_selected_game_log_index(selected_index as i32);
     ui.set_selected_game_log_enabled(true);
-    ui.set_selected_game_log_title(session.title.clone().into());
-    ui.set_selected_game_log_id(game_log_session_id(&session.path).into());
+    ui.set_selected_game_log_title(session.title.clone());
+    ui.set_selected_game_log_id(session.id.clone());
     set_log_lines_if_changed(ui, log_lines_from_text(&content, wrap_columns));
 }
 
@@ -98,6 +116,21 @@ fn set_log_lines_if_changed(ui: &AppWindow, lines: Vec<LogLineView>) {
         });
     if !unchanged {
         ui.set_log_lines(ModelRc::new(VecModel::from(lines)));
+    }
+}
+
+fn set_game_log_sessions_if_changed(ui: &AppWindow, sessions: Vec<GameSessionView>) {
+    let current = ui.get_game_log_sessions();
+    let unchanged = current.row_count() == sessions.len()
+        && sessions.iter().enumerate().all(|(index, session)| {
+            current.row_data(index).is_some_and(|current| {
+                current.id == session.id
+                    && current.title == session.title
+                    && current.detail == session.detail
+            })
+        });
+    if !unchanged {
+        ui.set_game_log_sessions(ModelRc::new(VecModel::from(sessions)));
     }
 }
 

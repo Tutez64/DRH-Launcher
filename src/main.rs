@@ -71,12 +71,12 @@ use launch_options::{
     launch_options_saved_message, load_installed_launch_options, refresh_launch_options_view,
 };
 use log_view::{
-    LogViewportPosition, game_log_session_id, refresh_logs_view, remember_game_log_position,
+    LogViewportPosition, refresh_log_content, refresh_logs_view, remember_game_log_position,
     saved_game_log_position,
 };
 use platform::Platform;
 use release_source::ReleaseSource;
-use slint::{CloseRequestResponse, Timer};
+use slint::{CloseRequestResponse, Model, Timer};
 use version_history::{
     latest_drh_release_version_for_update_block, preserve_previous_slot_on_install,
     refresh_selected_version_view, refresh_version_history_selection, selected_drh_history_entry,
@@ -1530,7 +1530,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 }
 
                 if ui.get_log_source() == source {
-                    refresh_logs_view(&ui, &config.borrow());
+                    refresh_log_content(&ui, &config.borrow());
                 }
             });
     }
@@ -1544,7 +1544,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             };
 
             ui.set_log_source(source);
-            refresh_logs_view(&ui, &config.borrow());
+            refresh_log_content(&ui, &config.borrow());
         });
     }
 
@@ -1557,21 +1557,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 return;
             };
 
-            let Some(install_dir) = config.borrow().install_dir.clone() else {
-                return;
-            };
-            let Ok(sessions) = game_logs::list(&install_dir) else {
-                ui.set_selected_game_log_index(index);
-                ui.set_game_log_viewport_y(0.0);
-                ui.set_game_log_position_known(false);
-                ui.set_game_log_at_end(false);
-                refresh_logs_view(&ui, &config.borrow());
-                return;
-            };
+            let sessions = ui.get_game_log_sessions();
             game_log_positions.borrow_mut().retain(|session_id, _| {
-                sessions
-                    .iter()
-                    .any(|session| game_log_session_id(&session.path) == *session_id)
+                (0..sessions.row_count()).any(|index| {
+                    sessions
+                        .row_data(index)
+                        .is_some_and(|session| session.id == session_id.as_str())
+                })
             });
 
             let current_session_id = ui.get_selected_game_log_id().to_string();
@@ -1586,8 +1578,8 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
 
             let restored_position = usize::try_from(index)
                 .ok()
-                .and_then(|target_index| sessions.get(target_index))
-                .map(|session| game_log_session_id(&session.path))
+                .and_then(|target_index| sessions.row_data(target_index))
+                .map(|session| session.id.to_string())
                 .and_then(|session_id| {
                     saved_game_log_position(&game_log_positions.borrow(), &session_id)
                 });
@@ -1602,7 +1594,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             }
 
             ui.set_selected_game_log_index(index);
-            refresh_logs_view(&ui, &config.borrow());
+            refresh_log_content(&ui, &config.borrow());
         });
     }
 
@@ -1618,24 +1610,14 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 set_status_message(&ui, "No install directory selected.");
                 return;
             };
-            let sessions = match game_logs::list(&install_dir) {
-                Ok(sessions) => sessions,
-                Err(error) => {
-                    log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
-                    set_status_message(&ui, &error);
-                    return;
-                }
-            };
-            let index = ui.get_selected_game_log_index();
-            let Some(session) = usize::try_from(index)
-                .ok()
-                .and_then(|index| sessions.get(index))
+            let session_id = ui.get_selected_game_log_id();
+            let Some(session_path) = game_logs::path_for_session_id(&install_dir, &session_id)
             else {
                 set_status_message(&ui, "No game session selected.");
                 return;
             };
 
-            let open_path = match game_logs::path_for_external_open(&session.path) {
+            let open_path = match game_logs::path_for_external_open(&session_path) {
                 Ok(path) => path,
                 Err(error) => {
                     log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
