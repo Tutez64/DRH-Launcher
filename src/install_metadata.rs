@@ -7,8 +7,12 @@ use crate::atomic_file;
 use crate::diagnostics;
 use crate::github_releases::PlatformRelease;
 use crate::paths;
-use crate::release_manifest::{ManifestLaunchOptions, normalize_sha256};
+use crate::release_manifest::{
+    ManifestLaunchOptions, ReleaseManifest, manifest_includes_frame_rate,
+    manifest_includes_steam_buildid, normalize_sha256,
+};
 use crate::release_source::ReleaseSource;
+use crate::steam_buildid::resolve_steam_buildid;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct InstalledState {
@@ -51,6 +55,8 @@ pub struct InstalledRelease {
     pub installed_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch_options: Option<ManifestLaunchOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steam_buildid: Option<u64>,
 }
 
 impl InstalledRelease {
@@ -70,7 +76,60 @@ impl InstalledRelease {
             archive_size: release.asset.size,
             installed_at: current_timestamp(),
             launch_options: release.launch_options.clone(),
+            steam_buildid: resolve_steam_buildid(&release.version, release.steam_buildid),
         }
+    }
+
+    pub fn apply_known_steam_buildid(&mut self) -> bool {
+        if self.steam_buildid.is_some() {
+            return false;
+        }
+        if let Some(buildid) = resolve_steam_buildid(&self.version, None) {
+            self.steam_buildid = Some(buildid);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn needs_steam_buildid_fetch(&self) -> bool {
+        self.steam_buildid.is_none() && manifest_includes_steam_buildid(&self.version)
+    }
+
+    pub fn needs_frame_rate_fetch(&self) -> bool {
+        self.launch_options
+            .as_ref()
+            .and_then(|options| options.frame_rate.as_ref())
+            .is_none()
+            && manifest_includes_frame_rate(&self.version)
+    }
+
+    pub fn needs_manifest_fetch(&self) -> bool {
+        self.needs_steam_buildid_fetch() || self.needs_frame_rate_fetch()
+    }
+
+    pub fn apply_fetched_manifest(&mut self, manifest: &ReleaseManifest) -> bool {
+        let mut changed = false;
+        if self.needs_steam_buildid_fetch()
+            && let Some(buildid) = resolve_steam_buildid(&self.version, manifest.steam_buildid)
+        {
+            self.steam_buildid = Some(buildid);
+            changed = true;
+        }
+        if self.needs_frame_rate_fetch() {
+            match (&mut self.launch_options, &manifest.launch_options) {
+                (Some(existing), Some(fetched)) if existing.frame_rate.is_none() => {
+                    existing.frame_rate = fetched.frame_rate.clone();
+                    changed = true;
+                }
+                (None, Some(fetched)) => {
+                    self.launch_options = Some(fetched.clone());
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+        changed
     }
 }
 
@@ -109,6 +168,7 @@ mod tests {
             html_url: "https://example.test/V9".to_string(),
             metadata_source: ReleaseMetadataSource::GitHubAssetFallback,
             launch_options: None,
+            steam_buildid: Some(23435799),
             asset: ReleaseAsset {
                 platform_id: "linux-x64".to_string(),
                 name: "Dungeon.Rampage.Haxe.V9.Linux.tar.gz".to_string(),
@@ -128,6 +188,73 @@ mod tests {
         assert_eq!(metadata.archive_sha256, "abc123");
         assert_eq!(metadata.archive_size, 123);
         assert!(metadata.launch_options.is_none());
+        assert_eq!(metadata.steam_buildid, Some(23435799));
+    }
+
+    #[test]
+    fn fills_catalog_steam_buildid_on_existing_install_metadata() {
+        let mut metadata = test_installed_release("V13");
+
+        assert!(metadata.apply_known_steam_buildid());
+        assert_eq!(metadata.steam_buildid, Some(25038329));
+        assert!(!metadata.apply_known_steam_buildid());
+        assert!(!metadata.needs_steam_buildid_fetch());
+    }
+
+    #[test]
+    fn only_fetches_manifest_fields_the_release_is_known_to_have() {
+        let v10 = test_installed_release("V10");
+        assert!(!v10.needs_frame_rate_fetch());
+        assert!(!v10.needs_steam_buildid_fetch());
+        assert!(!v10.needs_manifest_fetch());
+
+        let v11 = test_installed_release("V11");
+        assert!(v11.needs_frame_rate_fetch());
+        assert!(!v11.needs_steam_buildid_fetch());
+        assert!(v11.needs_manifest_fetch());
+
+        let v13 = test_installed_release("V13");
+        assert!(v13.needs_frame_rate_fetch());
+        assert!(!v13.needs_steam_buildid_fetch());
+
+        let v14 = test_installed_release("V14");
+        assert!(v14.needs_frame_rate_fetch());
+        assert!(v14.needs_steam_buildid_fetch());
+        assert!(v14.needs_manifest_fetch());
+    }
+
+    #[test]
+    fn fetched_manifest_fills_only_supported_missing_fields() {
+        let mut release = test_installed_release("V14");
+        let manifest = ReleaseManifest {
+            version: "V14".to_string(),
+            steam_buildid: Some(26_000_000),
+            platforms: std::collections::HashMap::new(),
+            launch_options: Some(ManifestLaunchOptions {
+                frame_rate: Some(crate::release_manifest::ManifestFrameRate {
+                    flag: "--fps".to_string(),
+                    auto: crate::release_manifest::ManifestAutoFrameRate {
+                        fallback: 120,
+                        step: 24,
+                        maximum: 240,
+                    },
+                    custom_min: 1,
+                    custom_max: 10000,
+                }),
+                game_arguments: Vec::new(),
+            }),
+        };
+
+        assert!(release.apply_fetched_manifest(&manifest));
+        assert_eq!(release.steam_buildid, Some(26_000_000));
+        assert!(
+            release
+                .launch_options
+                .as_ref()
+                .and_then(|options| options.frame_rate.as_ref())
+                .is_some()
+        );
+        assert!(!release.needs_manifest_fetch());
     }
 
     fn test_installed_release(version: &str) -> InstalledRelease {
@@ -141,6 +268,7 @@ mod tests {
             archive_size: 123,
             installed_at: "unix:0".to_string(),
             launch_options: None,
+            steam_buildid: None,
         }
     }
 }

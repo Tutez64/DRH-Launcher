@@ -26,6 +26,7 @@ mod platform;
 mod play_mode;
 mod release_manifest;
 mod release_source;
+mod steam_buildid;
 mod version_history;
 
 use std::cell::RefCell;
@@ -52,7 +53,7 @@ use game_runtime::{
 use github_releases::{
     PlatformRelease, PlatformReleaseHistoryEntry, ReleaseMetadataSource, RepositoryRelease,
     discover_latest_platform_release, discover_latest_platform_release_for_install,
-    discover_platform_release_by_tag_for_install,
+    discover_platform_release_by_tag_for_install, fetch_release_manifest,
 };
 use home_view::{
     apply_home_view_state, apply_updating_home_state, home_view_state,
@@ -1708,6 +1709,12 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         });
     }
 
+    start_installed_manifest_refresh(
+        ui.as_weak(),
+        config.borrow().clone(),
+        Arc::clone(&app_shutting_down),
+        release_source.clone(),
+    );
     start_release_check(
         &ui,
         config.borrow().clone(),
@@ -2276,6 +2283,110 @@ fn log_verified_download(install_dir: &Path, download: &VerifiedDownload) {
     let _ = diagnostics::write(install_dir, diagnostics::LogLevel::Info, &verified_message);
 }
 
+fn start_installed_manifest_refresh(
+    ui: slint::Weak<AppWindow>,
+    config: LauncherConfig,
+    app_shutting_down: Arc<AtomicBool>,
+    release_source: ReleaseSource,
+) {
+    let install_dir = config.effective_install_dir();
+    let Ok(mut state) = install_metadata::InstalledState::load(&install_dir) else {
+        return;
+    };
+    if state.active.apply_known_steam_buildid() {
+        let version = state.active.version.clone();
+        let buildid = state.active.steam_buildid;
+        match state.save(&install_dir) {
+            Ok(()) => log_for_config(
+                &config,
+                diagnostics::LogLevel::Info,
+                &recorded_steam_buildid_message(&version, buildid),
+            ),
+            Err(error) => log_for_config(
+                &config,
+                diagnostics::LogLevel::Warn,
+                &format!("Could not save Steam BuildID metadata: {error}"),
+            ),
+        }
+    }
+    if !state.active.needs_manifest_fetch() {
+        return;
+    }
+
+    let version = state.active.version.clone();
+    thread::spawn(move || {
+        if app_shutting_down.load(Ordering::Relaxed) {
+            return;
+        }
+        match fetch_release_manifest(&release_source, &version) {
+            Ok(Some(manifest)) => {
+                let Ok(mut state) = install_metadata::InstalledState::load(&install_dir) else {
+                    return;
+                };
+                if state.active.version != version || !state.active.needs_manifest_fetch() {
+                    return;
+                }
+                let filled_frame_rate = state.active.needs_frame_rate_fetch();
+                if !state.active.apply_fetched_manifest(&manifest) {
+                    return;
+                }
+                if let Err(error) = state.save(&install_dir) {
+                    log_for_config(
+                        &config,
+                        diagnostics::LogLevel::Warn,
+                        &format!("Could not save refreshed release metadata: {error}"),
+                    );
+                    return;
+                }
+                if let Some(buildid) = state.active.steam_buildid {
+                    log_for_config(
+                        &config,
+                        diagnostics::LogLevel::Info,
+                        &recorded_steam_buildid_message(&version, Some(buildid)),
+                    );
+                }
+                if filled_frame_rate && !state.active.needs_frame_rate_fetch() {
+                    log_for_config(
+                        &config,
+                        diagnostics::LogLevel::Info,
+                        &format!("Loaded frame-rate options for installed {version}."),
+                    );
+                    let event_config = config.clone();
+                    invoke_on_event_loop(&config, &app_shutting_down, move || {
+                        let Some(ui) = ui.upgrade() else {
+                            return;
+                        };
+                        let installed_launch_options = load_installed_launch_options(&event_config);
+                        refresh_launch_options_view(
+                            &ui,
+                            &event_config,
+                            installed_launch_options.as_ref(),
+                            "Save",
+                        );
+                    });
+                }
+            }
+            Ok(None) => log_for_config(
+                &config,
+                diagnostics::LogLevel::Warn,
+                &format!("Release {version} has no manifest to refresh installed metadata."),
+            ),
+            Err(error) => log_for_config(
+                &config,
+                diagnostics::LogLevel::Warn,
+                &format!("Could not refresh installed metadata for {version}: {error}"),
+            ),
+        }
+    });
+}
+
+fn recorded_steam_buildid_message(version: &str, buildid: Option<u64>) -> String {
+    match buildid {
+        Some(buildid) => format!("Recorded Steam BuildID {buildid} for installed {version}."),
+        None => format!("No Steam BuildID is known for installed {version}."),
+    }
+}
+
 fn start_release_check(
     ui: &AppWindow,
     config: LauncherConfig,
@@ -2809,6 +2920,7 @@ mod home_support_text_tests {
             html_url: format!("https://example.test/{version}"),
             metadata_source: ReleaseMetadataSource::GitHubAssetFallback,
             launch_options: None,
+            steam_buildid: None,
             asset: ReleaseAsset {
                 platform_id: "linux-x64".to_string(),
                 name: format!("Dungeon.Rampage.Haxe.{version}.Linux.tar.gz"),
@@ -2830,6 +2942,7 @@ mod home_support_text_tests {
             archive_size: 123,
             installed_at: "unix:0".to_string(),
             launch_options: None,
+            steam_buildid: None,
         }
     }
 }

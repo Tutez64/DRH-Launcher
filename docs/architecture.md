@@ -276,6 +276,8 @@ This avoids runtime source parsing in DRH Launcher and keeps each launcher versi
 
 When launch option metadata is not available for the installed release, the UI should say so in user-facing language and still allow manual custom arguments.
 
+From DRH V11, the release manifest also describes frame-rate policy under `launch_options.frame_rate`. The Options page then exposes Auto, Preset, and Custom. Older installed copies of V11+ that were recorded without this block can have it filled in by re-fetching that release’s manifest. V10 and earlier have no frame-rate metadata; DRHL does not probe GitHub for it.
+
 ## Updates
 
 Game updates and launcher updates are independent release streams. DRH uses tags
@@ -402,16 +404,27 @@ After a successful replacement, DRH Launcher should write `data/installed.json` 
 ```json
 {
   "active": {
-    "version": "V9",
+    "version": "V13",
     "platform": "linux-x64",
     "source": "Tutez64/Dungeon-Rampage-Haxe",
-    "release_url": "https://github.com/Tutez64/Dungeon-Rampage-Haxe/releases/tag/V9",
-    "archive": "Dungeon.Rampage.Haxe.V9.Linux.tar.gz",
+    "release_url": "https://github.com/Tutez64/Dungeon-Rampage-Haxe/releases/tag/V13",
+    "archive": "Dungeon.Rampage.Haxe.V13.Linux.tar.gz",
     "archive_sha256": "...",
     "installed_at": "2026-05-25T12:34:56Z",
     "launch_options": {
+      "frame_rate": {
+        "flag": "--fps",
+        "auto": {
+          "fallback": 120,
+          "step": 24,
+          "maximum": 240
+        },
+        "custom_min": 1,
+        "custom_max": 10000
+      },
       "game_arguments": []
-    }
+    },
+    "steam_buildid": 25038329
   },
   "previous": {
     "version": "V7",
@@ -434,6 +447,7 @@ When available, a release manifest should describe the release state explicitly.
 ```json
 {
   "version": "V3",
+  "steam_buildid": 25038329,
   "platforms": {
     "linux-x64": {
       "archive": "Dungeon.Rampage.Haxe.V3.Linux.tar.gz",
@@ -452,6 +466,16 @@ When available, a release manifest should describe the release state explicitly.
     }
   },
   "launch_options": {
+    "frame_rate": {
+      "flag": "--fps",
+      "auto": {
+        "fallback": 120,
+        "step": 24,
+        "maximum": 240
+      },
+      "custom_min": 1,
+      "custom_max": 10000
+    },
     "game_arguments": [
       {
         "name": "want-zoom",
@@ -472,6 +496,10 @@ When available, a release manifest should describe the release state explicitly.
 
 `config_key` is optional. It records the matching DRH JSON configuration key when it differs from `name`; DRH Launcher still launches with `flag`.
 `recommended` is optional on each game argument. When omitted, DRH Launcher treats the recommended value as equal to `default`.
+
+`launch_options.frame_rate` is present from V11. `flag` is the DRH CLI flag. `auto.step` and `auto.maximum` generate the preset list (`24, 48, …, 240`). `auto.fallback` is the value used when display refresh cannot be read, and must be one of those presets. `custom_min` / `custom_max` bound the Custom field. The Options page maps this to Auto (match the primary display, rounded up to a preset), Preset, and Custom.
+
+`steam_buildid` is the official Steam public-branch BuildID this DRH release was converted from. Releases from V14 onward include it in the GitHub manifest. V10–V13 are mapped in DRH Launcher (`src/steam_buildid.rs`) instead of rewriting GitHub assets. DRHL only re-downloads an already-installed release’s manifest when that version is known to carry a missing field: `frame_rate` from V11, `steam_buildid` from V14. Older versions are not probed. The filled fields are then stored in `installed.json`.
 
 DRH Launcher resolves `archive` against the GitHub release assets. For the first implementation, manifests should not point to arbitrary external download URLs.
 

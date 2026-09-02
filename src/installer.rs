@@ -787,6 +787,7 @@ mod tests {
             html_url: format!("https://example.test/{version}"),
             metadata_source: ReleaseMetadataSource::GitHubAssetFallback,
             launch_options: None,
+            steam_buildid: None,
             asset: ReleaseAsset {
                 platform_id: "linux-x64".to_string(),
                 name: format!("Dungeon.Rampage.Haxe.{version}.Linux.tar.gz"),
@@ -808,6 +809,7 @@ mod tests {
             archive_size: 123,
             installed_at: "unix:0".to_string(),
             launch_options: None,
+            steam_buildid: None,
         }
     }
 

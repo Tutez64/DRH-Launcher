@@ -6,6 +6,8 @@ use crate::platform::Platform;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ReleaseManifest {
     pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steam_buildid: Option<u64>,
     pub platforms: HashMap<String, ManifestPlatform>,
     #[serde(default)]
     pub launch_options: Option<ManifestLaunchOptions>,
@@ -15,6 +17,9 @@ impl ReleaseManifest {
     pub fn parse(contents: &str) -> Result<Self, String> {
         let manifest: Self = serde_json::from_str(contents)
             .map_err(|error| format!("Could not parse release manifest: {error}"))?;
+        if manifest.steam_buildid == Some(0) {
+            return Err("Manifest steam_buildid must be a positive Steam BuildID".to_string());
+        }
         if let Some(frame_rate) = manifest
             .launch_options
             .as_ref()
@@ -34,6 +39,21 @@ impl ReleaseManifest {
             )
         })
     }
+}
+
+pub const STEAM_BUILDID_MANIFEST_SINCE: u32 = 14;
+pub const FRAME_RATE_MANIFEST_SINCE: u32 = 11;
+
+pub fn drh_release_number(version: &str) -> Option<u32> {
+    version.trim().strip_prefix('V')?.parse().ok()
+}
+
+pub fn manifest_includes_steam_buildid(version: &str) -> bool {
+    drh_release_number(version).is_some_and(|number| number >= STEAM_BUILDID_MANIFEST_SINCE)
+}
+
+pub fn manifest_includes_frame_rate(version: &str) -> bool {
+    drh_release_number(version).is_some_and(|number| number >= FRAME_RATE_MANIFEST_SINCE)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -148,6 +168,7 @@ mod tests {
         let manifest = ReleaseManifest::parse(
             r#"{
                 "version": "V3",
+                "steam_buildid": 23435799,
                 "platforms": {
                     "linux-x64": {
                         "archive": "Dungeon.Rampage.Haxe.V3.Linux.tar.gz",
@@ -188,6 +209,7 @@ mod tests {
         let platform = manifest.platform(Platform::LinuxX64).unwrap();
 
         assert_eq!(manifest.version, "V3");
+        assert_eq!(manifest.steam_buildid, Some(23435799));
         assert_eq!(platform.archive, "Dungeon.Rampage.Haxe.V3.Linux.tar.gz");
         assert_eq!(
             platform.sha256,
@@ -232,6 +254,44 @@ mod tests {
         }"#;
 
         assert!(ReleaseManifest::parse(manifest).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_steam_buildid() {
+        let manifest = r#"{
+            "version": "V3",
+            "steam_buildid": 0,
+            "platforms": {}
+        }"#;
+
+        assert!(ReleaseManifest::parse(manifest).is_err());
+    }
+
+    #[test]
+    fn parses_drh_release_numbers_and_manifest_field_support() {
+        assert_eq!(drh_release_number("V11"), Some(11));
+        assert_eq!(drh_release_number(" V14 "), Some(14));
+        assert!(drh_release_number("V9").is_some());
+        assert!(drh_release_number("v11").is_none());
+        assert!(drh_release_number("V11.1").is_none());
+
+        assert!(!manifest_includes_frame_rate("V10"));
+        assert!(manifest_includes_frame_rate("V11"));
+        assert!(!manifest_includes_steam_buildid("V13"));
+        assert!(manifest_includes_steam_buildid("V14"));
+    }
+
+    #[test]
+    fn treats_missing_steam_buildid_as_optional() {
+        let manifest = ReleaseManifest::parse(
+            r#"{
+                "version": "V3",
+                "platforms": {}
+            }"#,
+        )
+        .unwrap();
+
+        assert!(manifest.steam_buildid.is_none());
     }
 
     #[test]

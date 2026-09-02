@@ -9,6 +9,7 @@ use crate::release_manifest::{
     ManifestLaunchOptions, ReleaseManifest, is_manifest_asset_name, validate_sha256,
 };
 use crate::release_source::ReleaseSource;
+use crate::steam_buildid::resolve_steam_buildid;
 
 #[derive(Clone, Debug)]
 pub struct PlatformRelease {
@@ -18,6 +19,7 @@ pub struct PlatformRelease {
     pub metadata_source: ReleaseMetadataSource,
     pub asset: ReleaseAsset,
     pub launch_options: Option<ManifestLaunchOptions>,
+    pub steam_buildid: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -269,6 +271,25 @@ fn fetch_manifest_if_available(
     ReleaseManifest::parse(&contents).map(Some)
 }
 
+pub fn fetch_release_manifest(
+    source: &ReleaseSource,
+    tag: &str,
+) -> Result<Option<ReleaseManifest>, String> {
+    let client = github_client()?;
+    let release: GitHubRelease = client
+        .get(source.api_release_by_tag_url(tag))
+        .header(USER_AGENT, "DRH-Launcher")
+        .header(ACCEPT, "application/vnd.github+json")
+        .send()
+        .map_err(|error| format!("Could not check GitHub release {tag}: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("GitHub release {tag} check failed: {error}"))?
+        .json()
+        .map_err(|error| format!("Could not parse GitHub release {tag}: {error}"))?;
+
+    fetch_manifest_if_available(&client, &release)
+}
+
 fn select_platform_release(
     release: GitHubRelease,
     platform: Platform,
@@ -317,6 +338,7 @@ fn select_manifest_platform(
         html_url: release.html_url,
         metadata_source: ReleaseMetadataSource::Manifest,
         launch_options: manifest.launch_options.clone(),
+        steam_buildid: resolve_steam_buildid(&manifest.version, manifest.steam_buildid),
         asset: ReleaseAsset {
             platform_id: platform.id().to_string(),
             name: manifest_platform.archive.clone(),
@@ -343,6 +365,7 @@ fn select_platform_asset_fallback(
             )
         })?;
 
+    let steam_buildid = resolve_steam_buildid(&release.tag_name, None);
     Ok(PlatformRelease {
         version: release.tag_name,
         name: release
@@ -351,6 +374,7 @@ fn select_platform_asset_fallback(
         html_url: release.html_url,
         metadata_source: ReleaseMetadataSource::GitHubAssetFallback,
         launch_options: None,
+        steam_buildid,
         asset: ReleaseAsset {
             platform_id: platform.id().to_string(),
             name: asset.name,
@@ -415,6 +439,7 @@ mod tests {
         assert_eq!(selected.asset.size, 20);
         assert_eq!(selected.asset.digest.as_deref(), Some("sha256:linux"));
         assert!(selected.launch_options.is_none());
+        assert!(selected.steam_buildid.is_none());
     }
 
     #[test]
@@ -455,6 +480,7 @@ mod tests {
         let manifest = ReleaseManifest::parse(&format!(
             r#"{{
                 "version": "V4",
+                "steam_buildid": 23435799,
                 "platforms": {{
                     "linux-x64": {{
                         "archive": "custom-linux.tar.gz",
@@ -495,6 +521,30 @@ mod tests {
             selected.launch_options.unwrap().game_arguments[0].recommended,
             Some(true)
         );
+        assert_eq!(selected.steam_buildid, Some(23435799));
+    }
+
+    #[test]
+    fn fills_steam_buildid_from_catalog_when_manifest_omits_it() {
+        let release = GitHubRelease {
+            tag_name: "V13".to_string(),
+            name: Some("Dungeon Rampage Haxe V13".to_string()),
+            html_url: "https://example.test/release".to_string(),
+            body: None,
+            published_at: None,
+            prerelease: false,
+            draft: false,
+            assets: vec![GitHubAsset {
+                name: "Dungeon.Rampage.Haxe.V13.Linux.tar.gz".to_string(),
+                browser_download_url: "https://example.test/linux.tar.gz".to_string(),
+                size: 20,
+                digest: Some("sha256:linux".to_string()),
+            }],
+        };
+
+        let selected = select_platform_release(release, Platform::LinuxX64, None).unwrap();
+
+        assert_eq!(selected.steam_buildid, Some(25038329));
     }
 
     #[test]
