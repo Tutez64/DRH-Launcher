@@ -8,6 +8,7 @@ import {
     HelpGitHubButton,
     HelpMenuButton,
     HomeDiscordButton,
+    HomePlayerCount,
     InfoHint,
     LaunchOptionToggle,
     LaunchTextField,
@@ -201,6 +202,8 @@ export component AppWindow inherits Window {
     in property <bool> update-check-enabled: true;
     in property <string> home-support-text;
     in property <string> official-update-text;
+    in property <string> steam-players-count;
+    in property <string> steam-players-detail;
     in property <[LogLineView]> log-lines;
     in property <[GameSessionView]> game-log-sessions;
     in property <string> game-log-sessions-label: "Game sessions";
@@ -312,6 +315,7 @@ export component AppWindow inherits Window {
     property <length> info-tooltip-width: 390px;
     property <length> info-tooltip-anchor-x: 0px;
     property <length> info-tooltip-anchor-y: 0px;
+    property <bool> info-tooltip-place-left: false;
 
     callback install-or-play();
     callback check-updates();
@@ -369,6 +373,7 @@ export component AppWindow inherits Window {
 
     changed active-page => {
         root.help-menu-open = false;
+        root.info-tooltip-visible = false;
     }
 
     title: "DRH Launcher";
@@ -621,10 +626,31 @@ export component AppWindow inherits Window {
                                 Rectangle {
                                     width: 116px;
 
-                                    HomeDiscordButton {
-                                        y: (parent.height - self.height) / 2;
-                                        clicked => {
-                                            root.open-discord-link();
+                                    VerticalLayout {
+                                        y: (parent.height - self.preferred-height) / 2;
+                                        width: parent.width;
+                                        spacing: 4px;
+
+                                        HomeDiscordButton {
+                                            clicked => {
+                                                root.open-discord-link();
+                                            }
+                                        }
+
+                                        if root.steam-players-count != "" : HomePlayerCount {
+                                            count: root.steam-players-count;
+                                            detail: root.steam-players-detail;
+                                            show-tooltip(text, x, y) => {
+                                                root.info-tooltip-text = text;
+                                                root.info-tooltip-width = 560px;
+                                                root.info-tooltip-anchor-x = x;
+                                                root.info-tooltip-anchor-y = y;
+                                                root.info-tooltip-place-left = true;
+                                                root.info-tooltip-visible = true;
+                                            }
+                                            hide-tooltip => {
+                                                root.info-tooltip-visible = false;
+                                            }
                                         }
                                     }
                                 }
@@ -893,6 +919,7 @@ export component AppWindow inherits Window {
                                                 root.info-tooltip-width = 615px;
                                                 root.info-tooltip-anchor-x = x;
                                                 root.info-tooltip-anchor-y = y;
+                                                root.info-tooltip-place-left = false;
                                                 root.info-tooltip-visible = true;
                                             }
                                             hide-tooltip => {
@@ -1042,6 +1069,7 @@ export component AppWindow inherits Window {
                                             show-tooltip(text, x, y) => {
                                                 root.info-tooltip-text = text;
                                                 root.info-tooltip-width = 270px;
+                                                root.info-tooltip-place-left = false;
                                                 root.info-tooltip-anchor-x = x;
                                                 root.info-tooltip-anchor-y = y;
                                                 root.info-tooltip-visible = true;
@@ -1905,13 +1933,24 @@ export component AppWindow inherits Window {
         }
     }
 
+    info-tooltip-measure := Text {
+        visible: false;
+        text: root.info-tooltip-text;
+        font-size: 12px;
+        wrap: no-wrap;
+    }
+
     Rectangle {
         z: 1000;
         visible: root.info-tooltip-visible;
-        width: min(root.info-tooltip-width, root.width - 16px);
+        width: min(info-tooltip-measure.preferred-width + 20px, root.info-tooltip-width, root.width - 16px);
         height: info-tooltip-text.preferred-height + 16px;
-        x: min(max(root.info-tooltip-anchor-x + 24px, 8px), root.width - self.width - 8px);
-        y: max(root.info-tooltip-anchor-y - self.height, 8px);
+        x: root.info-tooltip-place-left
+            ? min(max(root.info-tooltip-anchor-x - self.width - 8px, 8px), root.width - self.width - 8px)
+            : min(max(root.info-tooltip-anchor-x + 24px, 8px), root.width - self.width - 8px);
+        y: root.info-tooltip-place-left
+            ? min(max(root.info-tooltip-anchor-y - self.height / 2, 8px), root.height - self.height - 8px)
+            : max(root.info-tooltip-anchor-y - self.height, 8px);
         border-radius: 6px;
         border-width: 1px;
         border-color: Theme.border-accent-muted;

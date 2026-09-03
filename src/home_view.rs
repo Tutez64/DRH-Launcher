@@ -6,6 +6,7 @@ use crate::github_releases::PlatformRelease;
 use crate::install_state::InstallState;
 use crate::paths;
 use crate::steam_buildid;
+use crate::steam_players;
 use crate::{
     AppWindow, game_install, install_metadata, release_update_available,
     rollback_blocked_update_version,
@@ -36,6 +37,7 @@ pub(crate) fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, messag
     let state = home_view_state(config, None, message);
     apply_home_view_state(ui, state);
     apply_official_update_view(ui, config);
+    apply_player_count_view(ui);
 }
 
 pub(crate) fn apply_updating_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
@@ -50,6 +52,7 @@ pub(crate) fn apply_updating_home_state(ui: &AppWindow, config: &LauncherConfig,
     ui.set_restore_previous_enabled(false);
     ui.set_reinstall_current_enabled(false);
     apply_official_update_view(ui, config);
+    apply_player_count_view(ui);
 }
 
 pub(crate) fn remember_latest_drh_version(version: &str) {
@@ -71,6 +74,19 @@ pub(crate) fn official_update_warning(config: &LauncherConfig) -> String {
 
 pub(crate) fn apply_official_update_view(ui: &AppWindow, config: &LauncherConfig) {
     ui.set_official_update_text(official_update_warning(config).into());
+}
+
+pub(crate) fn apply_player_count_view(ui: &AppWindow) {
+    match steam_players::cached_player_count() {
+        Some(count) => {
+            ui.set_steam_players_count(count.to_string().into());
+            ui.set_steam_players_detail(steam_players::players_detail_text(count).into());
+        }
+        None => {
+            ui.set_steam_players_count(String::new().into());
+            ui.set_steam_players_detail(String::new().into());
+        }
+    }
 }
 
 fn latest_known_drh_version() -> Option<String> {

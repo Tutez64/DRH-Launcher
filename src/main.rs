@@ -27,6 +27,7 @@ mod play_mode;
 mod release_manifest;
 mod release_source;
 mod steam_buildid;
+mod steam_players;
 mod version_history;
 
 use std::cell::RefCell;
@@ -57,9 +58,9 @@ use github_releases::{
     discover_platform_release_by_tag_for_install, fetch_release_manifest,
 };
 use home_view::{
-    apply_home_view_state, apply_official_update_view, apply_updating_home_state, home_view_state,
-    installed_active_release_version, official_update_warning, refresh_home_state,
-    remember_latest_drh_version, set_status_message,
+    apply_home_view_state, apply_official_update_view, apply_player_count_view,
+    apply_updating_home_state, home_view_state, installed_active_release_version,
+    official_update_warning, refresh_home_state, remember_latest_drh_version, set_status_message,
 };
 use install_state::InstallState;
 use installer::{
@@ -155,8 +156,9 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     let game_monitor = Rc::new(Timer::default());
     let game_stop_timer = Rc::new(Timer::default());
     let game_log_positions = Rc::new(RefCell::new(HashMap::<String, LogViewportPosition>::new()));
-    let official_buildid_timer = Timer::default();
+    let steam_network_timer = Timer::default();
     let last_official_update_text = Arc::new(Mutex::new(String::new()));
+    let last_players_text = Arc::new(Mutex::new(String::new()));
     let release_source = ReleaseSource::from_environment();
 
     ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
@@ -1738,12 +1740,19 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         Arc::clone(&app_shutting_down),
         Arc::clone(&last_official_update_text),
     );
-    start_official_buildid_timer(
+    start_player_count_check(
+        ui.as_weak(),
+        config.borrow().clone(),
+        Arc::clone(&app_shutting_down),
+        Arc::clone(&last_players_text),
+    );
+    start_steam_network_timer(
         ui.as_weak(),
         Rc::clone(&config),
         Arc::clone(&app_shutting_down),
         Arc::clone(&last_official_update_text),
-        &official_buildid_timer,
+        Arc::clone(&last_players_text),
+        &steam_network_timer,
     );
 
     ui.run()
@@ -2408,11 +2417,12 @@ fn recorded_steam_buildid_message(version: &str, buildid: Option<u64>) -> String
     }
 }
 
-fn start_official_buildid_timer(
+fn start_steam_network_timer(
     ui: slint::Weak<AppWindow>,
     config: Rc<RefCell<LauncherConfig>>,
     app_shutting_down: Arc<AtomicBool>,
     last_official_update_text: Arc<Mutex<String>>,
+    last_players_text: Arc<Mutex<String>>,
     timer: &Timer,
 ) {
     timer.start(TimerMode::Repeated, Duration::from_secs(300), move || {
@@ -2421,6 +2431,12 @@ fn start_official_buildid_timer(
             config.borrow().clone(),
             Arc::clone(&app_shutting_down),
             Arc::clone(&last_official_update_text),
+        );
+        start_player_count_check(
+            ui.clone(),
+            config.borrow().clone(),
+            Arc::clone(&app_shutting_down),
+            Arc::clone(&last_players_text),
         );
     });
 }
@@ -2456,6 +2472,40 @@ fn start_official_buildid_check(
                     log_for_config(&event_config, diagnostics::LogLevel::Warn, &warning);
                 }
                 *last_warning = warning;
+            }
+        });
+    });
+}
+
+fn start_player_count_check(
+    ui: slint::Weak<AppWindow>,
+    config: LauncherConfig,
+    app_shutting_down: Arc<AtomicBool>,
+    last_players_text: Arc<Mutex<String>>,
+) {
+    thread::spawn(move || {
+        let count = match steam_players::fetch_player_count() {
+            Ok(count) => count,
+            Err(error) => {
+                log_for_config(&config, diagnostics::LogLevel::Warn, &error);
+                return;
+            }
+        };
+        steam_players::cache_player_count(count);
+
+        let event_config = config.clone();
+        invoke_on_event_loop(&config, &app_shutting_down, move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            apply_player_count_view(&ui);
+            let text = steam_players::players_text(count);
+            let mut last_text = last_players_text
+                .lock()
+                .expect("player count text lock poisoned");
+            if text != *last_text {
+                log_for_config(&event_config, diagnostics::LogLevel::Info, &text);
+                *last_text = text;
             }
         });
     });

@@ -247,6 +247,97 @@ export component HomeDiscordButton inherits Rectangle {
     }
 }
 
+export component HomePlayerCount inherits Rectangle {
+    in property <string> count;
+    in property <string> detail;
+    property <bool> live: root.count != "0";
+    property <bool> hovering: touch.has-hover;
+    callback show-tooltip(string, length, length);
+    callback hide-tooltip();
+
+    width: 116px;
+    height: 40px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.accent-warm : Theme.home-panel-ring;
+    background: Theme.home-icon-background;
+
+    changed hovering => {
+        if (root.hovering && root.detail != "") {
+            root.show-tooltip(root.detail, root.absolute-position.x, root.absolute-position.y + root.height / 2);
+        } else {
+            root.hide-tooltip();
+        }
+    }
+
+    HorizontalLayout {
+        width: parent.width;
+        height: parent.height;
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        spacing: 8px;
+
+        Rectangle {
+            width: 14px;
+
+            Rectangle {
+                width: 14px;
+                height: 14px;
+                y: (parent.height - self.height) / 2;
+
+                Rectangle {
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 7px;
+                    background: root.live ? Theme.accent-warm : Theme.text-disabled;
+                    opacity: 0.22;
+                }
+
+                Rectangle {
+                    x: 4px;
+                    y: 4px;
+                    width: 6px;
+                    height: 6px;
+                    border-radius: 3px;
+                    background: root.live ? Theme.accent-warm : Theme.text-disabled;
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 0px;
+            alignment: center;
+
+            Text {
+                height: 16px;
+                text: root.count;
+                color: Theme.text-title;
+                font-size: 14px;
+                font-weight: 800;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            Text {
+                height: 14px;
+                text: "IN-GAME";
+                color: Theme.text-secondary;
+                font-size: 10px;
+                font-weight: 800;
+                letter-spacing: 0.8px;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.help;
+    }
+}
+
 export component HelpGitHubButton inherits Rectangle {
     in property <string> text;
     callback clicked();

@@ -625,12 +625,13 @@ Even so, the launcher should avoid deleting unrelated files in the install direc
 
 ## Steam Integration
 
-The Home screen does warn when the installed DRH release may no longer match official Dungeon Rampage:
+The Home screen does warn when the installed DRH release may no longer match official Dungeon Rampage, and it shows how many people are currently playing:
 
 - compare the installed release’s `steam_buildid` (manifest, then the V10–V13 catalog) to the live public-branch BuildID from Steam product info (`api.steamcmd.net`, a public PICS cache)
 - if they differ, show a warning that this DRH version may no longer connect
 - if a newer DRH release is already available (including after a rollback), tell the user to update or restore that latest release; if they are already on the latest DRH, tell them to wait for the next DRH release
-- network failures hide the warning
+- show the live concurrent-player count from Valve’s `ISteamUserStats/GetNumberOfCurrentPlayers` for `appid` 3053950 (no API key; Valve caches this for about five minutes). That figure covers both the official client and DRH, which use the same servers. Hovering the Home chip opens a popover that spells that out
+- network failures hide the official-update warning and the player count instead of blocking Play. A later failed refresh keeps the last known player count
 
 
 ### Steam shortcut
