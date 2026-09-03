@@ -200,6 +200,7 @@ export component AppWindow inherits Window {
     in property <string> update-check-text: "Check for updates";
     in property <bool> update-check-enabled: true;
     in property <string> home-support-text;
+    in property <string> official-update-text;
     in property <[LogLineView]> log-lines;
     in property <[GameSessionView]> game-log-sessions;
     in property <string> game-log-sessions-label: "Game sessions";
@@ -638,7 +639,7 @@ export component AppWindow inherits Window {
                                 vertical-stretch: 1;
                             }
 
-                            HorizontalLayout {
+                            play-row := HorizontalLayout {
                                 alignment: center;
 
                                 PrimaryButton {
@@ -713,6 +714,22 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+                        }
+
+                        if root.official-update-text != "" : Text {
+                            x: 30px;
+                            y: play-row.y - 40px;
+                            width: parent.width - 60px;
+                            height: 36px;
+                            z: 1;
+                            text: root.official-update-text;
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: Theme.accent-warm;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                            overflow: elide;
                         }
 
                     }

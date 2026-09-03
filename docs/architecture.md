@@ -625,7 +625,15 @@ Even so, the launcher should avoid deleting unrelated files in the install direc
 
 ## Steam Integration
 
-Steam integration is deferred for the first release. The README and UI should continue to treat it as a later phase.
+The Home screen does warn when the installed DRH release may no longer match official Dungeon Rampage:
+
+- compare the installed release’s `steam_buildid` (manifest, then the V10–V13 catalog) to the live public-branch BuildID from Steam product info (`api.steamcmd.net`, a public PICS cache)
+- if they differ, show a warning that this DRH version may no longer connect
+- if a newer DRH release is already available (including after a rollback), tell the user to update or restore that latest release; if they are already on the latest DRH, tell them to wait for the next DRH release
+- network failures hide the warning
+
+
+### Steam shortcut
 
 When implemented, it will be best-effort because Steam does not expose a simple public desktop API for non-Steam shortcuts.
 

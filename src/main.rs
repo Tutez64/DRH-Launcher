@@ -39,6 +39,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
+use std::time::Duration;
 
 use archive::extract_to_staging;
 use config::{FrameRateMode, LaunchArgumentsMode, LauncherConfig};
@@ -56,8 +57,9 @@ use github_releases::{
     discover_platform_release_by_tag_for_install, fetch_release_manifest,
 };
 use home_view::{
-    apply_home_view_state, apply_updating_home_state, home_view_state,
-    installed_active_release_version, refresh_home_state, set_status_message,
+    apply_home_view_state, apply_official_update_view, apply_updating_home_state, home_view_state,
+    installed_active_release_version, official_update_warning, refresh_home_state,
+    remember_latest_drh_version, set_status_message,
 };
 use install_state::InstallState;
 use installer::{
@@ -77,7 +79,7 @@ use log_view::{
 };
 use platform::Platform;
 use release_source::ReleaseSource;
-use slint::{CloseRequestResponse, Model, Timer};
+use slint::{CloseRequestResponse, Model, Timer, TimerMode};
 use version_history::{
     latest_drh_release_version_for_update_block, preserve_previous_slot_on_install,
     refresh_selected_version_view, refresh_version_history_selection, selected_drh_history_entry,
@@ -153,6 +155,8 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     let game_monitor = Rc::new(Timer::default());
     let game_stop_timer = Rc::new(Timer::default());
     let game_log_positions = Rc::new(RefCell::new(HashMap::<String, LogViewportPosition>::new()));
+    let official_buildid_timer = Timer::default();
+    let last_official_update_text = Arc::new(Mutex::new(String::new()));
     let release_source = ReleaseSource::from_environment();
 
     ui.set_launcher_version(env!("CARGO_PKG_VERSION").into());
@@ -1728,6 +1732,19 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         Arc::clone(&app_shutting_down),
         Arc::clone(&latest_launcher_update),
     );
+    start_official_buildid_check(
+        ui.as_weak(),
+        config.borrow().clone(),
+        Arc::clone(&app_shutting_down),
+        Arc::clone(&last_official_update_text),
+    );
+    start_official_buildid_timer(
+        ui.as_weak(),
+        Rc::clone(&config),
+        Arc::clone(&app_shutting_down),
+        Arc::clone(&last_official_update_text),
+        &official_buildid_timer,
+    );
 
     ui.run()
 }
@@ -2345,17 +2362,20 @@ fn start_installed_manifest_refresh(
                         &recorded_steam_buildid_message(&version, Some(buildid)),
                     );
                 }
-                if filled_frame_rate && !state.active.needs_frame_rate_fetch() {
+                let filled_frame_rate = filled_frame_rate && !state.active.needs_frame_rate_fetch();
+                if filled_frame_rate {
                     log_for_config(
                         &config,
                         diagnostics::LogLevel::Info,
                         &format!("Loaded frame-rate options for installed {version}."),
                     );
-                    let event_config = config.clone();
-                    invoke_on_event_loop(&config, &app_shutting_down, move || {
-                        let Some(ui) = ui.upgrade() else {
-                            return;
-                        };
+                }
+                let event_config = config.clone();
+                invoke_on_event_loop(&config, &app_shutting_down, move || {
+                    let Some(ui) = ui.upgrade() else {
+                        return;
+                    };
+                    if filled_frame_rate {
                         let installed_launch_options = load_installed_launch_options(&event_config);
                         refresh_launch_options_view(
                             &ui,
@@ -2363,8 +2383,9 @@ fn start_installed_manifest_refresh(
                             installed_launch_options.as_ref(),
                             "Save",
                         );
-                    });
-                }
+                    }
+                    apply_official_update_view(&ui, &event_config);
+                });
             }
             Ok(None) => log_for_config(
                 &config,
@@ -2385,6 +2406,59 @@ fn recorded_steam_buildid_message(version: &str, buildid: Option<u64>) -> String
         Some(buildid) => format!("Recorded Steam BuildID {buildid} for installed {version}."),
         None => format!("No Steam BuildID is known for installed {version}."),
     }
+}
+
+fn start_official_buildid_timer(
+    ui: slint::Weak<AppWindow>,
+    config: Rc<RefCell<LauncherConfig>>,
+    app_shutting_down: Arc<AtomicBool>,
+    last_official_update_text: Arc<Mutex<String>>,
+    timer: &Timer,
+) {
+    timer.start(TimerMode::Repeated, Duration::from_secs(300), move || {
+        start_official_buildid_check(
+            ui.clone(),
+            config.borrow().clone(),
+            Arc::clone(&app_shutting_down),
+            Arc::clone(&last_official_update_text),
+        );
+    });
+}
+
+fn start_official_buildid_check(
+    ui: slint::Weak<AppWindow>,
+    config: LauncherConfig,
+    app_shutting_down: Arc<AtomicBool>,
+    last_official_update_text: Arc<Mutex<String>>,
+) {
+    thread::spawn(move || {
+        let buildid = match steam_buildid::fetch_official_public_buildid() {
+            Ok(buildid) => buildid,
+            Err(error) => {
+                log_for_config(&config, diagnostics::LogLevel::Warn, &error);
+                return;
+            }
+        };
+        steam_buildid::cache_official_public_buildid(buildid);
+
+        let event_config = config.clone();
+        invoke_on_event_loop(&config, &app_shutting_down, move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            apply_official_update_view(&ui, &event_config);
+            let warning = official_update_warning(&event_config);
+            let mut last_warning = last_official_update_text
+                .lock()
+                .expect("official update text lock poisoned");
+            if warning != *last_warning {
+                if !warning.is_empty() {
+                    log_for_config(&event_config, diagnostics::LogLevel::Warn, &warning);
+                }
+                *last_warning = warning;
+            }
+        });
+    });
 }
 
 fn start_release_check(
@@ -2436,6 +2510,7 @@ fn start_release_check(
                     .lock()
                     .expect("latest release lock poisoned")
                     .replace(release.clone());
+                remember_latest_drh_version(&release.version);
                 let installed_launch_options = load_installed_launch_options(&event_config);
                 refresh_launch_options_view(
                     &ui,
@@ -2472,6 +2547,7 @@ fn start_release_check(
             if ui.get_install_action_text() != InstallState::Playing.primary_action() {
                 apply_home_view_state(&ui, state);
             }
+            apply_official_update_view(&ui, &event_config);
         });
     });
 }

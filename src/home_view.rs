@@ -1,12 +1,17 @@
+use std::sync::Mutex;
+
 use crate::config::LauncherConfig;
 use crate::diagnostics;
 use crate::github_releases::PlatformRelease;
 use crate::install_state::InstallState;
 use crate::paths;
+use crate::steam_buildid;
 use crate::{
     AppWindow, game_install, install_metadata, release_update_available,
     rollback_blocked_update_version,
 };
+
+static LATEST_KNOWN_DRH_VERSION: Mutex<Option<String>> = Mutex::new(None);
 
 const HOME_ERROR_MAX_LEN: usize = 80;
 const HOME_ERROR_LOGS_SUFFIX: &str = " See Settings → Logs for details.";
@@ -30,6 +35,7 @@ pub(crate) struct HomeViewState {
 pub(crate) fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
     let state = home_view_state(config, None, message);
     apply_home_view_state(ui, state);
+    apply_official_update_view(ui, config);
 }
 
 pub(crate) fn apply_updating_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
@@ -43,6 +49,38 @@ pub(crate) fn apply_updating_home_state(ui: &AppWindow, config: &LauncherConfig,
     ui.set_update_check_enabled(false);
     ui.set_restore_previous_enabled(false);
     ui.set_reinstall_current_enabled(false);
+    apply_official_update_view(ui, config);
+}
+
+pub(crate) fn remember_latest_drh_version(version: &str) {
+    let version = version.trim();
+    if version.is_empty() {
+        return;
+    }
+    *lock_latest_known_drh_version() = Some(version.to_string());
+}
+
+pub(crate) fn official_update_warning(config: &LauncherConfig) -> String {
+    steam_buildid::official_update_text(
+        steam_buildid::installed_release_steam_buildid(config),
+        steam_buildid::cached_official_public_buildid(),
+        installed_active_release_version(config).as_deref(),
+        latest_known_drh_version().as_deref(),
+    )
+}
+
+pub(crate) fn apply_official_update_view(ui: &AppWindow, config: &LauncherConfig) {
+    ui.set_official_update_text(official_update_warning(config).into());
+}
+
+fn latest_known_drh_version() -> Option<String> {
+    lock_latest_known_drh_version().clone()
+}
+
+fn lock_latest_known_drh_version() -> std::sync::MutexGuard<'static, Option<String>> {
+    LATEST_KNOWN_DRH_VERSION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 pub(crate) fn restore_previous_version_text(config: &LauncherConfig) -> String {
