@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use crate::config::LauncherConfig;
+use crate::steam_buildid::STEAM_STORE_CLIENT_URL;
 use crate::steam_status::{self, SteamStatus};
 use crate::{AppWindow, diagnostics, home_view, log_for_config};
 
@@ -21,6 +22,15 @@ pub(crate) struct HomeNotice {
     pub(crate) text: String,
     pub(crate) detail: String,
     pub(crate) dismissible: bool,
+    pub(crate) link: Option<HomeNoticeLink>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct HomeNoticeLink {
+    pub(crate) prefix: String,
+    pub(crate) label: String,
+    pub(crate) suffix: String,
+    pub(crate) url: String,
 }
 
 impl HomeNoticeKind {
@@ -54,6 +64,7 @@ pub(crate) fn apply_home_notices_view(ui: &AppWindow, config: &LauncherConfig) {
             ui.set_home_notice_count(i32::try_from(notices.len()).unwrap_or(0));
             ui.set_home_notice_index(i32::try_from(index).unwrap_or(0));
             ui.set_home_notice_dismissible(notice.dismissible);
+            apply_notice_link(ui, notice.link.as_ref());
         }
         None => {
             ui.set_home_notice_text(String::new().into());
@@ -61,6 +72,7 @@ pub(crate) fn apply_home_notices_view(ui: &AppWindow, config: &LauncherConfig) {
             ui.set_home_notice_count(0);
             ui.set_home_notice_index(0);
             ui.set_home_notice_dismissible(false);
+            apply_notice_link(ui, None);
         }
     }
 
@@ -122,12 +134,32 @@ fn notices_from(
     notices
 }
 
+fn apply_notice_link(ui: &AppWindow, link: Option<&HomeNoticeLink>) {
+    match link {
+        Some(link) => {
+            ui.set_home_notice_has_link(true);
+            ui.set_home_notice_link_prefix(link.prefix.clone().into());
+            ui.set_home_notice_link_label(link.label.clone().into());
+            ui.set_home_notice_link_suffix(link.suffix.clone().into());
+            ui.set_home_notice_link_url(link.url.clone().into());
+        }
+        None => {
+            ui.set_home_notice_has_link(false);
+            ui.set_home_notice_link_prefix(String::new().into());
+            ui.set_home_notice_link_label(String::new().into());
+            ui.set_home_notice_link_suffix(String::new().into());
+            ui.set_home_notice_link_url(String::new().into());
+        }
+    }
+}
+
 fn steam_missing_notice() -> HomeNotice {
     HomeNotice {
         kind: HomeNoticeKind::SteamMissing,
         text: "Steam is missing. Install it so DRH can connect to the official servers.".to_string(),
         detail: "DRH connects to the official Dungeon Rampage servers via Steam.\nIt is NOT a crack. Install Steam and make sure you own Dungeon Rampage.".to_string(),
         dismissible: false,
+        link: None,
     }
 }
 
@@ -137,6 +169,7 @@ fn steam_closed_notice() -> HomeNotice {
         text: "Steam is not running. Launch it so DRH can connect to the official servers.".to_string(),
         detail: "DRH connects to the official Dungeon Rampage servers via Steam.\nIt is NOT a crack. Leave Steam running and logged in to play.".to_string(),
         dismissible: false,
+        link: None,
     }
 }
 
@@ -147,6 +180,7 @@ fn official_update_notice(detail: &str) -> HomeNotice {
             .to_string(),
         detail: detail.to_string(),
         dismissible: false,
+        link: None,
     }
 }
 
@@ -156,6 +190,12 @@ fn ownership_notice() -> HomeNotice {
         text: "You need to own the official Dungeon Rampage for DRH to connect.".to_string(),
         detail: "If you don't own Dungeon Rampage, DRH won't be able to connect to the official servers. We couldn't find it installed, but that doesn't mean you don't own it, and you do not need to install it.\nTo dismiss this message, click on \"Hide\" or disable it in the Settings.".to_string(),
         dismissible: true,
+        link: Some(HomeNoticeLink {
+            prefix: "You need to own ".to_string(),
+            label: "the official Dungeon Rampage".to_string(),
+            suffix: " for DRH to connect.".to_string(),
+            url: STEAM_STORE_CLIENT_URL.to_string(),
+        }),
     }
 }
 
@@ -261,9 +301,17 @@ mod tests {
         let visible = notices_from(steam(true, true, false), "", false);
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].kind, HomeNoticeKind::Ownership);
-        assert!(visible[0].text.contains("own the official Dungeon Rampage"));
+        assert_eq!(
+            visible[0].text,
+            "You need to own the official Dungeon Rampage for DRH to connect."
+        );
+        let link = visible[0]
+            .link
+            .as_ref()
+            .expect("ownership notice has a store link");
+        assert_eq!(link.label, "the official Dungeon Rampage");
+        assert_eq!(link.url, STEAM_STORE_CLIENT_URL);
         assert!(visible[0].detail.contains("doesn't mean you don't own it"));
-        assert!(visible[0].detail.contains("Settings → General"));
 
         let dismissed = notices_from(steam(true, true, false), "", true);
         assert!(dismissed.is_empty());

@@ -8,6 +8,8 @@ use crate::config::LauncherConfig;
 use crate::install_metadata::InstalledState;
 
 pub const STEAM_APP_ID: u32 = 3053950;
+pub const STEAM_STORE_URL: &str = "https://store.steampowered.com/app/3053950";
+pub const STEAM_STORE_CLIENT_URL: &str = "steam://store/3053950";
 const PRODUCT_INFO_URL: &str = "https://api.steamcmd.net/v1/info/3053950";
 const HTTP_USER_AGENT: &str = "DRH-Launcher";
 

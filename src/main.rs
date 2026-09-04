@@ -1746,6 +1746,33 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         });
     }
 
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_open_home_notice_link(move |url| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            let opened =
+                open_url(url.as_str()).or_else(|_| open_url(steam_buildid::STEAM_STORE_URL));
+            match opened {
+                Ok(()) => {
+                    log_for_config(
+                        &config.borrow(),
+                        diagnostics::LogLevel::Info,
+                        "Steam store opened.",
+                    );
+                    set_status_message(&ui, "Steam store opened.");
+                }
+                Err(error) => {
+                    let message = format!("Could not open Steam store: {error}");
+                    log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &message);
+                    set_status_message(&ui, &message);
+                }
+            }
+        });
+    }
+
     start_installed_manifest_refresh(
         ui.as_weak(),
         config.borrow().clone(),

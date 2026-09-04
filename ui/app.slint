@@ -207,6 +207,11 @@ export component AppWindow inherits Window {
     in property <int> home-notice-count;
     in property <int> home-notice-index;
     in property <bool> home-notice-dismissible;
+    in property <bool> home-notice-has-link;
+    in property <string> home-notice-link-prefix;
+    in property <string> home-notice-link-label;
+    in property <string> home-notice-link-suffix;
+    in property <string> home-notice-link-url;
     in property <string> steam-players-count;
     in property <string> steam-players-detail;
     in property <[LogLineView]> log-lines;
@@ -373,6 +378,7 @@ export component AppWindow inherits Window {
     callback confirm-close();
     callback select-home-notice(int);
     callback dismiss-home-notice();
+    callback open-home-notice-link(string);
 
     changed download-cache-limit => {
         root.download-cache-limit-error = "";
@@ -764,11 +770,19 @@ export component AppWindow inherits Window {
                             count: root.home-notice-count;
                             index: root.home-notice-index;
                             dismissible: root.home-notice-dismissible;
+                            has-link: root.home-notice-has-link;
+                            link-prefix: root.home-notice-link-prefix;
+                            link-label: root.home-notice-link-label;
+                            link-suffix: root.home-notice-link-suffix;
+                            link-url: root.home-notice-link-url;
                             select(index) => {
                                 root.select-home-notice(index);
                             }
                             dismiss => {
                                 root.dismiss-home-notice();
+                            }
+                            open-link(url) => {
+                                root.open-home-notice-link(url);
                             }
                             show-tooltip(text, x, y) => {
                                 root.info-tooltip-text = text;
