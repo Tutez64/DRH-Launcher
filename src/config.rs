@@ -19,6 +19,8 @@ pub struct LauncherConfig {
     #[serde(default)]
     pub frame_rate: FrameRatePreference,
     pub game_args: Vec<String>,
+    #[serde(default)]
+    pub hide_official_ownership_notice: bool,
 }
 
 impl Default for LauncherConfig {
@@ -31,6 +33,7 @@ impl Default for LauncherConfig {
             launch_arguments_mode: LaunchArgumentsMode::Recommended,
             frame_rate: FrameRatePreference::default(),
             game_args: Vec::new(),
+            hide_official_ownership_notice: false,
         }
     }
 }
@@ -446,5 +449,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.frame_rate, FrameRatePreference::default());
+        assert!(!config.hide_official_ownership_notice);
     }
 }

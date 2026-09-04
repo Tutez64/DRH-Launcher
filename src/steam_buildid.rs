@@ -80,10 +80,11 @@ pub fn official_update_text(
     };
 
     if action.is_empty() {
-        "Official Dungeon Rampage was updated. This DRH version may no longer connect.".to_string()
+        "The official Dungeon Rampage was updated. This DRH version may no longer connect or work."
+            .to_string()
     } else {
         format!(
-            "Official Dungeon Rampage was updated. This DRH version may no longer connect. {action}"
+            "The official Dungeon Rampage was updated. This DRH version may no longer connect or work. {action}"
         )
     }
 }

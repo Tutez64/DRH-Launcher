@@ -8,6 +8,7 @@ import {
     HelpGitHubButton,
     HelpMenuButton,
     HomeDiscordButton,
+    HomeNoticeCard,
     HomePlayerCount,
     InfoHint,
     LaunchOptionToggle,
@@ -201,7 +202,11 @@ export component AppWindow inherits Window {
     in property <string> update-check-text: "Check for updates";
     in property <bool> update-check-enabled: true;
     in property <string> home-support-text;
-    in property <string> official-update-text;
+    in property <string> home-notice-text;
+    in property <string> home-notice-detail;
+    in property <int> home-notice-count;
+    in property <int> home-notice-index;
+    in property <bool> home-notice-dismissible;
     in property <string> steam-players-count;
     in property <string> steam-players-detail;
     in property <[LogLineView]> log-lines;
@@ -243,8 +248,11 @@ export component AppWindow inherits Window {
     in-out property <string> saved-download-cache-limit;
     in-out property <string> download-cache-save-text: "Save";
     in-out property <string> download-cache-limit-error;
+    in-out property <bool> hide-official-ownership-notice: false;
+    in-out property <bool> saved-hide-official-ownership-notice: false;
     property <bool> download-cache-limit-dirty: root.download-cache-limit != root.saved-download-cache-limit;
-    property <bool> general-settings-dirty: root.download-cache-limit-dirty;
+    property <bool> ownership-notice-dirty: root.hide-official-ownership-notice != root.saved-hide-official-ownership-notice;
+    property <bool> general-settings-dirty: root.download-cache-limit-dirty || root.ownership-notice-dirty;
     in-out property <string> pre-launch-command;
     in property <bool> frame-rate-controls-visible: false;
     in property <bool> frame-rate-supported: false;
@@ -316,6 +324,7 @@ export component AppWindow inherits Window {
     property <length> info-tooltip-anchor-x: 0px;
     property <length> info-tooltip-anchor-y: 0px;
     property <bool> info-tooltip-place-left: false;
+    property <bool> info-tooltip-place-above: false;
 
     callback install-or-play();
     callback check-updates();
@@ -362,6 +371,8 @@ export component AppWindow inherits Window {
     callback cancel-launch-options();
     callback cancel-close();
     callback confirm-close();
+    callback select-home-notice(int);
+    callback dismiss-home-notice();
 
     changed download-cache-limit => {
         root.download-cache-limit-error = "";
@@ -646,6 +657,7 @@ export component AppWindow inherits Window {
                                                 root.info-tooltip-anchor-x = x;
                                                 root.info-tooltip-anchor-y = y;
                                                 root.info-tooltip-place-left = true;
+                                                root.info-tooltip-place-above = false;
                                                 root.info-tooltip-visible = true;
                                             }
                                             hide-tooltip => {
@@ -656,7 +668,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            Rectangle {
+                            home-title-divider := Rectangle {
                                 height: 1px;
                                 background: Theme.divider;
                             }
@@ -742,20 +754,34 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        if root.official-update-text != "" : Text {
-                            x: 30px;
-                            y: play-row.y - 40px;
-                            width: parent.width - 60px;
-                            height: 36px;
+                        if root.home-notice-text != "" : HomeNoticeCard {
+                            x: (parent.width - self.width) / 2;
+                            y: home-title-divider.y + home-title-divider.height + (play-row.y - home-title-divider.y - home-title-divider.height - self.height) / 2;
+                            width: min(560px, parent.width - 60px);
                             z: 1;
-                            text: root.official-update-text;
-                            font-size: 12px;
-                            font-weight: 600;
-                            color: Theme.accent-warm;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                            overflow: elide;
+                            text: root.home-notice-text;
+                            detail: root.home-notice-detail;
+                            count: root.home-notice-count;
+                            index: root.home-notice-index;
+                            dismissible: root.home-notice-dismissible;
+                            select(index) => {
+                                root.select-home-notice(index);
+                            }
+                            dismiss => {
+                                root.dismiss-home-notice();
+                            }
+                            show-tooltip(text, x, y) => {
+                                root.info-tooltip-text = text;
+                                root.info-tooltip-width = 450px;
+                                root.info-tooltip-anchor-x = x;
+                                root.info-tooltip-anchor-y = y;
+                                root.info-tooltip-place-left = false;
+                                root.info-tooltip-place-above = true;
+                                root.info-tooltip-visible = true;
+                            }
+                            hide-tooltip => {
+                                root.info-tooltip-visible = false;
+                            }
                         }
 
                     }
@@ -920,6 +946,7 @@ export component AppWindow inherits Window {
                                                 root.info-tooltip-anchor-x = x;
                                                 root.info-tooltip-anchor-y = y;
                                                 root.info-tooltip-place-left = false;
+                                                root.info-tooltip-place-above = false;
                                                 root.info-tooltip-visible = true;
                                             }
                                             hide-tooltip => {
@@ -1070,6 +1097,7 @@ export component AppWindow inherits Window {
                                                 root.info-tooltip-text = text;
                                                 root.info-tooltip-width = 270px;
                                                 root.info-tooltip-place-left = false;
+                                                root.info-tooltip-place-above = false;
                                                 root.info-tooltip-anchor-x = x;
                                                 root.info-tooltip-anchor-y = y;
                                                 root.info-tooltip-visible = true;
@@ -1484,6 +1512,19 @@ export component AppWindow inherits Window {
                                                 clicked => {
                                                     root.open-install-folder();
                                                 }
+                                            }
+                                        }
+                                    }
+
+                                    SettingsCard {
+                                        title: "Official Dungeon Rampage notice";
+                                        description: "You need to own the official Dungeon Rampage to play DRH. You don't need to install it, but if it isn't found in this Steam library, Home can show a reminder just in case.";
+
+                                        LaunchOptionToggle {
+                                            text: "Show this notice on Home";
+                                            checked: !root.hide-official-ownership-notice;
+                                            toggled(checked) => {
+                                                root.hide-official-ownership-notice = !checked;
                                             }
                                         }
                                     }
@@ -1945,12 +1986,16 @@ export component AppWindow inherits Window {
         visible: root.info-tooltip-visible;
         width: min(info-tooltip-measure.preferred-width + 20px, root.info-tooltip-width, root.width - 16px);
         height: info-tooltip-text.preferred-height + 16px;
-        x: root.info-tooltip-place-left
-            ? min(max(root.info-tooltip-anchor-x - self.width - 8px, 8px), root.width - self.width - 8px)
-            : min(max(root.info-tooltip-anchor-x + 24px, 8px), root.width - self.width - 8px);
-        y: root.info-tooltip-place-left
-            ? min(max(root.info-tooltip-anchor-y - self.height / 2, 8px), root.height - self.height - 8px)
-            : max(root.info-tooltip-anchor-y - self.height, 8px);
+        x: root.info-tooltip-place-above
+            ? min(max(root.info-tooltip-anchor-x - self.width / 2, 8px), root.width - self.width - 8px)
+            : root.info-tooltip-place-left
+                ? min(max(root.info-tooltip-anchor-x - self.width - 8px, 8px), root.width - self.width - 8px)
+                : min(max(root.info-tooltip-anchor-x + 24px, 8px), root.width - self.width - 8px);
+        y: root.info-tooltip-place-above
+            ? max(root.info-tooltip-anchor-y - self.height - 8px, 8px)
+            : root.info-tooltip-place-left
+                ? min(max(root.info-tooltip-anchor-y - self.height / 2, 8px), root.height - self.height - 8px)
+                : max(root.info-tooltip-anchor-y - self.height, 8px);
         border-radius: 6px;
         border-width: 1px;
         border-color: Theme.border-accent-muted;

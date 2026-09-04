@@ -247,6 +247,137 @@ export component HomeDiscordButton inherits Rectangle {
     }
 }
 
+export component HomeNoticeDot inherits Rectangle {
+    in property <bool> active;
+    callback clicked();
+
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background: root.active ? Theme.accent-warm : Theme.text-disabled;
+
+    TouchArea {
+        x: -4px;
+        y: -4px;
+        width: parent.width + 8px;
+        height: parent.height + 8px;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component HomeNoticeCard inherits Rectangle {
+    in property <string> text;
+    in property <string> detail;
+    in property <int> count;
+    in property <int> index;
+    in property <bool> dismissible;
+    property <bool> hovering: body.has-hover;
+    callback select(int);
+    callback dismiss();
+    callback show-tooltip(string, length, length);
+    callback hide-tooltip();
+
+    height: 32px;
+    clip: true;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.home-panel-ring;
+    background: Theme.home-status-background;
+
+    changed hovering => {
+        if (root.hovering && root.detail != "") {
+            root.show-tooltip(root.detail, root.absolute-position.x + root.width / 2, root.absolute-position.y);
+        } else {
+            root.hide-tooltip();
+        }
+    }
+
+    changed text => {
+        if (root.hovering && root.detail != "") {
+            root.show-tooltip(root.detail, root.absolute-position.x + root.width / 2, root.absolute-position.y);
+        }
+    }
+
+    body := TouchArea {
+        mouse-cursor: MouseCursor.help;
+    }
+
+    HorizontalLayout {
+        z: 1;
+        width: parent.width;
+        height: parent.height;
+        padding-left: 12px;
+        padding-right: 8px;
+        spacing: 8px;
+
+        Text {
+            horizontal-stretch: 1;
+            text: root.text;
+            font-size: 12px;
+            font-weight: 600;
+            color: Theme.accent-warm;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        if root.dismissible : Rectangle {
+            width: hide-label.preferred-width;
+            height: parent.height;
+
+            hide-label := Text {
+                text: "Hide";
+                font-size: 12px;
+                font-weight: 700;
+                color: hide.has-hover ? Theme.text-title : Theme.text-secondary;
+                vertical-alignment: center;
+            }
+
+            hide := TouchArea {
+                mouse-cursor: MouseCursor.pointer;
+                clicked => {
+                    root.hide-tooltip();
+                    root.dismiss();
+                }
+            }
+        }
+
+        if root.count > 1 : Rectangle {
+            width: dots.preferred-width;
+            height: parent.height;
+
+            dots := HorizontalLayout {
+                y: (parent.height - 8px) / 2;
+                height: 8px;
+                spacing: 6px;
+
+                HomeNoticeDot {
+                    active: root.index == 0;
+                    clicked => {
+                        root.select(0);
+                    }
+                }
+
+                HomeNoticeDot {
+                    active: root.index == 1;
+                    clicked => {
+                        root.select(1);
+                    }
+                }
+
+                if root.count > 2 : HomeNoticeDot {
+                    active: root.index == 2;
+                    clicked => {
+                        root.select(2);
+                    }
+                }
+            }
+        }
+    }
+}
+
 export component HomePlayerCount inherits Rectangle {
     in property <string> count;
     in property <string> detail;

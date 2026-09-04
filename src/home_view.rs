@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use crate::config::LauncherConfig;
 use crate::diagnostics;
 use crate::github_releases::PlatformRelease;
+use crate::home_notices;
 use crate::install_state::InstallState;
 use crate::paths;
 use crate::steam_buildid;
@@ -36,7 +37,7 @@ pub(crate) struct HomeViewState {
 pub(crate) fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
     let state = home_view_state(config, None, message);
     apply_home_view_state(ui, state);
-    apply_official_update_view(ui, config);
+    apply_home_notices_view(ui, config);
     apply_player_count_view(ui);
 }
 
@@ -51,7 +52,7 @@ pub(crate) fn apply_updating_home_state(ui: &AppWindow, config: &LauncherConfig,
     ui.set_update_check_enabled(false);
     ui.set_restore_previous_enabled(false);
     ui.set_reinstall_current_enabled(false);
-    apply_official_update_view(ui, config);
+    apply_home_notices_view(ui, config);
     apply_player_count_view(ui);
 }
 
@@ -72,8 +73,8 @@ pub(crate) fn official_update_warning(config: &LauncherConfig) -> String {
     )
 }
 
-pub(crate) fn apply_official_update_view(ui: &AppWindow, config: &LauncherConfig) {
-    ui.set_official_update_text(official_update_warning(config).into());
+pub(crate) fn apply_home_notices_view(ui: &AppWindow, config: &LauncherConfig) {
+    home_notices::apply_home_notices_view(ui, config);
 }
 
 pub(crate) fn apply_player_count_view(ui: &AppWindow) {

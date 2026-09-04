@@ -13,6 +13,7 @@ mod game_launch;
 mod game_logs;
 mod game_runtime;
 mod github_releases;
+mod home_notices;
 mod home_view;
 mod install_metadata;
 mod install_state;
@@ -28,6 +29,7 @@ mod release_manifest;
 mod release_source;
 mod steam_buildid;
 mod steam_players;
+mod steam_status;
 mod version_history;
 
 use std::cell::RefCell;
@@ -58,9 +60,9 @@ use github_releases::{
     discover_platform_release_by_tag_for_install, fetch_release_manifest,
 };
 use home_view::{
-    apply_home_view_state, apply_official_update_view, apply_player_count_view,
+    apply_home_notices_view, apply_home_view_state, apply_player_count_view,
     apply_updating_home_state, home_view_state, installed_active_release_version,
-    official_update_warning, refresh_home_state, remember_latest_drh_version, set_status_message,
+    refresh_home_state, remember_latest_drh_version, set_status_message,
 };
 use install_state::InstallState;
 use installer::{
@@ -157,7 +159,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     let game_stop_timer = Rc::new(Timer::default());
     let game_log_positions = Rc::new(RefCell::new(HashMap::<String, LogViewportPosition>::new()));
     let steam_network_timer = Timer::default();
-    let last_official_update_text = Arc::new(Mutex::new(String::new()));
+    let steam_local_timer = Timer::default();
     let last_players_text = Arc::new(Mutex::new(String::new()));
     let release_source = ReleaseSource::from_environment();
 
@@ -180,6 +182,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         "Save",
     );
 
+    steam_status::refresh_status();
     let initial_home_message = startup_notice
         .or_else(|| {
             config_load_warning
@@ -791,6 +794,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
 
             let mut config = config.borrow_mut();
             config.download_cache_limit = limit;
+            config.hide_official_ownership_notice = ui.get_hide_official_ownership_notice();
             match config.save() {
                 Ok(()) => {
                     log_for_config(
@@ -812,6 +816,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                                 );
                             }
                             refresh_settings_view(&ui, &config, "Saved successfully");
+                            apply_home_notices_view(&ui, &config);
                             if removed.is_empty() {
                                 set_status_message(&ui, "Download cache limit saved.");
                             } else {
@@ -827,6 +832,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         Some(Err(error)) => {
                             log_for_config(&config, diagnostics::LogLevel::Error, &error);
                             refresh_settings_view(&ui, &config, "Saved successfully");
+                            apply_home_notices_view(&ui, &config);
                             set_status_message(
                                 &ui,
                                 &format!(
@@ -836,6 +842,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         }
                         None => {
                             refresh_settings_view(&ui, &config, "Saved successfully");
+                            apply_home_notices_view(&ui, &config);
                             set_status_message(&ui, "Download cache limit saved.");
                         }
                     }
@@ -1715,6 +1722,30 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         });
     }
 
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_select_home_notice(move |index| {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            home_notices::select_home_notice(index, &config.borrow(), &ui);
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        ui.unwrap().on_dismiss_home_notice(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            let mut config = config.borrow_mut();
+            home_notices::dismiss_current_home_notice(&mut config, &ui);
+            refresh_settings_view(&ui, &config, "Save");
+        });
+    }
+
     start_installed_manifest_refresh(
         ui.as_weak(),
         config.borrow().clone(),
@@ -1738,7 +1769,6 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         ui.as_weak(),
         config.borrow().clone(),
         Arc::clone(&app_shutting_down),
-        Arc::clone(&last_official_update_text),
     );
     start_player_count_check(
         ui.as_weak(),
@@ -1746,14 +1776,15 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         Arc::clone(&app_shutting_down),
         Arc::clone(&last_players_text),
     );
+    refresh_steam_status_view(&ui, &config.borrow());
     start_steam_network_timer(
         ui.as_weak(),
         Rc::clone(&config),
         Arc::clone(&app_shutting_down),
-        Arc::clone(&last_official_update_text),
         Arc::clone(&last_players_text),
         &steam_network_timer,
     );
+    start_steam_local_timer(ui.as_weak(), Rc::clone(&config), &steam_local_timer);
 
     ui.run()
 }
@@ -2393,7 +2424,7 @@ fn start_installed_manifest_refresh(
                             "Save",
                         );
                     }
-                    apply_official_update_view(&ui, &event_config);
+                    apply_home_notices_view(&ui, &event_config);
                 });
             }
             Ok(None) => log_for_config(
@@ -2417,11 +2448,28 @@ fn recorded_steam_buildid_message(version: &str, buildid: Option<u64>) -> String
     }
 }
 
+fn start_steam_local_timer(
+    ui: slint::Weak<AppWindow>,
+    config: Rc<RefCell<LauncherConfig>>,
+    timer: &Timer,
+) {
+    timer.start(TimerMode::Repeated, Duration::from_secs(10), move || {
+        let Some(ui) = ui.upgrade() else {
+            return;
+        };
+        refresh_steam_status_view(&ui, &config.borrow());
+    });
+}
+
+fn refresh_steam_status_view(ui: &AppWindow, config: &LauncherConfig) {
+    steam_status::refresh_status();
+    apply_home_notices_view(ui, config);
+}
+
 fn start_steam_network_timer(
     ui: slint::Weak<AppWindow>,
     config: Rc<RefCell<LauncherConfig>>,
     app_shutting_down: Arc<AtomicBool>,
-    last_official_update_text: Arc<Mutex<String>>,
     last_players_text: Arc<Mutex<String>>,
     timer: &Timer,
 ) {
@@ -2430,7 +2478,6 @@ fn start_steam_network_timer(
             ui.clone(),
             config.borrow().clone(),
             Arc::clone(&app_shutting_down),
-            Arc::clone(&last_official_update_text),
         );
         start_player_count_check(
             ui.clone(),
@@ -2445,7 +2492,6 @@ fn start_official_buildid_check(
     ui: slint::Weak<AppWindow>,
     config: LauncherConfig,
     app_shutting_down: Arc<AtomicBool>,
-    last_official_update_text: Arc<Mutex<String>>,
 ) {
     thread::spawn(move || {
         let buildid = match steam_buildid::fetch_official_public_buildid() {
@@ -2462,17 +2508,7 @@ fn start_official_buildid_check(
             let Some(ui) = ui.upgrade() else {
                 return;
             };
-            apply_official_update_view(&ui, &event_config);
-            let warning = official_update_warning(&event_config);
-            let mut last_warning = last_official_update_text
-                .lock()
-                .expect("official update text lock poisoned");
-            if warning != *last_warning {
-                if !warning.is_empty() {
-                    log_for_config(&event_config, diagnostics::LogLevel::Warn, &warning);
-                }
-                *last_warning = warning;
-            }
+            apply_home_notices_view(&ui, &event_config);
         });
     });
 }
@@ -2597,7 +2633,7 @@ fn start_release_check(
             if ui.get_install_action_text() != InstallState::Playing.primary_action() {
                 apply_home_view_state(&ui, state);
             }
-            apply_official_update_view(&ui, &event_config);
+            apply_home_notices_view(&ui, &event_config);
         });
     });
 }
@@ -2609,6 +2645,8 @@ fn refresh_settings_view(ui: &AppWindow, config: &LauncherConfig, save_text: &st
     ui.set_saved_download_cache_limit(cache_limit.into());
     ui.set_download_cache_save_text(save_text.into());
     ui.set_download_cache_limit_error("".into());
+    ui.set_hide_official_ownership_notice(config.hide_official_ownership_notice);
+    ui.set_saved_hide_official_ownership_notice(config.hide_official_ownership_notice);
 }
 
 fn install_folder_path_text(config: &LauncherConfig) -> String {
