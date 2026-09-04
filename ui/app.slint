@@ -683,40 +683,48 @@ export component AppWindow inherits Window {
                                 vertical-stretch: 1;
                             }
 
-                            play-row := HorizontalLayout {
-                                alignment: center;
+                            play-cluster := VerticalLayout {
+                                width: 100%;
+                                padding-top: 8px;
+                                spacing: 16px;
 
-                                PrimaryButton {
-                                    width: 218px;
-                                    height: 52px;
-                                    text: root.install-action-text;
-                                    enabled: root.install-action-enabled;
-                                    clicked => {
-                                        root.install-or-play();
+                                play-row := HorizontalLayout {
+                                    alignment: center;
+
+                                    PrimaryButton {
+                                        width: 218px;
+                                        height: 52px;
+                                        text: root.install-action-text;
+                                        enabled: root.install-action-enabled;
+                                        clicked => {
+                                            root.install-or-play();
+                                        }
                                     }
                                 }
-                            }
 
-                            HorizontalLayout {
-                                alignment: center;
+                                HorizontalLayout {
+                                    width: 100%;
+                                    alignment: center;
 
-                                Rectangle {
-                                    width: min(560px, parent.width);
-                                    min-height: 36px;
-                                    border-radius: 6px;
-                                    border-width: 1px;
-                                    border-color: Theme.border-muted;
-                                    background: Theme.home-status-background;
+                                    Rectangle {
+                                        width: min(560px, home-panel.width - 60px);
+                                        min-height: 42px;
+                                        border-radius: 6px;
+                                        border-width: 1px;
+                                        border-color: Theme.border-muted;
+                                        background: Theme.home-status-background;
 
-                                    Text {
-                                        x: 14px;
-                                        width: parent.width - 28px;
-                                        text: root.home-support-text;
-                                        font-size: 12px;
-                                        color: Theme.text-muted;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                        wrap: word-wrap;
+                                        Text {
+                                            x: 14px;
+                                            width: parent.width - 28px;
+                                            height: 100%;
+                                            text: root.home-support-text;
+                                            font-size: 12px;
+                                            color: Theme.text-muted;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            wrap: word-wrap;
+                                        }
                                     }
                                 }
                             }
@@ -762,7 +770,7 @@ export component AppWindow inherits Window {
 
                         if root.home-notice-text != "" : HomeNoticeCard {
                             x: (parent.width - self.width) / 2;
-                            y: home-title-divider.y + home-title-divider.height + (play-row.y - home-title-divider.y - home-title-divider.height - self.height) / 2;
+                            y: home-title-divider.y + home-title-divider.height + (play-cluster.y + play-row.y - home-title-divider.y - home-title-divider.height - self.height) / 2;
                             width: min(560px, parent.width - 60px);
                             z: 1;
                             text: root.home-notice-text;
