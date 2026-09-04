@@ -543,9 +543,8 @@ export component AppWindow inherits Window {
                     home-panel := Rectangle {
                         width: min(760px, parent.width - 16px);
                         height: min(378px, parent.height - 16px);
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                        clip: true;
+                        x: round((parent.width - self.width) / 2 / 1px) * 1px;
+                        y: round((parent.height - self.height) / 2 / 1px) * 1px;
                         border-radius: 10px;
                         border-width: 1px;
                         border-color: Theme.border-subtle;
@@ -554,33 +553,42 @@ export component AppWindow inherits Window {
                         drop-shadow-offset-y: 8px;
                         drop-shadow-color: Theme.shadow-strong;
 
+                        // Clip overflowing decorations only. clip + border-radius
+                        // rasterizes children into a texture, which blurs text.
                         Rectangle {
-                            width: 310px;
-                            height: 310px;
-                            x: parent.width - 205px;
-                            y: -135px;
-                            border-radius: 155px;
-                            border-width: 1px;
-                            border-color: Theme.home-panel-ring;
-                            background: Theme.home-panel-decoration;
-                        }
+                            width: 100%;
+                            height: 100%;
+                            clip: true;
+                            border-radius: 10px;
 
-                        Rectangle {
-                            width: 210px;
-                            height: 210px;
-                            x: parent.width - 105px;
-                            y: parent.height - 88px;
-                            border-radius: 105px;
-                            border-width: 1px;
-                            border-color: Theme.home-panel-ring;
-                            background: transparent;
-                        }
+                            Rectangle {
+                                width: 310px;
+                                height: 310px;
+                                x: parent.width - 205px;
+                                y: -135px;
+                                border-radius: 155px;
+                                border-width: 1px;
+                                border-color: Theme.home-panel-ring;
+                                background: Theme.home-panel-decoration;
+                            }
 
-                        Rectangle {
-                            width: parent.width - 48px;
-                            height: 2px;
-                            x: 24px;
-                            background: Theme.home-panel-sheen;
+                            Rectangle {
+                                width: 210px;
+                                height: 210px;
+                                x: parent.width - 105px;
+                                y: parent.height - 88px;
+                                border-radius: 105px;
+                                border-width: 1px;
+                                border-color: Theme.home-panel-ring;
+                                background: transparent;
+                            }
+
+                            Rectangle {
+                                width: parent.width - 48px;
+                                height: 2px;
+                                x: 24px;
+                                background: Theme.home-panel-sheen;
+                            }
                         }
 
                         VerticalLayout {
@@ -621,7 +629,7 @@ export component AppWindow inherits Window {
                                         color: Theme.accent-warm;
                                         font-size: 11px;
                                         font-weight: 800;
-                                        letter-spacing: 1.2px;
+                                        letter-spacing: 1px;
                                     }
 
                                     Text {
@@ -644,7 +652,7 @@ export component AppWindow inherits Window {
                                     width: 116px;
 
                                     VerticalLayout {
-                                        y: (parent.height - self.preferred-height) / 2;
+                                        y: round((parent.height - self.preferred-height) / 2 / 1px) * 1px;
                                         width: parent.width;
                                         spacing: 4px;
 
@@ -769,8 +777,8 @@ export component AppWindow inherits Window {
                         }
 
                         if root.home-notice-text != "" : HomeNoticeCard {
-                            x: (parent.width - self.width) / 2;
-                            y: home-title-divider.y + home-title-divider.height + (play-cluster.y + play-row.y - home-title-divider.y - home-title-divider.height - self.height) / 2;
+                            x: round((parent.width - self.width) / 2 / 1px) * 1px;
+                            y: round((home-title-divider.y + home-title-divider.height + (play-cluster.y + play-row.y - home-title-divider.y - home-title-divider.height - self.height) / 2) / 1px) * 1px;
                             width: min(560px, parent.width - 60px);
                             z: 1;
                             text: root.home-notice-text;
@@ -812,7 +820,7 @@ export component AppWindow inherits Window {
                         z: 5;
                         width: min(560px, parent.width - 16px);
                         height: 58px;
-                        x: (parent.width - self.width) / 2;
+                        x: round((parent.width - self.width) / 2 / 1px) * 1px;
                         y: 8px;
                         border-radius: 7px;
                         border-width: 1px;
@@ -849,8 +857,8 @@ export component AppWindow inherits Window {
                         z: 20;
                         width: min(500px, home-panel.width - 32px);
                         height: 104px;
-                        x: home-panel.x + home-panel.width - self.width - 30px;
-                        y: home-panel.y + home-panel.height - self.height - 78px;
+                        x: round((home-panel.x + home-panel.width - self.width - 30px) / 1px) * 1px;
+                        y: round((home-panel.y + home-panel.height - self.height - 78px) / 1px) * 1px;
                         border-radius: 7px;
                         border-width: 1px;
                         border-color: Theme.border-accent-muted;

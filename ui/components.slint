@@ -288,7 +288,6 @@ export component HomeNoticeCard inherits Rectangle {
     callback hide-tooltip();
 
     height: 32px;
-    clip: true;
     border-radius: 6px;
     border-width: 1px;
     border-color: Theme.home-panel-ring;
@@ -353,7 +352,7 @@ export component HomeNoticeCard inherits Rectangle {
                 height: parent.height;
 
                 link-text := Text {
-                    y: (parent.height - self.preferred-height) / 2;
+                    y: round((parent.height - self.preferred-height) / 2 / 1px) * 1px;
                     text: root.link-label;
                     font-size: 12px;
                     font-weight: 600;
@@ -527,7 +526,7 @@ export component HomePlayerCount inherits Rectangle {
                 color: Theme.text-secondary;
                 font-size: 10px;
                 font-weight: 800;
-                letter-spacing: 0.8px;
+                letter-spacing: 1px;
                 vertical-alignment: center;
             }
         }
