@@ -110,9 +110,11 @@ fn set_log_lines_if_changed(ui: &AppWindow, lines: Vec<LogLineView>) {
     let current = ui.get_log_lines();
     let unchanged = current.row_count() == lines.len()
         && lines.iter().enumerate().all(|(index, line)| {
-            current
-                .row_data(index)
-                .is_some_and(|current| current.text == line.text && current.color == line.color)
+            current.row_data(index).is_some_and(|current| {
+                current.text == line.text
+                    && current.color == line.color
+                    && current.continuation == line.continuation
+            })
         });
     if !unchanged {
         ui.set_log_lines(ModelRc::new(VecModel::from(lines)));
@@ -175,9 +177,11 @@ fn log_lines_from_text(content: &str, wrap_columns: usize) -> Vec<LogLineView> {
             let color = log_line_color(line);
             split_display_line(line, wrap_columns)
                 .into_iter()
-                .map(move |text| LogLineView {
+                .enumerate()
+                .map(move |(index, text)| LogLineView {
                     text: text.into(),
                     color: color.clone(),
+                    continuation: index > 0,
                 })
         })
         .collect()
@@ -252,6 +256,93 @@ fn log_line_color(line: &str) -> Brush {
         LogLineLevel::Debug => Color::from_rgb_u8(154, 164, 172).into(),
         LogLineLevel::Other => Color::from_rgb_u8(234, 216, 202).into(),
     }
+}
+
+pub(crate) fn extract_log_selection(
+    lines: &impl Model<Data = LogLineView>,
+    anchor_line: i32,
+    anchor_col: i32,
+    cursor_line: i32,
+    cursor_col: i32,
+) -> String {
+    let count = lines.row_count();
+    if count == 0 {
+        return String::new();
+    }
+
+    let last = (count - 1) as i32;
+    let start = anchor_line.min(cursor_line).clamp(0, last) as usize;
+    let end = anchor_line.max(cursor_line).clamp(0, last) as usize;
+    let selected = (start..=end)
+        .filter_map(|index| {
+            lines.row_data(index).map(|line| SelectableLogLine {
+                text: line.text.to_string(),
+                continuation: line.continuation,
+            })
+        })
+        .collect::<Vec<_>>();
+    let local_anchor = (anchor_line.clamp(0, last) as usize).saturating_sub(start) as i32;
+    let local_cursor = (cursor_line.clamp(0, last) as usize).saturating_sub(start) as i32;
+    extract_log_selection_from_lines(
+        &selected,
+        local_anchor,
+        anchor_col,
+        local_cursor,
+        cursor_col,
+    )
+}
+
+#[derive(Clone, Debug)]
+struct SelectableLogLine {
+    text: String,
+    continuation: bool,
+}
+
+fn extract_log_selection_from_lines(
+    lines: &[SelectableLogLine],
+    anchor_line: i32,
+    anchor_col: i32,
+    cursor_line: i32,
+    cursor_col: i32,
+) -> String {
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let last_index = (lines.len() - 1) as i32;
+    let clamp_pos = |line: i32, col: i32| {
+        let line = line.clamp(0, last_index) as usize;
+        let max_col = i32::try_from(lines[line].text.chars().count()).unwrap_or(i32::MAX);
+        (line, col.clamp(0, max_col) as usize)
+    };
+
+    let (anchor_line, anchor_col) = clamp_pos(anchor_line, anchor_col);
+    let (cursor_line, cursor_col) = clamp_pos(cursor_line, cursor_col);
+    let (start_line, start_col, end_line, end_col) =
+        if (anchor_line, anchor_col) <= (cursor_line, cursor_col) {
+            (anchor_line, anchor_col, cursor_line, cursor_col)
+        } else {
+            (cursor_line, cursor_col, anchor_line, anchor_col)
+        };
+
+    if start_line == end_line && start_col == end_col {
+        return String::new();
+    }
+
+    let mut output = String::new();
+    for (index, line) in lines.iter().enumerate().take(end_line + 1).skip(start_line) {
+        if index != start_line && !line.continuation {
+            output.push('\n');
+        }
+        let from = if index == start_line { start_col } else { 0 };
+        let to = if index == end_line {
+            end_col
+        } else {
+            line.text.chars().count()
+        };
+        output.extend(line.text.chars().skip(from).take(to.saturating_sub(from)));
+    }
+    output
 }
 
 #[cfg(test)]
@@ -339,5 +430,51 @@ mod tests {
             game_log_session_id(Path::new("session-a.log.zst")),
             game_log_session_id(Path::new("session-a.log"))
         );
+    }
+
+    #[test]
+    fn copies_character_range_across_wrapped_log_lines() {
+        let lines = vec![
+            selectable("alpha beta", false),
+            selectable("gamma", false),
+            selectable("delta epsilon", false),
+        ];
+
+        assert_eq!(
+            extract_log_selection_from_lines(&lines, 0, 6, 2, 5),
+            "beta\ngamma\ndelta"
+        );
+        assert_eq!(
+            extract_log_selection_from_lines(&lines, 2, 5, 0, 6),
+            "beta\ngamma\ndelta"
+        );
+        assert_eq!(extract_log_selection_from_lines(&lines, 1, 1, 1, 4), "amm");
+        assert_eq!(extract_log_selection_from_lines(&lines, 0, 2, 0, 2), "");
+        assert_eq!(extract_log_selection_from_lines(&[], 0, 0, 1, 1), "");
+    }
+
+    #[test]
+    fn copy_joins_wrapped_display_segments_without_extra_newlines() {
+        let lines = vec![
+            selectable("very long ", false),
+            selectable("error line", true),
+            selectable("next record", false),
+        ];
+
+        assert_eq!(
+            extract_log_selection_from_lines(&lines, 0, 0, 2, 11),
+            "very long error line\nnext record"
+        );
+        assert_eq!(
+            extract_log_selection_from_lines(&lines, 0, 5, 1, 5),
+            "long error"
+        );
+    }
+
+    fn selectable(text: &str, continuation: bool) -> SelectableLogLine {
+        SelectableLogLine {
+            text: text.to_string(),
+            continuation,
+        }
     }
 }

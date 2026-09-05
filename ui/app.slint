@@ -39,6 +39,7 @@ export struct LaunchOptionView {
 export struct LogLineView {
     text: string,
     color: brush,
+    continuation: bool,
 }
 
 export struct GameSessionView {
@@ -69,14 +70,31 @@ component LogViewer inherits Rectangle {
     in property <int> position-key;
     callback wrap-columns-measured(int);
     callback viewport-position-changed(length, bool);
+    callback copy-requested(int, int, int, int) -> string;
     property <int> reported-wrap-columns: 0;
     property <bool> restoring-position: true;
     property <int> stable-restore-ticks: 0;
     property <length> last-restore-target: 1px;
     property <length> current-viewport-y: log-list.viewport-y;
-    property <length> content-height: root.lines.length * 20px;
+    property <length> line-height: 20px;
+    property <length> content-height: root.lines.length * root.line-height;
     property <length> end-viewport-y: min(0px, log-list.visible-height - root.content-height);
     property <bool> at-end: log-list.viewport-y <= root.end-viewport-y + 1px;
+    property <length> char-width: character-measurement.preferred-width / 64;
+    property <int> sel-anchor-line: 0;
+    property <int> sel-anchor-col: 0;
+    property <int> sel-cursor-line: 0;
+    property <int> sel-cursor-col: 0;
+    property <bool> selection-forward: root.sel-anchor-line < root.sel-cursor-line || (root.sel-anchor-line == root.sel-cursor-line && root.sel-anchor-col <= root.sel-cursor-col);
+    property <int> sel-start-line: root.selection-forward ? root.sel-anchor-line : root.sel-cursor-line;
+    property <int> sel-start-col: root.selection-forward ? root.sel-anchor-col : root.sel-cursor-col;
+    property <int> sel-end-line: root.selection-forward ? root.sel-cursor-line : root.sel-anchor-line;
+    property <int> sel-end-col: root.selection-forward ? root.sel-cursor-col : root.sel-anchor-col;
+    property <bool> has-selection: root.sel-start-line != root.sel-end-line || root.sel-start-col != root.sel-end-col;
+    property <bool> selecting: false;
+    property <bool> menu-open: false;
+    property <length> pointer-x: 0px;
+    property <length> pointer-y: 0px;
 
     min-width: 0px;
     preferred-width: 0px;
@@ -89,17 +107,121 @@ component LogViewer inherits Rectangle {
     changed position-key => {
         root.restoring-position = true;
         root.stable-restore-ticks = 0;
+        root.selecting = false;
+        root.menu-open = false;
+        root.clear-selection();
     }
 
     changed lines => {
         root.restoring-position = true;
         root.stable-restore-ticks = 0;
+        root.selecting = false;
+        root.menu-open = false;
+        root.clear-selection();
     }
 
     changed current-viewport-y => {
         if (!root.restoring-position) {
             root.viewport-position-changed(root.current-viewport-y, root.at-end);
         }
+        if (root.selecting) {
+            root.apply-pointer-selection();
+        }
+    }
+
+    function line-length(index: int) -> int {
+        if (index < 0 || index >= root.lines.length) {
+            return 0;
+        }
+        return root.lines[index].text.character-count;
+    }
+
+    function col-at(x: length, line-index: int) -> int {
+        if (root.char-width <= 0px) {
+            return 0;
+        }
+        return min(root.line-length(line-index), max(0, floor(x / root.char-width)));
+    }
+
+    function line-at-y(y: length) -> int {
+        if (root.lines.length == 0) {
+            return 0;
+        }
+        return min(root.lines.length - 1, max(0, floor((-log-list.viewport-y + y) / root.line-height)));
+    }
+
+    function apply-pointer-selection() {
+        if (root.lines.length == 0) {
+            return;
+        }
+        let y = min(max(0px, log-list.visible-height - 1px), max(0px, root.pointer-y));
+        let current = root.line-at-y(y);
+        root.sel-cursor-line = current;
+        root.sel-cursor-col = root.col-at(root.pointer-x, current);
+    }
+
+    function show-log-menu() {
+        if (root.menu-open) {
+            log-context-menu.close();
+            root.menu-open = false;
+            return;
+        }
+        log-focus.focus();
+        log-context-menu.show({
+            x: round((log-pointer.absolute-position.x - log-context-menu.absolute-position.x + root.pointer-x) / 1px) * 1px,
+            y: round((log-pointer.absolute-position.y - log-context-menu.absolute-position.y + root.pointer-y) / 1px) * 1px,
+        });
+        root.menu-open = true;
+    }
+
+    function line-has-selection(index: int) -> bool {
+        return root.has-selection && index >= root.sel-start-line && index <= root.sel-end-line;
+    }
+
+    function line-sel-x(index: int) -> length {
+        if (index != root.sel-start-line) {
+            return 0px;
+        }
+        return root.sel-start-col * root.char-width;
+    }
+
+    function line-sel-width(index: int, row-width: length) -> length {
+        if (index == root.sel-start-line && index == root.sel-end-line) {
+            return max(0, root.sel-end-col - root.sel-start-col) * root.char-width;
+        }
+        if (index == root.sel-start-line) {
+            return max(0px, row-width - root.sel-start-col * root.char-width);
+        }
+        if (index == root.sel-end-line) {
+            return root.sel-end-col * root.char-width;
+        }
+        return row-width;
+    }
+
+    function clear-selection() {
+        root.sel-anchor-line = 0;
+        root.sel-anchor-col = 0;
+        root.sel-cursor-line = 0;
+        root.sel-cursor-col = 0;
+    }
+
+    function select-all-text() {
+        root.sel-anchor-line = 0;
+        root.sel-anchor-col = 0;
+        root.sel-cursor-line = max(0, root.lines.length - 1);
+        root.sel-cursor-col = root.line-length(root.sel-cursor-line);
+        log-focus.focus();
+    }
+
+    function copy-current-selection() {
+        if (root.lines.length == 0) {
+            return;
+        }
+        clipboard-helper.text = root.has-selection
+            ? root.copy-requested(root.sel-start-line, root.sel-start-col, root.sel-end-line, root.sel-end-col)
+            : root.copy-requested(0, 0, root.lines.length - 1, root.line-length(root.lines.length - 1));
+        clipboard-helper.select-all();
+        clipboard-helper.copy();
     }
 
     character-measurement := Text {
@@ -109,88 +231,236 @@ component LogViewer inherits Rectangle {
         visible: false;
     }
 
-    VerticalLayout {
-        padding: 12px;
-        spacing: 8px;
+    clipboard-helper := TextInput {
+        x: 0px;
+        y: 0px;
+        width: 0px;
+        height: 0px;
+        visible: false;
+        read-only: true;
+    }
 
-        Text {
-            text: root.title;
-            color: Theme.text-secondary;
-            font-size: 12px;
-            font-weight: 700;
+    log-context-menu := ContextMenuArea {
+        width: 100%;
+        height: 100%;
+
+        Menu {
+            MenuItem {
+                title: "Copy";
+                enabled: root.lines.length > 0;
+                activated => {
+                    root.menu-open = false;
+                    root.copy-current-selection();
+                }
+            }
+
+            MenuItem {
+                title: "Select All";
+                enabled: root.lines.length > 0;
+                activated => {
+                    root.menu-open = false;
+                    root.select-all-text();
+                }
+            }
         }
 
-        log-list := ListView {
-            min-width: 0px;
-            preferred-width: 0px;
-            horizontal-stretch: 1;
-            vertical-stretch: 1;
-            opacity: root.reported-wrap-columns > 0 && !root.restoring-position ? 1 : 0;
+        log-focus := FocusScope {
+            width: 100%;
+            height: 100%;
 
-            for line in root.lines: Rectangle {
-                height: 20px;
+            key-pressed(event) => {
+                if ((event.modifiers.control || event.modifiers.meta) && event.text == "c") {
+                    if (root.has-selection) {
+                        root.copy-current-selection();
+                    }
+                    return accept;
+                }
+                if ((event.modifiers.control || event.modifiers.meta) && event.text == "a") {
+                    root.select-all-text();
+                    return accept;
+                }
+                if (event.text == Key.Escape) {
+                    root.clear-selection();
+                    return accept;
+                }
+                return reject;
+            }
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
 
                 Text {
-                    width: parent.width;
-                    height: parent.height;
-                    text: line.text;
-                    font-family: "Hack";
-                    font-size: 13px;
-                    color: line.color;
-                    wrap: no-wrap;
-                    overflow: clip;
-                    vertical-alignment: center;
-                }
-            }
-        }
-
-        restore-scroll-position := Timer {
-            interval: 16ms;
-            running: root.restoring-position;
-
-            triggered => {
-                if (log-list.visible-width <= 0px || log-list.visible-height <= 0px) {
-                    return;
+                    text: root.title;
+                    color: Theme.text-secondary;
+                    font-size: 12px;
+                    font-weight: 700;
                 }
 
-                let target = root.saved-position-known
-                    ? root.saved-at-end ? root.end-viewport-y : root.saved-viewport-y
-                    : root.default-scroll-to-end ? root.end-viewport-y : 0px;
-                log-list.viewport-y = target;
+                log-pane := Rectangle {
+                    min-width: 0px;
+                    vertical-stretch: 1;
+                    clip: true;
 
-                if (target == root.last-restore-target && log-list.viewport-y == target) {
-                    root.stable-restore-ticks += 1;
-                } else {
-                    root.last-restore-target = target;
-                    root.stable-restore-ticks = 0;
+                    log-list := ListView {
+                        width: 100%;
+                        height: 100%;
+                        min-width: 0px;
+                        opacity: root.reported-wrap-columns > 0 && !root.restoring-position ? 1 : 0;
+
+                        for line[index] in root.lines: Rectangle {
+                            height: root.line-height;
+                            clip: true;
+
+                            Rectangle {
+                                x: root.line-sel-x(index);
+                                width: root.line-sel-width(index, parent.width);
+                                height: parent.height;
+                                background: #8a3a2e99;
+                                visible: root.line-has-selection(index);
+                            }
+
+                            Text {
+                                width: parent.width;
+                                height: parent.height;
+                                text: line.text;
+                                font-family: "Hack";
+                                font-size: 13px;
+                                color: line.color;
+                                wrap: no-wrap;
+                                overflow: clip;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    log-pointer := TouchArea {
+                        x: 0px;
+                        width: max(0px, parent.width - 14px);
+                        height: 100%;
+                        mouse-cursor: text;
+
+                        pointer-event(event) => {
+                            if (event.kind == PointerEventKind.cancel) {
+                                root.selecting = false;
+                                return;
+                            }
+                            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                                log-focus.focus();
+                                root.menu-open = false;
+                                root.pointer-x = self.mouse-x;
+                                root.pointer-y = self.mouse-y;
+                                root.selecting = true;
+                                if (!event.modifiers.shift) {
+                                    let line = root.line-at-y(self.mouse-y);
+                                    root.sel-anchor-line = line;
+                                    root.sel-anchor-col = root.col-at(self.mouse-x, line);
+                                }
+                                root.apply-pointer-selection();
+                            }
+                            if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left) {
+                                root.selecting = false;
+                            }
+                            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
+                                root.pointer-x = self.mouse-x;
+                                root.pointer-y = self.mouse-y;
+                                root.show-log-menu();
+                            }
+                        }
+                        moved => {
+                            root.pointer-x = self.mouse-x;
+                            root.pointer-y = self.mouse-y;
+                            if (root.selecting) {
+                                root.apply-pointer-selection();
+                            }
+                        }
+                        double-clicked => {
+                            let line = root.line-at-y(self.mouse-y);
+                            root.sel-anchor-line = line;
+                            root.sel-anchor-col = 0;
+                            root.sel-cursor-line = line;
+                            root.sel-cursor-col = root.line-length(line);
+                            log-focus.focus();
+                        }
+                        scroll-event(event) => {
+                            if (root.selecting) {
+                                log-list.viewport-y = min(0px, max(root.end-viewport-y, log-list.viewport-y + event.delta-y));
+                                root.apply-pointer-selection();
+                                return accept;
+                            }
+                            return reject;
+                        }
+                    }
+
+                    select-auto-scroll := Timer {
+                        interval: 16ms;
+                        running: root.selecting;
+
+                        triggered => {
+                            if (root.pointer-y < 0px) {
+                                let step = max(4px, min(72px, -root.pointer-y / 3));
+                                log-list.viewport-y = min(0px, log-list.viewport-y + step);
+                            } else if (root.pointer-y > log-list.visible-height) {
+                                let step = max(4px, min(72px, (root.pointer-y - log-list.visible-height) / 3));
+                                log-list.viewport-y = max(root.end-viewport-y, log-list.viewport-y - step);
+                            }
+                            root.apply-pointer-selection();
+                        }
+                    }
                 }
 
-                if (root.stable-restore-ticks >= 3) {
-                    root.restoring-position = false;
-                    root.viewport-position-changed(log-list.viewport-y, root.at-end);
+                restore-scroll-position := Timer {
+                    interval: 16ms;
+                    running: root.restoring-position;
+
+                    triggered => {
+                        if (log-list.visible-width <= 0px || log-list.visible-height <= 0px) {
+                            root.stable-restore-ticks += 1;
+                            if (root.stable-restore-ticks >= 15) {
+                                root.restoring-position = false;
+                            }
+                            return;
+                        }
+
+                        let target = root.saved-position-known
+                            ? root.saved-at-end ? root.end-viewport-y : root.saved-viewport-y
+                            : root.default-scroll-to-end ? root.end-viewport-y : 0px;
+                        log-list.viewport-y = target;
+
+                        if (target == root.last-restore-target && log-list.viewport-y == target) {
+                            root.stable-restore-ticks += 1;
+                        } else {
+                            root.last-restore-target = target;
+                            root.stable-restore-ticks = 0;
+                        }
+
+                        if (root.stable-restore-ticks >= 3) {
+                            root.restoring-position = false;
+                            root.viewport-position-changed(log-list.viewport-y, root.at-end);
+                        }
+                    }
                 }
-            }
-        }
 
-        report-wrap-columns := Timer {
-            interval: 100ms;
-            running: true;
+                report-wrap-columns := Timer {
+                    interval: 100ms;
+                    running: true;
 
-            triggered => {
-                let character-width-px = character-measurement.preferred-width / 64px;
-                if (character-width-px > 0) {
-                    let columns = max(
-                        20,
-                        floor(log-list.visible-width / 1px / character-width-px),
-                    );
-                    if (columns != root.reported-wrap-columns) {
-                        root.reported-wrap-columns = columns;
-                        root.wrap-columns-measured(root.reported-wrap-columns);
+                    triggered => {
+                        let character-width-px = character-measurement.preferred-width / 64px;
+                        if (character-width-px > 0) {
+                            let columns = max(
+                                20,
+                                floor(log-list.visible-width / 1px / character-width-px),
+                            );
+                            if (columns != root.reported-wrap-columns) {
+                                root.reported-wrap-columns = columns;
+                                root.wrap-columns-measured(root.reported-wrap-columns);
+                            }
+                        }
                     }
                 }
             }
         }
-
     }
 }
 
@@ -359,6 +629,7 @@ export component AppWindow inherits Window {
     callback select-log-source(int);
     callback select-game-log(int);
     callback log-wrap-columns-measured(int, int);
+    callback copy-log-selection(int, int, int, int) -> string;
     callback increment-download-cache-limit();
     callback decrement-download-cache-limit();
     callback save-general-settings();
@@ -1728,6 +1999,9 @@ export component AppWindow inherits Window {
                                     root.launcher-log-at-end = at-end;
                                     root.launcher-log-position-known = true;
                                 }
+                                copy-requested(a-line, a-col, c-line, c-col) => {
+                                    return root.copy-log-selection(a-line, a-col, c-line, c-col);
+                                }
                             }
 
                             if root.log-source == 1 : HorizontalLayout {
@@ -1782,6 +2056,9 @@ export component AppWindow inherits Window {
                                         root.game-log-viewport-y = position;
                                         root.game-log-at-end = at-end;
                                         root.game-log-position-known = true;
+                                    }
+                                    copy-requested(a-line, a-col, c-line, c-col) => {
+                                        return root.copy-log-selection(a-line, a-col, c-line, c-col);
                                     }
                                 }
                             }

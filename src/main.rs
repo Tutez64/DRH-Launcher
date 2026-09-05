@@ -77,8 +77,8 @@ use launch_options::{
     launch_options_saved_message, load_installed_launch_options, refresh_launch_options_view,
 };
 use log_view::{
-    LogViewportPosition, refresh_log_content, refresh_logs_view, remember_game_log_position,
-    saved_game_log_position,
+    LogViewportPosition, extract_log_selection, refresh_log_content, refresh_logs_view,
+    remember_game_log_position, saved_game_log_position,
 };
 use platform::Platform;
 use release_source::ReleaseSource;
@@ -1547,6 +1547,24 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     refresh_log_content(&ui, &config.borrow());
                 }
             });
+    }
+
+    {
+        let ui = ui.as_weak();
+        ui.unwrap().on_copy_log_selection(
+            move |anchor_line, anchor_col, cursor_line, cursor_col| {
+                ui.upgrade().map_or_else(Default::default, |ui| {
+                    extract_log_selection(
+                        &ui.get_log_lines(),
+                        anchor_line,
+                        anchor_col,
+                        cursor_line,
+                        cursor_col,
+                    )
+                    .into()
+                })
+            },
+        );
     }
 
     {

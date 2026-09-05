@@ -694,8 +694,11 @@ The game may need explicit support to load mods cleanly. Until then, the launche
 `Logs` should include:
 
 - a recent in-app launcher log view
+- a game-session log view with a session list
+- selection and copy of a snippet from either view
 - a refresh action
 - an action to open the logs directory
+- an action to open a selected game-session file
 
 `About` should include:
 
@@ -749,6 +752,28 @@ Display wrapping prefers whitespace, then commas, semicolons or colons near the
 right edge before falling back to a hard character boundary. The launcher keeps
 the launcher log scroll position and a separate scroll position for every game
 session file while navigating between screens and sessions.
+
+The viewer is a selectable log surface, not a text editor. Users can highlight a
+snippet with click-and-drag, extend it with Shift-click, select a visual row
+with double-click, or select everything with Ctrl+A / Cmd+A. Copy uses Ctrl+C /
+Cmd+C when there is a highlight, or the context-menu Copy action. Context-menu
+Copy with no highlight copies the currently shown log. Escape clears the
+highlight. Dragging a highlight into another application is not supported:
+Slint 1.17 `DragArea` only transfers data inside the process, so the viewer
+does not start an OS drag.
+
+Selection must not replace the virtualized colored `ListView` with one
+multi-line `TextInput`. A single input lays out the whole file, drops per-line
+severity colors, and becomes too slow on large game sessions. Pointer tracking
+therefore lives on a pane overlay so a drag can cross rows that have been
+virtualized away. Wheel scrolling is forwarded to the `ListView` so Flickable
+keeps its smooth scrolling. While a drag is held outside the pane, auto-scroll
+speed increases with distance from the edge.
+
+Copied text is reconstructed from the selected visual rows but must match the
+underlying log: wrap continuations are concatenated without inserting extra
+newlines. Sharing a snippet therefore looks like the file, not like the wrapped
+display.
 
 Launcher log writes should be best-effort: failure to write diagnostics must not
 break install, update or launch flows. A game-session log must be created before
