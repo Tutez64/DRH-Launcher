@@ -16,17 +16,17 @@ path = "src/main.rs"
 [dependencies]
 cargo-packager-updater = "0.2.3"
 directories = "6.0.0"
-flate2 = "1.1.9"
+flate2 = "1.1.10"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
 pulldown-cmark = "0.13.4"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 sha2 = "0.11.0"
 slint = "1.17.1"
 steamlocate = "2.1.1"
 tar = "0.4.46"
-zip = { version = "9.0.0-pre2", default-features = false, features = ["deflate"] }
-zstd = "0.13.3"
+zip = { version = "9.0.0-pre3", default-features = false, features = ["deflate"] }
+zstd = "0.14.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.186"
