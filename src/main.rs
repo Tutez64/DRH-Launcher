@@ -226,7 +226,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             let process_error = {
                 let mut process = game_process.borrow_mut();
                 match process.as_mut() {
-                    Some(game) => match game.child.try_wait() {
+                    Some(game) => match game.try_wait() {
                         Ok(None) => Some(Ok(())),
                         Ok(Some(_)) => {
                             process.take();

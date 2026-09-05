@@ -1,7 +1,7 @@
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 
 use crate::config::LauncherConfig;
 use crate::game_install::{game_executable_names, is_game_executable};
@@ -11,6 +11,45 @@ use crate::{game_logs, paths, platform::Platform};
 pub struct RunningGame {
     pub child: Child,
     pub session_log: game_logs::GameSessionLog,
+    reaped_status: Option<ExitStatus>,
+}
+
+impl RunningGame {
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub fn child_has_exited(&self) -> bool {
+        self.reaped_status.is_some()
+    }
+
+    /// Wait for the tracked process and any remaining members of its launch tree.
+    ///
+    /// Pre-launch wrappers such as `prime-run` can exit as soon as they receive
+    /// SIGTERM while the actual game is still running, so Stop must not treat
+    /// the wrapper's exit as the end of the session.
+    pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        if self.reaped_status.is_none() {
+            self.reaped_status = self.child.try_wait()?;
+        }
+        match self.reaped_status {
+            Some(status) if !launch_tree_is_alive(self.child.id()) => Ok(Some(status)),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        loop {
+            if let Some(status) = self.try_wait()? {
+                return Ok(status);
+            }
+            if self.reaped_status.is_none() {
+                self.reaped_status = Some(self.child.wait()?);
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -32,13 +71,74 @@ fn signal_process_group(
     let process_group = -(child.id() as libc::pid_t);
     let result = unsafe { libc::kill(process_group, signal) };
     if result == 0 {
+        return Ok(());
+    }
+
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        // The group is already empty, which is the desired shutdown result.
         Ok(())
     } else {
         Err(format!(
-            "Could not send {signal_name} to DRH process group: {}",
-            std::io::Error::last_os_error()
+            "Could not send {signal_name} to DRH process group: {error}"
         ))
     }
+}
+
+#[cfg(unix)]
+fn launch_tree_is_alive(pgid: u32) -> bool {
+    process_group_exists(pgid) && process_group_has_live_members(pgid)
+}
+
+#[cfg(not(unix))]
+fn launch_tree_is_alive(_pgid: u32) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn process_group_exists(pgid: u32) -> bool {
+    let result = unsafe { libc::kill(-(pgid as libc::pid_t), 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(target_os = "linux")]
+fn process_group_has_live_members(pgid: u32) -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return true;
+    };
+
+    entries.flatten().any(|entry| {
+        if entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+            .is_none()
+        {
+            return false;
+        }
+        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+            return false;
+        };
+        matches!(
+            parse_proc_stat_group_and_state(&stat),
+            Some((process_pgid, state)) if process_pgid == pgid && state != 'Z'
+        )
+    })
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn process_group_has_live_members(pgid: u32) -> bool {
+    process_group_exists(pgid)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_proc_stat_group_and_state(stat: &str) -> Option<(u32, char)> {
+    let comm_end = stat.rfind(')')?;
+    let mut fields = stat.get(comm_end + 1..)?.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let _ppid = fields.next()?;
+    let pgid = fields.next()?.parse().ok()?;
+    Some((pgid, state))
 }
 
 #[cfg(windows)]
@@ -142,7 +242,11 @@ pub fn launch_game_with_options(
         format!("Could not launch DRH: {error}")
     })?;
 
-    Ok(RunningGame { child, session_log })
+    Ok(RunningGame {
+        child,
+        session_log,
+        reaped_status: None,
+    })
 }
 
 #[cfg(unix)]
@@ -544,7 +648,7 @@ mod tests {
         };
 
         let mut game = launch_game_with_options(&config, None, Some("V-test")).unwrap();
-        let status = game.child.wait().unwrap();
+        let status = game.wait().unwrap();
         let log_path =
             game_logs::finish(&game.session_log, &format!("Exited with status: {status}")).unwrap();
         let contents = game_logs::read(&log_path).unwrap();
@@ -607,22 +711,140 @@ mod tests {
         assert!(wait_for_path(&game_started_marker, Duration::from_secs(2)));
 
         request_graceful_shutdown(&game.child).unwrap();
-        let status = game.child.wait().unwrap();
+        let status = game.wait().unwrap();
 
         assert!(!status.success());
         assert!(wait_for_path(&term_marker, Duration::from_secs(2)));
     }
 
+    #[test]
+    fn parses_proc_stat_group_and_state() {
+        assert_eq!(
+            parse_proc_stat_group_and_state("57517 (Dungeon Rampage Haxe) S 57500 57517 57517 0 0"),
+            Some((57517, 'S'))
+        );
+        assert_eq!(
+            parse_proc_stat_group_and_state("12 (foo (bar) baz) Z 1 99 99"),
+            Some((99, 'Z'))
+        );
+        assert_eq!(parse_proc_stat_group_and_state("broken"), None);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn stop_force_kills_sigterm_ignoring_game_after_pre_launch_wrapper_exits() {
+        use std::time::Duration;
+
+        let temp = tempdir().unwrap();
+        let game_dir = paths::game_dir(temp.path());
+        fs::create_dir_all(&game_dir).unwrap();
+
+        let game_pid_path = temp.path().join("game.pid");
+        let game_started_marker = temp.path().join("game-started-marker");
+        let executable = game_dir.join(game_executable_names()[0]);
+        write_executable_script(
+            &executable,
+            &format!(
+                "#!/bin/sh\n\
+                 trap '' TERM\n\
+                 printf $$ > \"{}\"\n\
+                 printf started > \"{}\"\n\
+                 while :; do sleep 1; done\n",
+                game_pid_path.display(),
+                game_started_marker.display()
+            ),
+        );
+
+        // prime-run runs the game as a child and waits; it does not exec.
+        let wrapper = temp.path().join("prime-run-like");
+        write_executable_script(&wrapper, "#!/bin/sh\n\"$@\"\n");
+
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().to_path_buf()),
+            pre_launch_command: wrapper.display().to_string(),
+            ..LauncherConfig::default()
+        };
+        let mut game =
+            KillLaunchTree(launch_game_with_options(&config, None, Some("V-test")).unwrap());
+        let game = &mut game.0;
+
+        assert!(wait_for_path(&game_started_marker, Duration::from_secs(2)));
+        let game_pid = fs::read_to_string(&game_pid_path)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        assert!(pid_is_alive(game_pid));
+
+        request_graceful_shutdown(&game.child).unwrap();
+
+        let wrapper_exited_while_game_lived = wait_until(Duration::from_secs(2), || {
+            let tree_exited = game.try_wait().unwrap().is_some();
+            game.child_has_exited() && !tree_exited && pid_is_alive(game_pid)
+        });
+        assert!(
+            wrapper_exited_while_game_lived,
+            "wrapper should exit on SIGTERM while the frozen game stays alive"
+        );
+
+        force_shutdown(&mut game.child).unwrap();
+        assert!(
+            wait_until(Duration::from_secs(2), || {
+                game.try_wait().unwrap().is_some()
+            }),
+            "SIGKILL should stop remaining DRH processes after the wrapper has exited"
+        );
+        assert!(!pid_is_alive(game_pid));
+    }
+
     #[cfg(target_os = "linux")]
     fn wait_for_path(path: &Path, timeout: std::time::Duration) -> bool {
+        wait_until(timeout, || path.exists())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn wait_until(timeout: std::time::Duration, mut predicate: impl FnMut() -> bool) -> bool {
         let started_at = std::time::Instant::now();
         while started_at.elapsed() < timeout {
-            if path.exists() {
+            if predicate() {
                 return true;
             }
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
-        path.exists()
+        predicate()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn write_executable_script(path: &Path, contents: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::write(path, contents).unwrap();
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn pid_is_alive(pid: i32) -> bool {
+        let result = unsafe { libc::kill(pid, 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    #[cfg(target_os = "linux")]
+    struct KillLaunchTree(RunningGame);
+
+    #[cfg(target_os = "linux")]
+    impl Drop for KillLaunchTree {
+        fn drop(&mut self) {
+            let _ = force_shutdown(&mut self.0.child);
+            let started_at = std::time::Instant::now();
+            while started_at.elapsed() < std::time::Duration::from_millis(500) {
+                if self.0.try_wait().ok().flatten().is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
     }
 
     fn create_executable(path: &Path) {

@@ -45,7 +45,7 @@ pub(crate) fn start_game_monitor(
                 return;
             };
 
-            match game.child.try_wait() {
+            match game.try_wait() {
                 Ok(Some(status)) => {
                     let game = process.take().expect("running game disappeared");
                     let _ = game_logs::finish(
@@ -97,7 +97,7 @@ pub(crate) fn process_is_running(
         return false;
     };
 
-    match game.child.try_wait() {
+    match game.try_wait() {
         Ok(None) => true,
         Ok(Some(status)) => {
             let game = process.take().expect("running game disappeared");
@@ -148,14 +148,12 @@ pub(crate) fn begin_game_stop(
         log_for_config(
             &config,
             diagnostics::LogLevel::Info,
-            &format!(
-                "Requesting graceful shutdown for DRH (pid {}).",
-                game.child.id()
-            ),
+            &format!("Requesting graceful shutdown for DRH (pid {}).", game.id()),
         );
     }
     let started_at = Instant::now();
     let mut forced = false;
+    let mut logged_remaining = false;
     let mut forced_reason =
         graceful_error.map(|error| format!("graceful shutdown request failed: {error}"));
     let timer_handle = Rc::clone(&timer);
@@ -177,12 +175,23 @@ pub(crate) fn begin_game_stop(
                 return;
             };
 
-            match game.child.try_wait() {
+            match game.try_wait() {
                 Ok(Some(status)) => {
                     let game = process.take().expect("running game disappeared");
                     Some((game, status))
                 }
                 Ok(None) => {
+                    if game.child_has_exited() && !logged_remaining {
+                        logged_remaining = true;
+                        log_for_config(
+                            &config,
+                            diagnostics::LogLevel::Info,
+                            &format!(
+                                "Tracked launch process exited; waiting for remaining DRH processes (pgid {}).",
+                                game.id()
+                            ),
+                        );
+                    }
                     if !forced
                         && forced_reason.is_none()
                         && started_at.elapsed() >= GRACEFUL_STOP_TIMEOUT

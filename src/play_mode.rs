@@ -131,7 +131,7 @@ pub fn run() -> Outcome {
         ),
     );
 
-    match game.child.wait() {
+    match game.wait() {
         Ok(status) => {
             let result = format!("Exited with status: {status}");
             let level = if status.success() {
