@@ -758,9 +758,12 @@ snippet with click-and-drag, extend it with Shift-click, select a visual row
 with double-click, or select everything with Ctrl+A / Cmd+A. Copy uses Ctrl+C /
 Cmd+C when there is a highlight, or the context-menu Copy action. Context-menu
 Copy with no highlight copies the currently shown log. Escape clears the
-highlight. Dragging a highlight into another application is not supported:
-Slint 1.17 `DragArea` only transfers data inside the process, so the viewer
-does not start an OS drag.
+highlight. Dragging a highlight to drop it elsewhere is not offered. Slint 1.17
+`DragArea` starts an in-process drag and sets the cursor to `NoDrop` until a
+`DropArea` in the same window accepts it. That cursor appears as soon as the
+drag begins, still inside DRHL, because the log viewer has no drop target. The
+winit backend also does not start an OS drag, so the same gesture cannot deliver
+text to another application. Copy remains Ctrl+C / Cmd+C or the context menu.
 
 Selection must not replace the virtualized colored `ListView` with one
 multi-line `TextInput`. A single input lays out the whole file, drops per-line
