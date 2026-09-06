@@ -693,8 +693,8 @@ The game may need explicit support to load mods cleanly. Until then, the launche
 
 `Logs` should include:
 
-- a recent in-app launcher log view
-- a game-session log view with a session list
+- a recent in-app launcher log view, labeled with the displayed logical line count
+- a game-session log view with a session list showing started time, version and duration
 - selection and copy of a snippet from either view
 - a refresh action
 - an action to open the logs directory
@@ -736,9 +736,12 @@ The launcher provides an in-app log viewer in `Settings > Logs` with separate
 launcher and game-session views, plus actions to open a selected session or the
 logs directory in the platform file manager. Game log lines use the five DRH
 severity levels: `DEBUG`, `INFO`, `WARN`, `ERROR` and `FATAL`. Completed session
-entries show the game version, duration and compressed file size. Opening a
-compressed session externally creates an uncompressed copy in the system
-temporary directory so it can be handled by a regular text editor.
+entries show the game version and duration. The selected session's viewer header
+shows its logical line count and on-disk file size. The launcher log viewer
+shows at most the last 24 KiB of `launcher.log` and labels that window as a
+recent extract when the file is larger. Opening a compressed session externally
+creates an uncompressed copy in the system temporary directory so it can be
+handled by a regular text editor.
 
 The log viewer measures its available layout width using the bundled Hack
 monospace font used for display, then splits logical lines into fixed-height

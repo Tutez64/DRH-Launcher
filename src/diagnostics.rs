@@ -35,6 +35,15 @@ pub fn launcher_log_file(install_dir: &Path) -> std::path::PathBuf {
     paths::launcher_log_file(install_dir)
 }
 
+pub(crate) const LAUNCHER_LOG_VIEW_MAX_BYTES: usize = 24 * 1024;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecentLauncherLog {
+    pub text: String,
+    pub truncated: bool,
+    pub has_entries: bool,
+}
+
 pub fn write(install_dir: &Path, level: LogLevel, message: &str) -> Result<(), String> {
     let log_file = launcher_log_file(install_dir);
     if let Some(parent) = log_file.parent() {
@@ -58,12 +67,10 @@ pub fn write(install_dir: &Path, level: LogLevel, message: &str) -> Result<(), S
     .map_err(|error| format!("Could not write {}: {error}", log_file.display()))
 }
 
-pub fn read_recent(install_dir: &Path) -> Result<String, String> {
-    const MAX_BYTES: usize = 24 * 1024;
-
+pub fn read_recent(install_dir: &Path) -> Result<RecentLauncherLog, String> {
     let log_file = launcher_log_file(install_dir);
     if !log_file.exists() {
-        return Ok("No log entries yet.".to_string());
+        return Ok(empty_launcher_log());
     }
 
     let mut file = OpenOptions::new()
@@ -75,26 +82,39 @@ pub fn read_recent(install_dir: &Path) -> Result<String, String> {
         .metadata()
         .map_err(|error| format!("Could not inspect {}: {error}", log_file.display()))?
         .len();
-    if len > MAX_BYTES as u64 {
+    let truncated = len > LAUNCHER_LOG_VIEW_MAX_BYTES as u64;
+    if truncated {
         use std::io::Seek;
-        file.seek(std::io::SeekFrom::Start(len - MAX_BYTES as u64))
-            .map_err(|error| format!("Could not seek {}: {error}", log_file.display()))?;
+        file.seek(std::io::SeekFrom::Start(
+            len - LAUNCHER_LOG_VIEW_MAX_BYTES as u64,
+        ))
+        .map_err(|error| format!("Could not seek {}: {error}", log_file.display()))?;
     }
 
     let mut contents = String::new();
     file.read_to_string(&mut contents)
         .map_err(|error| format!("Could not read {}: {error}", log_file.display()))?;
 
-    if len > MAX_BYTES as u64
-        && let Some((_, rest)) = contents.split_once('\n')
-    {
+    if truncated && let Some((_, rest)) = contents.split_once('\n') {
         contents = rest.to_string();
     }
 
     if contents.trim().is_empty() {
-        Ok("No log entries yet.".to_string())
+        Ok(empty_launcher_log())
     } else {
-        Ok(contents)
+        Ok(RecentLauncherLog {
+            text: contents,
+            truncated,
+            has_entries: true,
+        })
+    }
+}
+
+fn empty_launcher_log() -> RecentLauncherLog {
+    RecentLauncherLog {
+        text: "No log entries yet.".to_string(),
+        truncated: false,
+        has_entries: false,
     }
 }
 
@@ -146,6 +166,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
@@ -170,8 +191,10 @@ mod tests {
 
         let log = read_recent(temp.path()).unwrap();
 
-        assert!(log.contains("[INFO] Launcher started"));
-        assert!(log.contains("[ERROR] Could not check releases"));
+        assert!(log.has_entries);
+        assert!(!log.truncated);
+        assert!(log.text.contains("[INFO] Launcher started"));
+        assert!(log.text.contains("[ERROR] Could not check releases"));
     }
 
     #[test]
@@ -180,7 +203,26 @@ mod tests {
 
         let log = read_recent(temp.path()).unwrap();
 
-        assert_eq!(log, "No log entries yet.");
+        assert_eq!(log, empty_launcher_log());
+    }
+
+    #[test]
+    fn read_recent_returns_only_the_tail_when_the_log_is_large() {
+        let temp = tempdir().unwrap();
+        let log_file = launcher_log_file(temp.path());
+        fs::create_dir_all(log_file.parent().unwrap()).unwrap();
+
+        let mut contents = String::from("DROPPED LINE\n");
+        contents.push_str(&"x".repeat(LAUNCHER_LOG_VIEW_MAX_BYTES));
+        contents.push_str("\nTAIL LINE\n");
+        fs::write(&log_file, contents).unwrap();
+
+        let log = read_recent(temp.path()).unwrap();
+
+        assert!(log.has_entries);
+        assert!(log.truncated);
+        assert!(log.text.contains("TAIL LINE"));
+        assert!(!log.text.contains("DROPPED LINE"));
     }
 
     #[test]

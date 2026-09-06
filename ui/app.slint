@@ -62,6 +62,7 @@ export struct MarkdownBlockView {
 
 component LogViewer inherits Rectangle {
     in property <string> title;
+    in property <string> meta;
     in property <[LogLineView]> lines;
     in property <bool> default-scroll-to-end;
     in property <bool> saved-position-known;
@@ -290,11 +291,26 @@ component LogViewer inherits Rectangle {
                 padding: 12px;
                 spacing: 8px;
 
-                Text {
-                    text: root.title;
-                    color: Theme.text-secondary;
-                    font-size: 12px;
-                    font-weight: 700;
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    Text {
+                        text: root.title;
+                        color: Theme.text-secondary;
+                        font-size: 12px;
+                        font-weight: 700;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                        min-width: 0px;
+                    }
+
+                    if root.meta != "" : Text {
+                        text: root.meta;
+                        color: Theme.text-support;
+                        font-size: 12px;
+                        font-weight: 600;
+                        horizontal-stretch: 0;
+                    }
                 }
 
                 log-pane := Rectangle {
@@ -504,6 +520,8 @@ export component AppWindow inherits Window {
     in property <string> selected-game-log-id;
     in property <string> selected-game-log-title: "No game session selected";
     in property <bool> selected-game-log-enabled: false;
+    in property <string> launcher-log-title: "Launcher log";
+    in property <string> log-meta;
     in property <string> launcher-version;
     in property <bool> launcher-update-visible: false;
     in property <string> launcher-update-status;
@@ -1981,7 +1999,8 @@ export component AppWindow inherits Window {
                             }
 
                             if root.log-source == 0 : LogViewer {
-                                title: "Recent launcher log";
+                                title: root.launcher-log-title;
+                                meta: root.log-meta;
                                 lines: root.log-lines;
                                 default-scroll-to-end: true;
                                 saved-position-known: root.launcher-log-position-known;
@@ -2040,6 +2059,7 @@ export component AppWindow inherits Window {
 
                                 LogViewer {
                                     title: root.selected-game-log-title;
+                                    meta: root.log-meta;
                                     lines: root.log-lines;
                                     default-scroll-to-end: false;
                                     saved-position-known: root.game-log-position-known;

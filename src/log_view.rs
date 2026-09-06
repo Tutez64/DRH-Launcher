@@ -38,12 +38,11 @@ fn refresh_logs_view_impl(ui: &AppWindow, config: &LauncherConfig, refresh_game_
                 ui.set_selected_game_log_enabled(false);
                 ui.set_selected_game_log_title("Could not list game sessions".into());
                 ui.set_selected_game_log_id("".into());
-                let lines = if ui.get_log_source() == 0 {
-                    log_lines(config, wrap_columns)
+                if ui.get_log_source() == 0 {
+                    show_launcher_log(ui, config, wrap_columns);
                 } else {
-                    log_lines_from_text(&error, wrap_columns)
-                };
-                set_log_lines_if_changed(ui, lines);
+                    show_log_text(ui, &error, "", wrap_columns);
+                }
                 return;
             }
         };
@@ -64,7 +63,7 @@ fn refresh_logs_view_impl(ui: &AppWindow, config: &LauncherConfig, refresh_game_
 
     if ui.get_log_source() == 0 {
         ui.set_selected_game_log_enabled(sessions.row_count() != 0);
-        set_log_lines_if_changed(ui, log_lines(config, wrap_columns));
+        show_launcher_log(ui, config, wrap_columns);
         return;
     }
 
@@ -78,12 +77,11 @@ fn refresh_logs_view_impl(ui: &AppWindow, config: &LauncherConfig, refresh_game_
         ui.set_selected_game_log_enabled(false);
         ui.set_selected_game_log_title("No game sessions yet".into());
         ui.set_selected_game_log_id("".into());
-        set_log_lines_if_changed(
+        show_log_text(
             ui,
-            log_lines_from_text(
-                "Game session logs will appear here after launching DRH.",
-                wrap_columns,
-            ),
+            "Game session logs will appear here after launching DRH.",
+            "",
+            wrap_columns,
         );
         return;
     };
@@ -91,15 +89,83 @@ fn refresh_logs_view_impl(ui: &AppWindow, config: &LauncherConfig, refresh_game_
     let session = sessions
         .row_data(selected_index)
         .expect("selected game log disappeared from its model");
-    let content = game_logs::path_for_session_id(&install_dir, session.id.as_str())
+    let loaded = game_logs::path_for_session_id(&install_dir, session.id.as_str())
         .ok_or_else(|| format!("Game session log no longer exists: {}", session.id))
-        .and_then(|path| game_logs::read(&path))
-        .unwrap_or_else(|error| format!("Could not read game session log: {error}"));
+        .and_then(|path| game_logs::read_with_size(&path));
     ui.set_selected_game_log_index(selected_index as i32);
     ui.set_selected_game_log_enabled(true);
     ui.set_selected_game_log_title(session.title.clone());
     ui.set_selected_game_log_id(session.id.clone());
-    set_log_lines_if_changed(ui, log_lines_from_text(&content, wrap_columns));
+    match loaded {
+        Ok((content, size)) => show_log_text(
+            ui,
+            &content,
+            &format_game_log_meta(logical_line_count(&content), size),
+            wrap_columns,
+        ),
+        Err(error) => show_log_text(ui, &error, "", wrap_columns),
+    }
+}
+
+fn show_launcher_log(ui: &AppWindow, config: &LauncherConfig, wrap_columns: usize) {
+    match diagnostics::read_recent(&config.effective_install_dir()) {
+        Ok(log) => {
+            let title = if log.truncated && log.has_entries {
+                "Recent launcher log"
+            } else {
+                "Launcher log"
+            };
+            let meta = if log.has_entries {
+                format_launcher_log_meta(logical_line_count(&log.text), log.truncated)
+            } else {
+                String::new()
+            };
+            ui.set_launcher_log_title(title.into());
+            show_log_text(ui, &log.text, &meta, wrap_columns);
+        }
+        Err(error) => {
+            ui.set_launcher_log_title("Launcher log".into());
+            show_log_text(
+                ui,
+                &format!("Could not read launcher log: {error}"),
+                "",
+                wrap_columns,
+            );
+        }
+    }
+}
+
+fn show_log_text(ui: &AppWindow, text: &str, meta: &str, wrap_columns: usize) {
+    ui.set_log_meta(meta.into());
+    set_log_lines_if_changed(ui, log_lines_from_text(text, wrap_columns));
+}
+
+fn logical_line_count(text: &str) -> usize {
+    text.lines().count()
+}
+
+fn format_line_count(count: usize) -> String {
+    if count == 1 {
+        "1 line".to_string()
+    } else {
+        format!("{count} lines")
+    }
+}
+
+fn format_launcher_log_meta(count: usize, truncated: bool) -> String {
+    if truncated {
+        format!("last {}", format_line_count(count))
+    } else {
+        format_line_count(count)
+    }
+}
+
+fn format_game_log_meta(count: usize, size: u64) -> String {
+    format!(
+        "{} · {}",
+        format_line_count(count),
+        game_logs::format_file_size(size)
+    )
 }
 
 fn session_list_label(count: usize) -> String {
@@ -161,13 +227,6 @@ pub(crate) fn saved_game_log_position(
     session_id: &str,
 ) -> Option<LogViewportPosition> {
     positions.get(session_id).copied()
-}
-
-fn log_lines(config: &LauncherConfig, wrap_columns: usize) -> Vec<LogLineView> {
-    let install_dir = config.effective_install_dir();
-    let content = diagnostics::read_recent(&install_dir)
-        .unwrap_or_else(|error| format!("Could not read launcher log: {error}"));
-    log_lines_from_text(&content, wrap_columns)
 }
 
 fn log_lines_from_text(content: &str, wrap_columns: usize) -> Vec<LogLineView> {
@@ -353,6 +412,26 @@ mod tests {
     fn formats_game_session_list_label_with_count() {
         assert_eq!(session_list_label(0), "Game sessions (0)");
         assert_eq!(session_list_label(3), "Game sessions (3)");
+    }
+
+    #[test]
+    fn counts_logical_log_lines_not_display_wraps() {
+        assert_eq!(logical_line_count(""), 0);
+        assert_eq!(logical_line_count("one"), 1);
+        assert_eq!(logical_line_count("one\n"), 1);
+        assert_eq!(logical_line_count("one\ntwo\nthree"), 3);
+        assert_eq!(log_lines_from_text("abcdefghij", 5).len(), 2);
+        assert_eq!(logical_line_count("abcdefghij"), 1);
+    }
+
+    #[test]
+    fn formats_launcher_and_game_log_file_meta() {
+        assert_eq!(format_launcher_log_meta(42, false), "42 lines");
+        assert_eq!(format_launcher_log_meta(1, false), "1 line");
+        assert_eq!(format_launcher_log_meta(187, true), "last 187 lines");
+        assert_eq!(format_launcher_log_meta(1, true), "last 1 line");
+        assert_eq!(format_game_log_meta(1847, 1024), "1847 lines · 1.0 KiB");
+        assert_eq!(format_game_log_meta(1, 80), "1 line · 80 B");
     }
 
     #[test]

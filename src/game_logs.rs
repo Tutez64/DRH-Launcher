@@ -153,13 +153,8 @@ pub fn path_for_external_open(path: &Path) -> Result<PathBuf, String> {
 
 fn session_entry(path: PathBuf) -> Result<GameSessionEntry, String> {
     if is_compressed_path(&path) {
-        let size = fs::metadata(&path)
-            .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
-            .len();
         let contents = read(&path)?;
-        return Ok(session_entry_from_sections(
-            path, size, &contents, &contents,
-        ));
+        return Ok(session_entry_from_sections(path, &contents, &contents));
     }
 
     let mut file =
@@ -172,15 +167,10 @@ fn session_entry(path: PathBuf) -> Result<GameSessionEntry, String> {
     let tail_offset = size.saturating_sub(8 * 1024);
     let tail = read_file_section(&mut file, tail_offset, 8 * 1024, &path)?;
 
-    Ok(session_entry_from_sections(path, size, &header, &tail))
+    Ok(session_entry_from_sections(path, &header, &tail))
 }
 
-fn session_entry_from_sections(
-    path: PathBuf,
-    size: u64,
-    header: &str,
-    tail: &str,
-) -> GameSessionEntry {
+fn session_entry_from_sections(path: PathBuf, header: &str, tail: &str) -> GameSessionEntry {
     let started = header_value(header, "Started: ").unwrap_or_else(|| {
         session_name(&path)
             .and_then(|name| name.into_string().ok())
@@ -192,8 +182,15 @@ fn session_entry_from_sections(
     GameSessionEntry {
         path,
         title: started,
-        detail: format!("{version} · {duration} · {}", format_file_size(size)),
+        detail: format!("{version} · {duration}"),
     }
+}
+
+pub fn read_with_size(path: &Path) -> Result<(String, u64), String> {
+    let size = fs::metadata(path)
+        .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
+        .len();
+    Ok((read(path)?, size))
 }
 
 fn read_file_section(
@@ -378,7 +375,7 @@ fn format_duration(duration: Duration) -> String {
     }
 }
 
-fn format_file_size(bytes: u64) -> String {
+pub(crate) fn format_file_size(bytes: u64) -> String {
     if bytes >= 1024 * 1024 {
         format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
     } else if bytes >= 1024 {
@@ -404,10 +401,13 @@ mod tests {
 
         let sessions = list(temp.path()).unwrap();
         let contents = read(&compressed_path).unwrap();
+        let (view_text, size) = read_with_size(&compressed_path).unwrap();
 
         assert_eq!(sessions.len(), 1);
-        assert!(sessions[0].detail.starts_with("V9 · 0s · "));
+        assert_eq!(sessions[0].detail, "V9 · 0s");
         assert_eq!(sessions[0].path, compressed_path);
+        assert_eq!(view_text, contents);
+        assert_eq!(size, fs::metadata(&compressed_path).unwrap().len());
         assert!(!session.path.exists());
         assert_eq!(
             compressed_path
@@ -428,7 +428,7 @@ mod tests {
         let sessions = list(temp.path()).unwrap();
 
         assert_eq!(sessions.len(), 1);
-        assert!(sessions[0].detail.starts_with("V9 · in progress · "));
+        assert_eq!(sessions[0].detail, "V9 · in progress");
         assert_eq!(sessions[0].path, session.path);
     }
 
