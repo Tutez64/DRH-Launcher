@@ -21,6 +21,8 @@ pub struct LauncherConfig {
     pub game_args: Vec<String>,
     #[serde(default)]
     pub hide_official_ownership_notice: bool,
+    #[serde(default = "default_hide_haxe_iteratee_log_lines")]
+    pub hide_haxe_iteratee_log_lines: bool,
 }
 
 impl Default for LauncherConfig {
@@ -34,12 +36,17 @@ impl Default for LauncherConfig {
             frame_rate: FrameRatePreference::default(),
             game_args: Vec::new(),
             hide_official_ownership_notice: false,
+            hide_haxe_iteratee_log_lines: default_hide_haxe_iteratee_log_lines(),
         }
     }
 }
 
 pub fn default_download_cache_limit() -> usize {
     3
+}
+
+fn default_hide_haxe_iteratee_log_lines() -> bool {
+    true
 }
 
 impl LauncherConfig {
@@ -450,5 +457,23 @@ mod tests {
 
         assert_eq!(config.frame_rate, FrameRatePreference::default());
         assert!(!config.hide_official_ownership_notice);
+        assert!(config.hide_haxe_iteratee_log_lines);
+    }
+
+    #[test]
+    fn explicit_false_keeps_haxe_iteratee_lines_visible() {
+        let config: LauncherConfig = serde_json::from_str(
+            r#"{
+                "install_dir": null,
+                "channel": "stable",
+                "download_cache_limit": 3,
+                "pre_launch_command": "",
+                "game_args": [],
+                "hide_haxe_iteratee_log_lines": false
+            }"#,
+        )
+        .unwrap();
+
+        assert!(!config.hide_haxe_iteratee_log_lines);
     }
 }

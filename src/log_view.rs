@@ -26,6 +26,7 @@ fn refresh_logs_view_impl(ui: &AppWindow, config: &LauncherConfig, refresh_game_
         ui.get_game_log_wrap_columns()
     }
     .max(20) as usize;
+    ui.set_hide_haxe_iteratee_log_lines(config.hide_haxe_iteratee_log_lines);
     let install_dir = config.effective_install_dir();
 
     if refresh_game_sessions {
@@ -97,12 +98,14 @@ fn refresh_logs_view_impl(ui: &AppWindow, config: &LauncherConfig, refresh_game_
     ui.set_selected_game_log_title(session.title.clone());
     ui.set_selected_game_log_id(session.id.clone());
     match loaded {
-        Ok((content, size)) => show_log_text(
-            ui,
-            &content,
-            &format_game_log_meta(logical_line_count(&content), size),
-            wrap_columns,
-        ),
+        Ok((content, size)) => {
+            let visible = visible_game_log_lines(&content, config.hide_haxe_iteratee_log_lines);
+            show_log_lines(
+                ui,
+                log_lines_from_logical_lines(visible.iter().copied(), wrap_columns),
+                &format_game_log_meta(visible.len(), size),
+            );
+        }
         Err(error) => show_log_text(ui, &error, "", wrap_columns),
     }
 }
@@ -136,8 +139,26 @@ fn show_launcher_log(ui: &AppWindow, config: &LauncherConfig, wrap_columns: usiz
 }
 
 fn show_log_text(ui: &AppWindow, text: &str, meta: &str, wrap_columns: usize) {
+    show_log_lines(ui, log_lines_from_text(text, wrap_columns), meta);
+}
+
+fn show_log_lines(ui: &AppWindow, lines: Vec<LogLineView>, meta: &str) {
     ui.set_log_meta(meta.into());
-    set_log_lines_if_changed(ui, log_lines_from_text(text, wrap_columns));
+    set_log_lines_if_changed(ui, lines);
+}
+
+const HAXE_ITERATEE_WARNING: &str =
+    "FIXME: Null value passed as an iteratee for for-in/for-each expression!";
+
+fn is_haxe_iteratee_warning(line: &str) -> bool {
+    line.contains(HAXE_ITERATEE_WARNING)
+}
+
+fn visible_game_log_lines(content: &str, hide_haxe_iteratee_warnings: bool) -> Vec<&str> {
+    content
+        .lines()
+        .filter(|line| !hide_haxe_iteratee_warnings || !is_haxe_iteratee_warning(line))
+        .collect()
 }
 
 fn logical_line_count(text: &str) -> usize {
@@ -230,8 +251,15 @@ pub(crate) fn saved_game_log_position(
 }
 
 fn log_lines_from_text(content: &str, wrap_columns: usize) -> Vec<LogLineView> {
-    content
-        .lines()
+    log_lines_from_logical_lines(content.lines(), wrap_columns)
+}
+
+fn log_lines_from_logical_lines<'a, I>(lines: I, wrap_columns: usize) -> Vec<LogLineView>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    lines
+        .into_iter()
         .flat_map(|line| {
             let color = log_line_color(line);
             split_display_line(line, wrap_columns)
@@ -432,6 +460,28 @@ mod tests {
         assert_eq!(format_launcher_log_meta(1, true), "last 1 line");
         assert_eq!(format_game_log_meta(1847, 1024), "1847 lines · 1.0 KiB");
         assert_eq!(format_game_log_meta(1, 80), "1 line · 80 B");
+    }
+
+    #[test]
+    fn hides_haxe_iteratee_warnings_without_mentioning_them() {
+        let content = concat!(
+            "=== Dungeon Rampage Haxe session ===\n",
+            "FIXME: Null value passed as an iteratee for for-in/for-each expression!\n",
+            "[INFO] Game started\n",
+            "prefix FIXME: Null value passed as an iteratee for for-in/for-each expression!\n",
+            "[WARN] something else\n",
+        );
+
+        assert_eq!(
+            visible_game_log_lines(content, true),
+            vec![
+                "=== Dungeon Rampage Haxe session ===",
+                "[INFO] Game started",
+                "[WARN] something else",
+            ]
+        );
+        assert_eq!(visible_game_log_lines(content, false).len(), 5);
+        assert!(!is_haxe_iteratee_warning("FIXME: something else"));
     }
 
     #[test]

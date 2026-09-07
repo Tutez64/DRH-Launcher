@@ -1583,6 +1583,27 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
+        ui.unwrap()
+            .on_set_hide_haxe_iteratee_log_lines(move |hide| {
+                let Some(ui) = ui.upgrade() else {
+                    return;
+                };
+
+                let mut config = config.borrow_mut();
+                config.hide_haxe_iteratee_log_lines = hide;
+                if let Err(error) = config.save() {
+                    let message =
+                        format!("Could not save Haxe iteratee warning visibility: {error}");
+                    log_for_config(&config, diagnostics::LogLevel::Error, &message);
+                    set_status_message(&ui, &message);
+                }
+                refresh_log_content(&ui, &config);
+            });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
         let game_log_positions = Rc::clone(&game_log_positions);
         ui.unwrap().on_select_game_log(move |index| {
             let Some(ui) = ui.upgrade() else {
@@ -2692,6 +2713,7 @@ fn refresh_settings_view(ui: &AppWindow, config: &LauncherConfig, save_text: &st
     ui.set_download_cache_limit_error("".into());
     ui.set_hide_official_ownership_notice(config.hide_official_ownership_notice);
     ui.set_saved_hide_official_ownership_notice(config.hide_official_ownership_notice);
+    ui.set_hide_haxe_iteratee_log_lines(config.hide_haxe_iteratee_log_lines);
 }
 
 fn install_folder_path_text(config: &LauncherConfig) -> String {

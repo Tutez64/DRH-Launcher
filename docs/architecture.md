@@ -695,6 +695,7 @@ The game may need explicit support to load mods cleanly. Until then, the launche
 
 - a recent in-app launcher log view, labeled with the displayed logical line count
 - a game-session log view with a session list showing started time, version and duration
+- a display-settings control in the game-session viewer header, with `Hide Haxe warnings` on by default, that omits DRH's repeated Haxe iteratee FIXME lines from the session viewer only
 - selection and copy of a snippet from either view
 - a refresh action
 - an action to open the logs directory
@@ -736,12 +737,15 @@ The launcher provides an in-app log viewer in `Settings > Logs` with separate
 launcher and game-session views, plus actions to open a selected session or the
 logs directory in the platform file manager. Game log lines use the five DRH
 severity levels: `DEBUG`, `INFO`, `WARN`, `ERROR` and `FATAL`. Completed session
-entries show the game version and duration. The selected session's viewer header
-shows its logical line count and on-disk file size. The launcher log viewer
-shows at most the last 24 KiB of `launcher.log` and labels that window as a
-recent extract when the file is larger. Opening a compressed session externally
-creates an uncompressed copy in the system temporary directory so it can be
-handled by a regular text editor.
+entries show the game version and duration. The selected session's viewer footer
+shows the displayed logical line count and on-disk file size. Display options
+live in the viewer header. By default the session viewer hides DRH's repeated
+Haxe iteratee FIXME lines (`hide_haxe_iteratee_log_lines`, on unless turned
+off). That filter is a view option only: the session file is not rewritten. The launcher log viewer shows at
+most the last 24 KiB of `launcher.log` and labels that window as a recent
+extract when the file is larger. Opening a compressed session externally creates
+an uncompressed copy in the system temporary directory so it can be handled by a
+regular text editor.
 
 The log viewer measures its available layout width using the bundled Hack
 monospace font used for display, then splits logical lines into fixed-height
@@ -777,9 +781,10 @@ keeps its smooth scrolling. While a drag is held outside the pane, auto-scroll
 speed increases with distance from the edge.
 
 Copied text is reconstructed from the selected visual rows but must match the
-underlying log: wrap continuations are concatenated without inserting extra
-newlines. Sharing a snippet therefore looks like the file, not like the wrapped
-display.
+currently shown log: wrap continuations are concatenated without inserting extra
+newlines, and hidden Haxe iteratee warnings are omitted. Sharing a snippet
+therefore looks like the displayed log, not like the wrapped display. The
+session file on disk is unchanged; `Open selected file` exposes the raw log.
 
 Launcher log writes should be best-effort: failure to write diagnostics must not
 break install, update or launch flows. A game-session log must be created before

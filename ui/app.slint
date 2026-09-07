@@ -2,6 +2,7 @@ import { ListView, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import {
     AppLineEdit,
+    CompactCheck,
     CompactMetricBlock,
     DiscreteSlider,
     GameSessionButton,
@@ -63,6 +64,8 @@ export struct MarkdownBlockView {
 component LogViewer inherits Rectangle {
     in property <string> title;
     in property <string> meta;
+    in property <bool> show-display-settings: false;
+    in property <bool> hide-haxe-iteratee-log-lines: true;
     in property <[LogLineView]> lines;
     in property <bool> default-scroll-to-end;
     in property <bool> saved-position-known;
@@ -72,6 +75,8 @@ component LogViewer inherits Rectangle {
     callback wrap-columns-measured(int);
     callback viewport-position-changed(length, bool);
     callback copy-requested(int, int, int, int) -> string;
+    callback set-hide-haxe-iteratee-log-lines(bool);
+    property <bool> display-settings-open: false;
     property <int> reported-wrap-columns: 0;
     property <bool> restoring-position: true;
     property <int> stable-restore-ticks: 0;
@@ -110,6 +115,7 @@ component LogViewer inherits Rectangle {
         root.stable-restore-ticks = 0;
         root.selecting = false;
         root.menu-open = false;
+        root.display-settings-open = false;
         root.clear-selection();
     }
 
@@ -281,6 +287,10 @@ component LogViewer inherits Rectangle {
                     return accept;
                 }
                 if (event.text == Key.Escape) {
+                    if (root.display-settings-open) {
+                        root.display-settings-open = false;
+                        return accept;
+                    }
                     root.clear-selection();
                     return accept;
                 }
@@ -288,6 +298,8 @@ component LogViewer inherits Rectangle {
             }
 
             VerticalLayout {
+                width: 100%;
+                height: 100%;
                 padding: 12px;
                 spacing: 8px;
 
@@ -302,14 +314,31 @@ component LogViewer inherits Rectangle {
                         overflow: elide;
                         horizontal-stretch: 1;
                         min-width: 0px;
+                        vertical-alignment: center;
                     }
 
-                    if root.meta != "" : Text {
-                        text: root.meta;
-                        color: Theme.text-support;
-                        font-size: 12px;
-                        font-weight: 600;
-                        horizontal-stretch: 0;
+                    if root.show-display-settings : display-settings-button := Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: root.display-settings-open || settings-touch.has-hover ? Theme.accent-warm : Theme.border-accent-muted;
+                        background: root.display-settings-open ? Theme.surface-selected : settings-touch.pressed ? Theme.surface-pressed : settings-touch.has-hover ? Theme.surface-accent : Theme.surface-raised;
+
+                        Image {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            width: 16px;
+                            height: 16px;
+                            source: @image-url("icons/settings.svg");
+                            image-fit: contain;
+                        }
+
+                        settings-touch := TouchArea {
+                            clicked => {
+                                root.display-settings-open = !root.display-settings-open;
+                            }
+                        }
                     }
                 }
 
@@ -424,6 +453,13 @@ component LogViewer inherits Rectangle {
                     }
                 }
 
+                if root.meta != "" : Text {
+                    text: root.meta;
+                    color: Theme.text-support;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+
                 restore-scroll-position := Timer {
                     interval: 16ms;
                     running: root.restoring-position;
@@ -475,6 +511,54 @@ component LogViewer inherits Rectangle {
                     }
                 }
             }
+
+            if root.display-settings-open : TouchArea {
+                z: 5;
+                x: 0px;
+                y: 0px;
+                width: 100%;
+                height: 100%;
+                clicked => {
+                    root.display-settings-open = false;
+                }
+            }
+
+            if root.display-settings-open : Rectangle {
+                z: 10;
+                x: max(12px, parent.width - self.width - 12px);
+                y: 44px;
+                width: min(320px, parent.width - 24px);
+                height: display-settings-content.preferred-height;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: Theme.border-accent-muted;
+                background: Theme.surface-raised;
+                drop-shadow-blur: 12px;
+                drop-shadow-offset-y: 4px;
+                drop-shadow-color: Theme.shadow-strong;
+
+                TouchArea {}
+
+                display-settings-content := VerticalLayout {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    CompactCheck {
+                        text: "Hide Haxe warnings";
+                        checked: root.hide-haxe-iteratee-log-lines;
+                        toggled(checked) => {
+                            root.set-hide-haxe-iteratee-log-lines(checked);
+                        }
+                    }
+
+                    Text {
+                        text: "DRH prints a Haxe iteratee FIXME thousands of times per session. Hidden here by default. The log file is unchanged; Open selected file still shows the raw output.";
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
         }
     }
 }
@@ -522,6 +606,7 @@ export component AppWindow inherits Window {
     in property <bool> selected-game-log-enabled: false;
     in property <string> launcher-log-title: "Launcher log";
     in property <string> log-meta;
+    in-out property <bool> hide-haxe-iteratee-log-lines: true;
     in property <string> launcher-version;
     in property <bool> launcher-update-visible: false;
     in property <string> launcher-update-status;
@@ -645,6 +730,7 @@ export component AppWindow inherits Window {
     callback cancel-selected-drh-version-install();
     callback select-log-source(int);
     callback select-game-log(int);
+    callback set-hide-haxe-iteratee-log-lines(bool);
     callback log-wrap-columns-measured(int, int);
     callback copy-log-selection(int, int, int, int) -> string;
     callback increment-download-cache-limit();
@@ -2060,6 +2146,8 @@ export component AppWindow inherits Window {
                                 LogViewer {
                                     title: root.selected-game-log-title;
                                     meta: root.log-meta;
+                                    show-display-settings: true;
+                                    hide-haxe-iteratee-log-lines: root.hide-haxe-iteratee-log-lines;
                                     lines: root.log-lines;
                                     default-scroll-to-end: false;
                                     saved-position-known: root.game-log-position-known;
@@ -2079,6 +2167,9 @@ export component AppWindow inherits Window {
                                     copy-requested(a-line, a-col, c-line, c-col) => {
                                         return root.copy-log-selection(a-line, a-col, c-line, c-col);
                                     }
+                                    set-hide-haxe-iteratee-log-lines(hide) => {
+                                        root.set-hide-haxe-iteratee-log-lines(hide);
+                                    }
                                 }
                             }
 
@@ -2086,6 +2177,7 @@ export component AppWindow inherits Window {
                                 spacing: 10px;
 
                                 SecondaryButton {
+                                    horizontal-stretch: 1;
                                     text: "Open logs folder";
                                     enabled: root.open-logs-folder-enabled;
                                     clicked => {
@@ -2094,6 +2186,7 @@ export component AppWindow inherits Window {
                                 }
 
                                 if root.log-source == 1 : SecondaryButton {
+                                    horizontal-stretch: 1;
                                     text: "Open selected file";
                                     enabled: root.selected-game-log-enabled;
                                     clicked => {
@@ -2102,6 +2195,7 @@ export component AppWindow inherits Window {
                                 }
 
                                 SecondaryButton {
+                                    horizontal-stretch: 1;
                                     text: "Refresh";
                                     enabled: root.open-logs-folder-enabled;
                                     clicked => {

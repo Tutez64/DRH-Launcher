@@ -1052,6 +1052,57 @@ export component SegmentedButton inherits Rectangle {
     }
 }
 
+export component CompactCheck inherits Rectangle {
+    in property <string> text;
+    in property <bool> checked;
+    callback toggled(bool);
+
+    height: 38px;
+    width: layout.preferred-width;
+    background: transparent;
+
+    layout := HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+        padding-top: 10px;
+        padding-bottom: 10px;
+
+        Rectangle {
+            width: 18px;
+            height: 18px;
+            border-radius: 3px;
+            border-width: 2px;
+            border-color: root.checked ? Theme.accent-warm : touch.has-hover ? Theme.border-accent-muted : Theme.border-neutral;
+            background: root.checked ? Theme.accent-primary : transparent;
+
+            Text {
+                visible: root.checked;
+                text: "✓";
+                color: Theme.text-on-accent;
+                font-size: 13px;
+                font-weight: 800;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: root.checked ? Theme.text-primary : Theme.text-muted;
+            font-size: 13px;
+            font-weight: root.checked ? 700 : 600;
+            wrap: no-wrap;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.toggled(!root.checked);
+        }
+    }
+}
+
 export component LaunchOptionToggle inherits Rectangle {
     in property <string> text;
     in property <bool> checked;
