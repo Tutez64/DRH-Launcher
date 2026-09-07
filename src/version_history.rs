@@ -434,10 +434,7 @@ fn selected_drh_version_detail(entry: &PlatformReleaseHistoryEntry, status: &str
     match &entry.platform_release {
         Some(release) => {
             parts.push(format!("Asset: {}", release.asset.name));
-            parts.push(format!(
-                "Size: {}",
-                bytes::format_bytes(release.asset.size)
-            ));
+            parts.push(format!("Size: {}", bytes::format_bytes(release.asset.size)));
             parts.push(release_manifest_detail(entry.manifest_available));
         }
         None if entry.manifest_available => {

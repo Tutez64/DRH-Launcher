@@ -4,32 +4,21 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::config::LauncherConfig;
-use crate::home_view::{refresh_home_state, set_status_message};
-use crate::install_state::InstallState;
+use crate::home_view::{HomeMessage, apply_playing_home_state, refresh_home_state};
 use crate::log_view::refresh_logs_view;
-use crate::{AppWindow, diagnostics, game_launch, game_logs, log_for_config, paths};
+use crate::{AppWindow, diagnostics, game_launch, game_logs, log_for_config};
 use slint::{ComponentHandle, Timer, TimerMode};
 
 const GAME_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-pub(crate) fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
-    let install_dir = config.effective_install_dir();
-    let status = crate::game_install::inspect_install(Some(&install_dir));
-
-    ui.set_install_status(InstallState::Playing.status_text().into());
-    ui.set_install_action_text(InstallState::Playing.primary_action().into());
-    ui.set_install_action_enabled(true);
-    ui.set_version_status(status.version_text().into());
-    ui.set_update_check_text("Check for updates".into());
-    ui.set_update_check_enabled(false);
-    ui.set_open_install_folder_enabled(install_dir.exists());
-    ui.set_open_logs_folder_enabled(
-        paths::logs_dir(&install_dir).exists() || paths::launcher_log_file(&install_dir).exists(),
-    );
-    ui.set_restore_previous_enabled(false);
-    ui.set_reinstall_current_enabled(false);
+pub(crate) fn refresh_playing_state(
+    ui: &AppWindow,
+    config: &LauncherConfig,
+    message: HomeMessage,
+    stopping: bool,
+) {
+    apply_playing_home_state(ui, config, message, stopping);
     refresh_logs_view(ui, config);
-    set_status_message(ui, message);
 }
 
 pub(crate) fn start_game_monitor(
@@ -73,7 +62,7 @@ pub(crate) fn start_game_monitor(
                 let _ = ui.window().hide();
                 return;
             }
-            refresh_home_state(&ui, &config, &message);
+            refresh_home_state(&ui, &config, home_message_from_process_result(&message));
             refresh_logs_view(&ui, &config);
         }
     });
@@ -109,9 +98,7 @@ pub(crate) fn finalize_exited_game(
 ) -> Option<String> {
     let taken = {
         let mut process = game_process.borrow_mut();
-        let Some(game) = process.as_mut() else {
-            return None;
-        };
+        let game = process.as_mut()?;
         match game.try_wait() {
             Ok(Some(status)) => Some((process.take().expect("running game disappeared"), status)),
             _ => None,
@@ -294,14 +281,14 @@ fn finish_game_stop(
             if quit_when_finished {
                 let _ = ui.window().hide();
             } else {
-                refresh_home_state(&ui, config, &message);
+                refresh_home_state(&ui, config, home_message_from_process_result(&message));
                 refresh_logs_view(&ui, config);
             }
         }
         Err(error) => {
             log_for_config(config, diagnostics::LogLevel::Error, &error);
             if process_is_running(game_process) {
-                refresh_playing_state(&ui, config, &error);
+                refresh_playing_state(&ui, config, HomeMessage::error(&error), false);
                 start_game_monitor(
                     Rc::clone(game_monitor),
                     ui.as_weak(),
@@ -310,10 +297,22 @@ fn finish_game_stop(
                 );
             } else {
                 let _ = finalize_exited_game(game_process, game_monitor, config);
-                refresh_home_state(&ui, config, &error);
+                refresh_home_state(&ui, config, HomeMessage::error(&error));
             }
             ui.set_close_confirmation_busy(false);
             ui.set_close_confirmation_error(error.into());
         }
+    }
+}
+
+fn home_message_from_process_result(message: &str) -> HomeMessage {
+    if message.starts_with("DRH exited ") {
+        HomeMessage::Exited
+    } else if message.starts_with("DRH stopped.") {
+        HomeMessage::Stopped
+    } else if message.starts_with("Could not ") {
+        HomeMessage::error(message)
+    } else {
+        HomeMessage::Ready
     }
 }

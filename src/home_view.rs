@@ -1,7 +1,6 @@
 use std::sync::Mutex;
 
 use crate::config::LauncherConfig;
-use crate::diagnostics;
 use crate::github_releases::PlatformRelease;
 use crate::home_notices;
 use crate::install_state::InstallState;
@@ -21,6 +20,65 @@ static LATEST_RELEASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 const HOME_ERROR_MAX_LEN: usize = 80;
 const HOME_ERROR_LOGS_SUFFIX: &str = " See Settings → Logs for details.";
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum HomeMessage {
+    Ready,
+    Running,
+    Progress(String),
+    Installed { version: String },
+    Stopped,
+    Exited,
+    ConfigWarning(String),
+    Notice(String),
+    Error(String),
+    UpdateCheckFailed,
+}
+
+impl HomeMessage {
+    pub(crate) fn progress(text: impl Into<String>) -> Self {
+        Self::Progress(text.into())
+    }
+
+    pub(crate) fn error(text: impl Into<String>) -> Self {
+        Self::Error(text.into())
+    }
+
+    pub(crate) fn notice(text: impl Into<String>) -> Self {
+        Self::Notice(text.into())
+    }
+
+    fn support_text(&self, _version_text: &str) -> Option<String> {
+        match self {
+            Self::Ready | Self::Running => None,
+            Self::Progress(text) => Some(text.clone()),
+            Self::Installed { version } => Some(format!("Installed {version}.")),
+            Self::Stopped => Some("DRH has stopped.".to_string()),
+            Self::Exited => Some("DRH exited.".to_string()),
+            Self::ConfigWarning(warning) => Some(format!("Configuration warning: {warning}")),
+            Self::Notice(text) => Some(text.clone()),
+            Self::Error(text) => Some(format_home_error_message(text)),
+            Self::UpdateCheckFailed => Some(
+                "Could not check for updates; installed DRH can still be launched.".to_string(),
+            ),
+        }
+    }
+
+    fn uses_release_overlay(&self) -> bool {
+        matches!(
+            self,
+            Self::Ready | Self::Running | Self::Installed { .. } | Self::Stopped | Self::Exited
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HomeActivity {
+    Idle,
+    CheckingUpdates,
+    Updating,
+    Playing { stopping: bool },
+}
+
 pub(crate) struct HomeViewState {
     pub(crate) install_status: String,
     pub(crate) install_action_text: String,
@@ -37,24 +95,36 @@ pub(crate) struct HomeViewState {
     pub(crate) reinstall_current_text: String,
 }
 
-pub(crate) fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
-    let state = home_view_state_from_cache(config, message);
+pub(crate) fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: HomeMessage) {
+    let state = home_view_state_from_cache(config, HomeActivity::Idle, &message);
     apply_home_view_state(ui, state);
     home_notices::apply_home_notices_view(ui, config);
     apply_player_count_view(ui);
 }
 
-pub(crate) fn apply_updating_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
-    let version_text =
-        game_install::inspect_install(Some(&config.effective_install_dir())).version_text();
-    ui.set_install_status(InstallState::Updating.status_text().into());
-    ui.set_version_status(version_text.clone().into());
-    ui.set_home_support_text(home_support_text(&version_text, message).into());
-    ui.set_install_action_text(InstallState::Updating.primary_action().into());
-    ui.set_install_action_enabled(false);
-    ui.set_update_check_enabled(false);
-    ui.set_restore_previous_enabled(false);
-    ui.set_reinstall_current_enabled(false);
+pub(crate) fn apply_updating_home_state(
+    ui: &AppWindow,
+    config: &LauncherConfig,
+    message: impl Into<String>,
+) {
+    let state = home_view_state_from_cache(
+        config,
+        HomeActivity::Updating,
+        &HomeMessage::progress(message),
+    );
+    apply_home_view_state(ui, state);
+    home_notices::apply_home_notices_view(ui, config);
+    apply_player_count_view(ui);
+}
+
+pub(crate) fn apply_playing_home_state(
+    ui: &AppWindow,
+    config: &LauncherConfig,
+    message: HomeMessage,
+    stopping: bool,
+) {
+    let state = home_view_state_from_cache(config, HomeActivity::Playing { stopping }, &message);
+    apply_home_view_state(ui, state);
     home_notices::apply_home_notices_view(ui, config);
     apply_player_count_view(ui);
 }
@@ -67,9 +137,13 @@ pub(crate) fn remember_latest_drh_release(release: &PlatformRelease) {
     *lock_latest_known_drh_release() = Some(release.clone());
 }
 
-pub(crate) fn home_view_state_from_cache(config: &LauncherConfig, message: &str) -> HomeViewState {
+pub(crate) fn home_view_state_from_cache(
+    config: &LauncherConfig,
+    activity: HomeActivity,
+    message: &HomeMessage,
+) -> HomeViewState {
     let latest_release = cached_latest_drh_release();
-    home_view_state(config, latest_release.as_ref(), message)
+    home_view_state(config, latest_release.as_ref(), activity, message)
 }
 
 pub(crate) fn official_update_warning(config: &LauncherConfig) -> String {
@@ -145,24 +219,19 @@ pub(crate) fn installed_active_release_version(config: &LauncherConfig) -> Optio
 pub(crate) fn home_view_state(
     config: &LauncherConfig,
     latest_release: Option<&PlatformRelease>,
-    message: &str,
+    activity: HomeActivity,
+    message: &HomeMessage,
 ) -> HomeViewState {
     let install_dir = config.effective_install_dir();
     let status = game_install::inspect_install(Some(&install_dir));
     let version_status = status.version_text();
-    let activity_message = status
-        .reason
-        .as_deref()
-        .filter(|reason| !reason.is_empty())
-        .filter(|_| message == "Ready.")
-        .unwrap_or(message);
 
     let mut state = HomeViewState {
         install_status: status.status_text(),
         install_action_text: status.state.primary_action().to_string(),
         install_action_enabled: true,
         version_status: version_status.clone(),
-        home_support_text: home_support_text(&version_status, activity_message),
+        home_support_text: version_status.clone(),
         update_check_text: "Check for updates".to_string(),
         update_check_enabled: true,
         open_install_folder_enabled: install_dir.exists(),
@@ -174,11 +243,71 @@ pub(crate) fn home_view_state(
         reinstall_current_text: reinstall_current_version_text(config),
     };
 
-    if let Some(release) = latest_release {
+    let show_release_overlay =
+        matches!(activity, HomeActivity::Idle | HomeActivity::CheckingUpdates)
+            && (message.uses_release_overlay()
+                || (*message == HomeMessage::UpdateCheckFailed && latest_release.is_some()));
+
+    let mut used_overlay = false;
+    if show_release_overlay && let Some(release) = latest_release {
         apply_release_to_home_view_state(&mut state, config, &status, release);
+        used_overlay = true;
     }
 
+    if !used_overlay
+        && *message == HomeMessage::UpdateCheckFailed
+        && status.state == InstallState::Installed
+    {
+        state.install_status = InstallState::LaunchableButMaybeOutdated
+            .status_text()
+            .to_string();
+        state.install_action_text = InstallState::LaunchableButMaybeOutdated
+            .primary_action()
+            .to_string();
+        state.home_support_text = HomeMessage::UpdateCheckFailed
+            .support_text(&version_status)
+            .expect("update-check failure has support text");
+        used_overlay = true;
+    }
+
+    if !used_overlay {
+        if let Some(text) = message.support_text(&version_status) {
+            state.home_support_text = text;
+        } else if *message == HomeMessage::Ready
+            && let Some(reason) = status.reason.as_deref().filter(|reason| !reason.is_empty())
+        {
+            state.home_support_text = format_home_error_message(reason);
+        }
+    }
+
+    apply_activity(&mut state, activity);
     state
+}
+
+fn apply_activity(state: &mut HomeViewState, activity: HomeActivity) {
+    match activity {
+        HomeActivity::Idle => {}
+        HomeActivity::CheckingUpdates => {
+            state.update_check_enabled = false;
+            state.update_check_text = "Checking...".to_string();
+        }
+        HomeActivity::Updating => {
+            state.install_status = InstallState::Updating.status_text().to_string();
+            state.install_action_text = InstallState::Updating.primary_action().to_string();
+            state.install_action_enabled = false;
+            state.update_check_enabled = false;
+            state.restore_previous_enabled = false;
+            state.reinstall_current_enabled = false;
+        }
+        HomeActivity::Playing { stopping } => {
+            state.install_status = InstallState::Playing.status_text().to_string();
+            state.install_action_text = InstallState::Playing.primary_action().to_string();
+            state.install_action_enabled = !stopping;
+            state.update_check_enabled = false;
+            state.restore_previous_enabled = false;
+            state.reinstall_current_enabled = false;
+        }
+    }
 }
 
 fn apply_release_to_home_view_state(
@@ -248,55 +377,12 @@ pub(crate) fn apply_home_view_state(ui: &AppWindow, state: HomeViewState) {
     ui.set_reinstall_current_text(state.reinstall_current_text.into());
 }
 
-pub(crate) fn set_status_message(ui: &AppWindow, message: &str) {
+pub(crate) fn set_status_message(ui: &AppWindow, message: HomeMessage) {
     let version_text = ui.get_version_status();
-    ui.set_home_support_text(home_support_text(&version_text, message).into());
-}
-
-pub(crate) fn home_support_text(version_text: &str, message: &str) -> String {
-    if message.starts_with("Ready.") || message.starts_with("Running.") {
-        return version_text.to_string();
-    }
-
-    if message.starts_with("Configuration warning: ") {
-        return message.to_string();
-    }
-
-    if message.starts_with("DRH is not installed yet.")
-        || message.starts_with("DRH cannot be launched from --play:")
-        || message.starts_with("DRH update available before --play:")
-    {
-        return message.to_string();
-    }
-
-    if is_progress_message(message) {
-        return message.to_string();
-    }
-
-    if let Some(installed_version) = message
-        .strip_prefix("Installed ")
-        .and_then(|message| message.split_once('.').map(|(version, _)| version))
-    {
-        return format!("Installed {installed_version}.");
-    }
-
-    if message.starts_with("Latest known version: ") {
-        return message.to_string();
-    }
-
-    if message.starts_with("DRH stopped.") {
-        return "DRH has stopped.".to_string();
-    }
-
-    if message.starts_with("DRH exited ") {
-        return "DRH exited.".to_string();
-    }
-
-    if diagnostics::is_operation_error_message(message) {
-        return format_home_error_message(message);
-    }
-
-    version_text.to_string()
+    let text = message
+        .support_text(&version_text)
+        .unwrap_or(version_text.to_string());
+    ui.set_home_support_text(text.into());
 }
 
 fn format_home_error_message(message: &str) -> String {
@@ -331,19 +417,6 @@ fn truncate_at_word_boundary(message: &str, max_len: usize) -> &str {
         .unwrap_or(&message[..end])
 }
 
-fn is_progress_message(message: &str) -> bool {
-    message.starts_with("Checking ")
-        || message.starts_with("Preparing download ")
-        || message.starts_with("Downloading ")
-        || message.starts_with("Verifying download")
-        || message.starts_with("Extracting archive")
-        || message.starts_with("Installing files")
-        || message.starts_with("Installing ")
-        || message.starts_with("Repairing ")
-        || message.starts_with("Reinstalling ")
-        || message.starts_with("Stopping ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,8 +442,26 @@ mod tests {
         let message = "Could not open logs folder: denied";
 
         assert_eq!(
-            home_support_text("Version: V1", message),
-            format!("{message}.{HOME_ERROR_LOGS_SUFFIX}")
+            HomeMessage::error(message)
+                .support_text("Version: V1")
+                .as_deref(),
+            Some("Could not open logs folder: denied. See Settings → Logs for details.")
+        );
+    }
+
+    #[test]
+    fn ready_and_progress_messages_do_not_use_prefix_matching() {
+        assert_eq!(HomeMessage::Ready.support_text("Version: V1"), None);
+        assert_eq!(
+            HomeMessage::progress("Extracting archive...").support_text("Version: V1"),
+            Some("Extracting archive...".to_string())
+        );
+        assert_eq!(
+            HomeMessage::Installed {
+                version: "V2".to_string()
+            }
+            .support_text("Version: V1"),
+            Some("Installed V2.".to_string())
         );
     }
 
@@ -413,16 +504,30 @@ mod tests {
             ..LauncherConfig::default()
         };
 
-        let without_cache = home_view_state_from_cache(&config, "Ready.");
+        let without_cache =
+            home_view_state_from_cache(&config, HomeActivity::Idle, &HomeMessage::Ready);
         assert_eq!(without_cache.install_action_text, "Play");
 
         remember_latest_drh_release(&test_release("V10"));
-        let with_cache = home_view_state_from_cache(&config, "Restored previous version V9.");
+        let with_cache =
+            home_view_state_from_cache(&config, HomeActivity::Idle, &HomeMessage::Ready);
         assert_eq!(with_cache.install_action_text, "Update");
         assert_eq!(
             with_cache.install_status,
             InstallState::UpdateAvailable.status_text()
         );
+
+        let error_state = home_view_state_from_cache(
+            &config,
+            HomeActivity::Idle,
+            &HomeMessage::error("Could not restore previous version: denied"),
+        );
+        assert!(
+            error_state
+                .home_support_text
+                .starts_with("Could not restore previous version")
+        );
+        assert!(!error_state.home_support_text.contains("Update available"));
 
         *lock_latest_known_drh_release() = None;
     }

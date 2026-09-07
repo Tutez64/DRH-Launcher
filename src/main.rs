@@ -63,8 +63,8 @@ use github_releases::{
 };
 use home_notices::apply_home_notices_view;
 use home_view::{
-    apply_home_view_state, apply_player_count_view, apply_updating_home_state,
-    cached_latest_drh_release, home_view_state, home_view_state_from_cache,
+    HomeActivity, HomeMessage, apply_home_view_state, apply_player_count_view,
+    apply_updating_home_state, home_view_state, home_view_state_from_cache,
     installed_active_release_version, refresh_home_state, remember_latest_drh_release,
     set_status_message,
 };
@@ -187,14 +187,14 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     );
 
     steam_status::refresh_status();
-    let initial_home_message = startup_notice
-        .or_else(|| {
-            config_load_warning
-                .as_ref()
-                .map(|warning| format!("Configuration warning: {warning}"))
-        })
-        .unwrap_or_else(|| format!("Ready. Release source: {}", release_source.label()));
-    refresh_home_state(&ui, &config.borrow(), &initial_home_message);
+    let initial_home_message = if let Some(notice) = startup_notice {
+        HomeMessage::Notice(notice)
+    } else if let Some(warning) = &config_load_warning {
+        HomeMessage::ConfigWarning(warning.clone())
+    } else {
+        HomeMessage::Ready
+    };
+    refresh_home_state(&ui, &config.borrow(), initial_home_message);
     log_for_config(
         &config.borrow(),
         diagnostics::LogLevel::Info,
@@ -229,7 +229,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             let mut config = config.borrow_mut();
             if process_is_running(&game_process) {
                 game_monitor.stop();
-                refresh_playing_state(&ui, &config, "Stopping DRH...");
+                refresh_playing_state(&ui, &config, HomeMessage::progress("Stopping DRH..."), true);
                 ui.set_install_action_enabled(false);
                 begin_game_stop(
                     Rc::clone(&game_stop_timer),
@@ -241,8 +241,8 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 );
                 return;
             }
-            if let Some(message) = finalize_exited_game(&game_process, &game_monitor, &config) {
-                refresh_home_state(&ui, &config, &message);
+            if finalize_exited_game(&game_process, &game_monitor, &config).is_some() {
+                refresh_home_state(&ui, &config, HomeMessage::Exited);
                 refresh_logs_view(&ui, &config);
                 return;
             }
@@ -254,7 +254,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     refresh_home_state(
                         &ui,
                         &config,
-                        &format!("Could not save configuration: {error}"),
+                        HomeMessage::error(format!("Could not save configuration: {error}")),
                     );
                     return;
                 }
@@ -267,7 +267,11 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     diagnostics::LogLevel::Warn,
                     "No install directory selected.",
                 );
-                refresh_home_state(&ui, &config, "No install directory selected.");
+                refresh_home_state(
+                    &ui,
+                    &config,
+                    HomeMessage::error("No install directory selected."),
+                );
                 return;
             };
 
@@ -309,7 +313,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                             ),
                         );
                         game_process.borrow_mut().replace(game);
-                        refresh_playing_state(&ui, &config, "Running.");
+                        refresh_playing_state(&ui, &config, HomeMessage::Running, false);
                         start_game_monitor(
                             Rc::clone(&game_monitor),
                             ui.as_weak(),
@@ -319,7 +323,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     }
                     Err(error) => {
                         log_for_config(&config, diagnostics::LogLevel::Error, &error);
-                        refresh_home_state(&ui, &config, &error);
+                        refresh_home_state(&ui, &config, HomeMessage::error(&error));
                     }
                 }
                 return;
@@ -418,10 +422,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 .and_then(|folder| open_folder(&folder));
 
             match result {
-                Ok(()) => set_status_message(&ui, "Application folder opened."),
+                Ok(()) => set_status_message(&ui, HomeMessage::Ready),
                 Err(error) => {
                     log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
-                    set_status_message(&ui, &format!("Could not open application folder: {error}"));
+                    set_status_message(
+                        &ui,
+                        HomeMessage::error(format!("Could not open application folder: {error}")),
+                    );
                 }
             }
         });
@@ -621,14 +628,14 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             if process_is_running(&game_process) {
                 let message = "Stop DRH before restoring the previous version.";
                 log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
-                refresh_home_state(&ui, &config.borrow(), message);
+                refresh_home_state(&ui, &config.borrow(), HomeMessage::notice(message));
                 return;
             }
 
             let Some(install_dir) = config.borrow().install_dir.clone() else {
                 let message = "No install directory selected.";
                 log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
-                refresh_home_state(&ui, &config.borrow(), message);
+                refresh_home_state(&ui, &config.borrow(), HomeMessage::error(message));
                 return;
             };
 
@@ -651,12 +658,12 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         installed_launch_options.as_ref(),
                         "Save",
                     );
-                    refresh_home_state(&ui, &config.borrow(), &message);
+                    refresh_home_state(&ui, &config.borrow(), HomeMessage::Ready);
                 }
                 Err(error) => {
                     let message = format!("Could not restore previous version: {error}");
                     log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &message);
-                    refresh_home_state(&ui, &config.borrow(), &message);
+                    refresh_home_state(&ui, &config.borrow(), HomeMessage::error(message));
                 }
             }
         });
@@ -676,14 +683,14 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             if process_is_running(&game_process) {
                 let message = "Stop DRH before reinstalling the current version.";
                 log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
-                refresh_home_state(&ui, &config.borrow(), message);
+                refresh_home_state(&ui, &config.borrow(), HomeMessage::notice(message));
                 return;
             }
 
             let Some(install_dir) = config.borrow().install_dir.clone() else {
                 let message = "No install directory selected.";
                 log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
-                refresh_home_state(&ui, &config.borrow(), message);
+                refresh_home_state(&ui, &config.borrow(), HomeMessage::error(message));
                 return;
             };
 
@@ -725,10 +732,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             };
 
             match open_config_folder() {
-                Ok(()) => set_status_message(&ui, "Config folder opened."),
+                Ok(()) => set_status_message(&ui, HomeMessage::Ready),
                 Err(error) => {
                     log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
-                    set_status_message(&ui, &format!("Could not open config folder: {error}"));
+                    set_status_message(
+                        &ui,
+                        HomeMessage::error(format!("Could not open config folder: {error}")),
+                    );
                 }
             }
         });
@@ -776,7 +786,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 );
                 set_status_message(
                     &ui,
-                    "Download cache limit must be a non-negative whole number.",
+                    HomeMessage::error("Download cache limit must be a non-negative whole number."),
                 );
                 return;
             };
@@ -806,17 +816,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                             }
                             refresh_settings_view(&ui, &config, "Saved successfully");
                             apply_home_notices_view(&ui, &config);
-                            if removed.is_empty() {
-                                set_status_message(&ui, "Download cache limit saved.");
-                            } else {
-                                set_status_message(
-                                    &ui,
-                                    &format!(
-                                        "Download cache limit saved. Removed {} cached archive(s).",
-                                        removed.len()
-                                    ),
-                                );
-                            }
+                            set_status_message(&ui, HomeMessage::Ready);
                         }
                         Some(Err(error)) => {
                             log_for_config(&config, diagnostics::LogLevel::Error, &error);
@@ -824,22 +824,22 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                             apply_home_notices_view(&ui, &config);
                             set_status_message(
                                 &ui,
-                                &format!(
+                                HomeMessage::error(format!(
                                     "Download cache limit saved, but cache pruning failed: {error}"
-                                ),
+                                )),
                             );
                         }
                         None => {
                             refresh_settings_view(&ui, &config, "Saved successfully");
                             apply_home_notices_view(&ui, &config);
-                            set_status_message(&ui, "Download cache limit saved.");
+                            set_status_message(&ui, HomeMessage::Ready);
                         }
                     }
                 }
                 Err(error) => {
                     let message = format!("Could not save download cache limit: {error}");
                     log_for_config(&config, diagnostics::LogLevel::Error, &message);
-                    set_status_message(&ui, &message);
+                    set_status_message(&ui, home_message_from_status(&message));
                 }
             }
         });
@@ -905,7 +905,10 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     Ok(frame_rate) => frame_rate,
                     Err(error) => {
                         ui.set_game_frame_rate_error(error.clone().into());
-                        set_status_message(&ui, &format!("Invalid frame rate: {error}"));
+                        set_status_message(
+                            &ui,
+                            HomeMessage::error(format!("Invalid frame rate: {error}")),
+                        );
                         return;
                     }
                 };
@@ -1070,11 +1073,14 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         diagnostics::LogLevel::Info,
                         "Install folder opened.",
                     );
-                    set_status_message(&ui, "Install folder opened.");
+                    set_status_message(&ui, HomeMessage::Ready);
                 }
                 Err(error) => {
                     log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
-                    set_status_message(&ui, &format!("Could not open install folder: {error}"))
+                    set_status_message(
+                        &ui,
+                        HomeMessage::error(format!("Could not open install folder: {error}")),
+                    )
                 }
             }
         });
@@ -1093,11 +1099,14 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             match open_logs_folder(&install_dir) {
                 Ok(()) => {
                     refresh_logs_view(&ui, &config.borrow());
-                    set_status_message(&ui, "Logs folder opened.");
+                    set_status_message(&ui, HomeMessage::Ready);
                 }
                 Err(error) => {
                     log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
-                    set_status_message(&ui, &format!("Could not open logs folder: {error}"))
+                    set_status_message(
+                        &ui,
+                        HomeMessage::error(format!("Could not open logs folder: {error}")),
+                    )
                 }
             }
         });
@@ -1342,7 +1351,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             let release_url =
                 selected_version_release_url(&ui, &drh_version_history, &launcher_version_history);
             let Some(release_url) = release_url else {
-                set_status_message(&ui, "No release selected.");
+                set_status_message(&ui, HomeMessage::error("No release selected."));
                 return;
             };
 
@@ -1380,17 +1389,20 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             if process_is_running(&game_process) {
                 let message = "Stop DRH before installing another version.";
                 log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, message);
-                set_status_message(&ui, message);
+                set_status_message(&ui, HomeMessage::notice(message));
                 return;
             }
 
             let selected = selected_drh_history_entry(&ui, &drh_version_history);
             let Some(selected) = selected else {
-                set_status_message(&ui, "No DRH release selected.");
+                set_status_message(&ui, HomeMessage::error("No DRH release selected."));
                 return;
             };
             if selected.platform_release.is_none() && !selected.manifest_available {
-                set_status_message(&ui, "Selected release is not available for this platform.");
+                set_status_message(
+                    &ui,
+                    HomeMessage::error("Selected release is not available for this platform."),
+                );
                 return;
             }
 
@@ -1424,7 +1436,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     if let Err(error) = config.save() {
                         let message = format!("Could not save configuration: {error}");
                         log_for_config(&config, diagnostics::LogLevel::Error, &message);
-                        set_status_message(&ui, &message);
+                        set_status_message(&ui, home_message_from_status(&message));
                         return;
                     }
                     refresh_settings_view(&ui, &config, "Save");
@@ -1499,7 +1511,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
 
                     finish_install_operation_view(&ui, &event_config, &message);
                     ui.set_refresh_version_history_enabled(true);
-                    set_status_message(&ui, &message);
+                    set_status_message(&ui, home_message_from_status(&message));
                     refresh_version_history_selection(
                         &ui,
                         &event_config,
@@ -1584,7 +1596,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     let message =
                         format!("Could not save Haxe iteratee warning visibility: {error}");
                     log_for_config(&config, diagnostics::LogLevel::Error, &message);
-                    set_status_message(&ui, &message);
+                    set_status_message(&ui, home_message_from_status(&message));
                 }
                 refresh_log_content(&ui, &config);
             });
@@ -1649,13 +1661,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             };
 
             let Some(install_dir) = config.borrow().install_dir.clone() else {
-                set_status_message(&ui, "No install directory selected.");
+                set_status_message(&ui, HomeMessage::error("No install directory selected."));
                 return;
             };
             let session_id = ui.get_selected_game_log_id();
             let Some(session_path) = game_logs::path_for_session_id(&install_dir, &session_id)
             else {
-                set_status_message(&ui, "No game session selected.");
+                set_status_message(&ui, HomeMessage::error("No game session selected."));
                 return;
             };
 
@@ -1663,16 +1675,16 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 Ok(path) => path,
                 Err(error) => {
                     log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
-                    set_status_message(&ui, &error);
+                    set_status_message(&ui, HomeMessage::error(&error));
                     return;
                 }
             };
 
             match open_file(&open_path) {
-                Ok(()) => set_status_message(&ui, "Game session log opened."),
+                Ok(()) => set_status_message(&ui, HomeMessage::Ready),
                 Err(error) => {
                     log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &error);
-                    set_status_message(&ui, &error);
+                    set_status_message(&ui, HomeMessage::error(&error));
                 }
             }
         });
@@ -1793,12 +1805,12 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                         diagnostics::LogLevel::Info,
                         "Steam store opened.",
                     );
-                    set_status_message(&ui, "Steam store opened.");
+                    set_status_message(&ui, HomeMessage::Ready);
                 }
                 Err(error) => {
                     let message = format!("Could not open Steam store: {error}");
                     log_for_config(&config.borrow(), diagnostics::LogLevel::Error, &message);
-                    set_status_message(&ui, &message);
+                    set_status_message(&ui, home_message_from_status(&message));
                 }
             }
         });
@@ -2617,9 +2629,11 @@ fn start_release_check(
         diagnostics::LogLevel::Info,
         "Checking GitHub releases.",
     );
-    let mut checking_state = home_view_state_from_cache(&config, "Checking GitHub releases...");
-    checking_state.update_check_enabled = false;
-    checking_state.update_check_text = "Checking...".to_string();
+    let checking_state = home_view_state_from_cache(
+        &config,
+        HomeActivity::CheckingUpdates,
+        &HomeMessage::progress("Checking GitHub releases..."),
+    );
     apply_home_view_state(ui, checking_state);
 
     let ui = ui.as_weak();
@@ -2655,26 +2669,18 @@ fn start_release_check(
                     .expect("latest release lock poisoned")
                     .replace(release.clone());
                 remember_latest_drh_release(&release);
-                home_view_state(&event_config, Some(&release), &message)
+                home_view_state(
+                    &event_config,
+                    Some(&release),
+                    HomeActivity::Idle,
+                    &HomeMessage::Ready,
+                )
             } else {
-                let mut state = home_view_state_from_cache(&event_config, &message);
-                if cached_latest_drh_release().is_none()
-                    && matches!(
-                        inspect_install(event_config.install_dir.as_deref()).state,
-                        InstallState::Installed
-                    )
-                {
-                    state.install_status = InstallState::LaunchableButMaybeOutdated
-                        .status_text()
-                        .to_string();
-                    state.install_action_text = InstallState::LaunchableButMaybeOutdated
-                        .primary_action()
-                        .to_string();
-                    state.home_support_text =
-                        "Could not check for updates; installed DRH can still be launched."
-                            .to_string();
-                }
-                state
+                home_view_state_from_cache(
+                    &event_config,
+                    HomeActivity::Idle,
+                    &HomeMessage::UpdateCheckFailed,
+                )
             };
             if ui.get_install_action_text() != InstallState::Playing.primary_action() {
                 apply_home_view_state(&ui, state);
@@ -2721,7 +2727,7 @@ fn log_install_failure(install_dir: &Path, message: &str) {
 fn finish_install_operation_view(ui: &AppWindow, config: &LauncherConfig, message: &str) {
     let installed_launch_options = load_installed_launch_options(config);
     refresh_launch_options_view(ui, config, installed_launch_options.as_ref(), "Save");
-    refresh_home_state(ui, config, message);
+    refresh_home_state(ui, config, home_message_from_status(message));
     ui.set_install_action_enabled(true);
     ui.set_update_check_enabled(true);
     ui.set_update_check_text("Check for updates".into());
@@ -2759,8 +2765,23 @@ fn report_background_activity(
             return;
         };
 
-        set_status_message(&ui, &message);
+        set_status_message(&ui, HomeMessage::progress(message));
     });
+}
+
+fn home_message_from_status(message: &str) -> HomeMessage {
+    if diagnostics::is_operation_error_message(message) {
+        HomeMessage::error(message)
+    } else if let Some(version) = message
+        .strip_prefix("Installed ")
+        .and_then(|message| message.split_once('.').map(|(version, _)| version))
+    {
+        HomeMessage::Installed {
+            version: version.to_string(),
+        }
+    } else {
+        HomeMessage::Ready
+    }
 }
 
 pub(crate) fn invoke_on_event_loop(
@@ -2881,12 +2902,12 @@ fn open_external_link_from_ui(ui: &AppWindow, config: &LauncherConfig, label: &s
                 diagnostics::LogLevel::Info,
                 &format!("{label} link opened."),
             );
-            set_status_message(ui, &format!("{label} link opened."));
+            set_status_message(ui, HomeMessage::Ready);
         }
         Err(error) => {
             let message = format!("Could not open {label} link: {error}");
             log_for_config(config, diagnostics::LogLevel::Error, &message);
-            set_status_message(ui, &message);
+            set_status_message(ui, HomeMessage::error(message));
         }
     }
 }
@@ -2937,49 +2958,9 @@ fn open_config_folder() -> Result<(), String> {
 mod home_support_text_tests {
     use super::*;
     use crate::github_releases::{ReleaseAsset, ReleaseMetadataSource};
-    use crate::home_view::{
-        home_support_text, restore_previous_version_available, restore_previous_version_text,
-    };
+    use crate::home_view::{restore_previous_version_available, restore_previous_version_text};
     use crate::install_metadata::{InstalledRelease, InstalledState};
     use tempfile::tempdir;
-
-    #[test]
-    fn keeps_durable_ready_state_on_version_text() {
-        assert_eq!(home_support_text("Version: V1", "Ready."), "Version: V1");
-        assert_eq!(
-            home_support_text("Version: V1", "Install folder opened."),
-            "Version: V1"
-        );
-    }
-
-    #[test]
-    fn shows_startup_configuration_warning() {
-        assert_eq!(
-            home_support_text(
-                "Version: unknown",
-                "Configuration warning: Could not parse config.json; using defaults"
-            ),
-            "Configuration warning: Could not parse config.json; using defaults"
-        );
-    }
-
-    #[test]
-    fn shows_play_mode_blocker_messages() {
-        assert_eq!(
-            home_support_text(
-                "Version: V1",
-                "DRH update available before --play: installed V1, latest V2. Open DRH Launcher to update or launch manually."
-            ),
-            "DRH update available before --play: installed V1, latest V2. Open DRH Launcher to update or launch manually."
-        );
-        assert_eq!(
-            home_support_text(
-                "Version: unknown",
-                "DRH cannot be launched from --play: Game directory does not exist."
-            ),
-            "DRH cannot be launched from --play: Game directory does not exist."
-        );
-    }
 
     #[test]
     fn appimage_actions_are_blocked_while_game_runs() {
@@ -2990,46 +2971,6 @@ mod home_support_text_tests {
         assert_eq!(
             appimage_running_game_message(2),
             "Stop Dungeon Rampage Haxe before uninstalling DRH Launcher."
-        );
-    }
-
-    #[test]
-    fn shows_progress_messages() {
-        assert_eq!(
-            home_support_text("Version: V1", "Extracting archive..."),
-            "Extracting archive..."
-        );
-        assert_eq!(
-            home_support_text("Version: V1", "Installing files..."),
-            "Installing files..."
-        );
-        assert_eq!(
-            home_support_text("Version: V1", "Installing V3..."),
-            "Installing V3..."
-        );
-        assert_eq!(
-            home_support_text("Version: V1", "Repairing DRH installation..."),
-            "Repairing DRH installation..."
-        );
-        assert_eq!(
-            home_support_text("Version: V1", "Reinstalling current version..."),
-            "Reinstalling current version..."
-        );
-        assert_eq!(
-            home_support_text("Version: V1", "Stopping DRH..."),
-            "Stopping DRH..."
-        );
-    }
-
-    #[test]
-    fn summarizes_terminal_and_error_states() {
-        assert_eq!(
-            home_support_text("Version: V1", "Installed V2."),
-            "Installed V2."
-        );
-        assert_eq!(
-            home_support_text("Version: V1", "Could not open logs folder: denied"),
-            "Could not open logs folder: denied. See Settings → Logs for details."
         );
     }
 
