@@ -143,7 +143,7 @@ fn steam_process_is_running() -> bool {
 
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if snapshot == 0 || snapshot == INVALID_HANDLE_VALUE {
+        if snapshot.is_null() || snapshot == INVALID_HANDLE_VALUE {
             return false;
         }
         let mut entry = std::mem::zeroed::<PROCESSENTRY32W>();
