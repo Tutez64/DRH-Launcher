@@ -809,36 +809,6 @@ export component MarkdownBlock inherits Rectangle {
     }
 }
 
-export component MetricBlock inherits Rectangle {
-    in property <string> label;
-    in property <string> value;
-
-    min-height: 78px;
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
-    background: Theme.surface;
-
-    VerticalLayout {
-        padding: 12px;
-        spacing: 6px;
-
-        Text {
-            text: root.label;
-            font-size: 12px;
-            font-weight: 700;
-            color: Theme.accent-warm;
-        }
-
-        Text {
-            text: root.value;
-            font-size: 15px;
-            color: Theme.text-body;
-            wrap: word-wrap;
-        }
-    }
-}
-
 export component CompactMetricBlock inherits Rectangle {
     in property <string> label;
     in property <string> value;
