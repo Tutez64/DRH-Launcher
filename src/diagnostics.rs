@@ -31,10 +31,6 @@ pub(crate) fn is_operation_error_message(message: &str) -> bool {
         || message.contains("Mismatch")
 }
 
-pub fn launcher_log_file(install_dir: &Path) -> std::path::PathBuf {
-    paths::launcher_log_file(install_dir)
-}
-
 pub(crate) const LAUNCHER_LOG_VIEW_MAX_BYTES: usize = 24 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -45,7 +41,7 @@ pub struct RecentLauncherLog {
 }
 
 pub fn write(install_dir: &Path, level: LogLevel, message: &str) -> Result<(), String> {
-    let log_file = launcher_log_file(install_dir);
+    let log_file = paths::launcher_log_file(install_dir);
     if let Some(parent) = log_file.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Could not create {}: {error}", parent.display()))?;
@@ -68,7 +64,7 @@ pub fn write(install_dir: &Path, level: LogLevel, message: &str) -> Result<(), S
 }
 
 pub fn read_recent(install_dir: &Path) -> Result<RecentLauncherLog, String> {
-    let log_file = launcher_log_file(install_dir);
+    let log_file = paths::launcher_log_file(install_dir);
     if !log_file.exists() {
         return Ok(empty_launcher_log());
     }
@@ -209,7 +205,7 @@ mod tests {
     #[test]
     fn read_recent_returns_only_the_tail_when_the_log_is_large() {
         let temp = tempdir().unwrap();
-        let log_file = launcher_log_file(temp.path());
+        let log_file = paths::launcher_log_file(temp.path());
         fs::create_dir_all(log_file.parent().unwrap()).unwrap();
 
         let mut contents = String::from("DROPPED LINE\n");

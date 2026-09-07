@@ -40,7 +40,7 @@ pub(crate) struct HomeViewState {
 pub(crate) fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
     let state = home_view_state_from_cache(config, message);
     apply_home_view_state(ui, state);
-    apply_home_notices_view(ui, config);
+    home_notices::apply_home_notices_view(ui, config);
     apply_player_count_view(ui);
 }
 
@@ -55,7 +55,7 @@ pub(crate) fn apply_updating_home_state(ui: &AppWindow, config: &LauncherConfig,
     ui.set_update_check_enabled(false);
     ui.set_restore_previous_enabled(false);
     ui.set_reinstall_current_enabled(false);
-    apply_home_notices_view(ui, config);
+    home_notices::apply_home_notices_view(ui, config);
     apply_player_count_view(ui);
 }
 
@@ -79,10 +79,6 @@ pub(crate) fn official_update_warning(config: &LauncherConfig) -> String {
         installed_active_release_version(config).as_deref(),
         latest_known_drh_version().as_deref(),
     )
-}
-
-pub(crate) fn apply_home_notices_view(ui: &AppWindow, config: &LauncherConfig) {
-    home_notices::apply_home_notices_view(ui, config);
 }
 
 pub(crate) fn apply_player_count_view(ui: &AppWindow) {

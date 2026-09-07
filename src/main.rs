@@ -60,11 +60,12 @@ use github_releases::{
     discover_latest_platform_release, discover_latest_platform_release_for_install,
     discover_platform_release_by_tag_for_install, fetch_release_manifest,
 };
+use home_notices::apply_home_notices_view;
 use home_view::{
-    apply_home_notices_view, apply_home_view_state, apply_player_count_view,
-    apply_updating_home_state, cached_latest_drh_release, home_view_state,
-    home_view_state_from_cache, installed_active_release_version, refresh_home_state,
-    remember_latest_drh_release, set_status_message,
+    apply_home_view_state, apply_player_count_view, apply_updating_home_state,
+    cached_latest_drh_release, home_view_state, home_view_state_from_cache,
+    installed_active_release_version, refresh_home_state, remember_latest_drh_release,
+    set_status_message,
 };
 use install_state::InstallState;
 use installer::{
@@ -202,7 +203,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         ),
     );
     if let Some(warning) = &config_load_warning {
-        log_for_config_or_default(&config.borrow(), diagnostics::LogLevel::Warn, warning);
+        log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, warning);
     }
     refresh_logs_view(&ui, &config.borrow());
 
@@ -2706,10 +2707,6 @@ fn ui_download_cache_limit(ui: &AppWindow) -> Result<usize, ()> {
 }
 
 pub(crate) fn log_for_config(config: &LauncherConfig, level: diagnostics::LogLevel, message: &str) {
-    log_for_config_or_default(config, level, message);
-}
-
-fn log_for_config_or_default(config: &LauncherConfig, level: diagnostics::LogLevel, message: &str) {
     let install_dir = config.effective_install_dir();
     let _ = diagnostics::write(&install_dir, level, message);
 }
