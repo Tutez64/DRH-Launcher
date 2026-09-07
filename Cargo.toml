@@ -18,11 +18,18 @@ cargo-packager-updater = "0.2.3"
 directories = "6.0.0"
 flate2 = "1.1.10"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
-pulldown-cmark = "0.13.4"
+pulldown-cmark = { version = "0.13.4", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
-slint = "1.17.1"
+slint = { version = "1.17.1", default-features = false, features = [
+    "std",
+    "backend-default",
+    "renderer-femtovg",
+    "renderer-software",
+    "accessibility",
+    "compat-1-2",
+] }
 steamlocate = "2.1.1"
 tar = "0.4.46"
 zip = { version = "9.0.0-pre3", default-features = false, features = ["deflate"] }
@@ -49,6 +56,7 @@ tempfile = "3.27.0"
 [profile.release]
 codegen-units = 1
 lto = true
+strip = true
 
 [package.metadata.packager]
 product-name = "DRH Launcher"
