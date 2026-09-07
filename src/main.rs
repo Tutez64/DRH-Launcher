@@ -52,7 +52,8 @@ use download::{
 };
 use game_install::inspect_install;
 use game_runtime::{
-    begin_game_stop, process_is_running, refresh_playing_state, start_game_monitor,
+    begin_game_stop, finalize_exited_game, process_is_running, refresh_playing_state,
+    start_game_monitor,
 };
 use github_releases::{
     PlatformRelease, PlatformReleaseHistoryEntry, ReleaseMetadataSource, RepositoryRelease,
@@ -224,42 +225,23 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             }
 
             let mut config = config.borrow_mut();
-            let process_error = {
-                let mut process = game_process.borrow_mut();
-                match process.as_mut() {
-                    Some(game) => match game.try_wait() {
-                        Ok(None) => Some(Ok(())),
-                        Ok(Some(_)) => {
-                            process.take();
-                            game_monitor.stop();
-                            None
-                        }
-                        Err(error) => Some(Err(error.to_string())),
-                    },
-                    None => None,
-                }
-            };
-            if let Some(process_error) = process_error {
-                match process_error {
-                    Ok(()) => {
-                        game_monitor.stop();
-                        refresh_playing_state(&ui, &config, "Stopping DRH...");
-                        ui.set_install_action_enabled(false);
-                        begin_game_stop(
-                            Rc::clone(&game_stop_timer),
-                            ui.as_weak(),
-                            config.clone(),
-                            Rc::clone(&game_process),
-                            Rc::clone(&game_monitor),
-                            false,
-                        );
-                    }
-                    Err(error) => refresh_playing_state(
-                        &ui,
-                        &config,
-                        &format!("Could not inspect DRH process: {error}"),
-                    ),
-                }
+            if process_is_running(&game_process) {
+                game_monitor.stop();
+                refresh_playing_state(&ui, &config, "Stopping DRH...");
+                ui.set_install_action_enabled(false);
+                begin_game_stop(
+                    Rc::clone(&game_stop_timer),
+                    ui.as_weak(),
+                    config.clone(),
+                    Rc::clone(&game_process),
+                    Rc::clone(&game_monitor),
+                    false,
+                );
+                return;
+            }
+            if let Some(message) = finalize_exited_game(&game_process, &game_monitor, &config) {
+                refresh_home_state(&ui, &config, &message);
+                refresh_logs_view(&ui, &config);
                 return;
             }
 
@@ -462,6 +444,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
         let game_process = Rc::clone(&game_process);
+        let game_monitor = Rc::clone(&game_monitor);
         let app_shutting_down = Arc::clone(&app_shutting_down);
         ui.unwrap().on_confirm_appimage_action(move || {
             let Some(ui) = ui.upgrade() else {
@@ -476,6 +459,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 ui.set_appimage_dialog_error(appimage_running_game_message(mode).into());
                 return;
             }
+            let _ = finalize_exited_game(&game_process, &game_monitor, &config.borrow());
 
             ui.set_appimage_dialog_busy(true);
             ui.set_appimage_dialog_error("".into());
@@ -538,6 +522,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
         let game_process = Rc::clone(&game_process);
+        let game_monitor = Rc::clone(&game_monitor);
         let latest_launcher_update = Arc::clone(&latest_launcher_update);
         let app_shutting_down = Arc::clone(&app_shutting_down);
         ui.unwrap().on_launcher_update_action(move || {
@@ -555,6 +540,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 ui.set_launcher_update_status(message.into());
                 return;
             }
+            let _ = finalize_exited_game(&game_process, &game_monitor, &config.borrow());
 
             let update = latest_launcher_update
                 .lock()
@@ -1692,7 +1678,9 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
 
     {
         let ui = ui.as_weak();
+        let config = Rc::clone(&config);
         let game_process = Rc::clone(&game_process);
+        let game_monitor = Rc::clone(&game_monitor);
         let app_shutting_down = Arc::clone(&app_shutting_down);
         ui.unwrap().window().on_close_requested(move || {
             let Some(ui) = ui.upgrade() else {
@@ -1703,15 +1691,16 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 return CloseRequestResponse::KeepWindowShown;
             }
 
-            if !process_is_running(&game_process) {
-                app_shutting_down.store(true, Ordering::Relaxed);
-                return CloseRequestResponse::HideWindow;
+            if process_is_running(&game_process) {
+                ui.set_close_confirmation_error("".into());
+                ui.set_close_confirmation_busy(false);
+                ui.set_close_confirmation_visible(true);
+                return CloseRequestResponse::KeepWindowShown;
             }
 
-            ui.set_close_confirmation_error("".into());
-            ui.set_close_confirmation_busy(false);
-            ui.set_close_confirmation_visible(true);
-            CloseRequestResponse::KeepWindowShown
+            let _ = finalize_exited_game(&game_process, &game_monitor, &config.borrow());
+            app_shutting_down.store(true, Ordering::Relaxed);
+            CloseRequestResponse::HideWindow
         });
     }
 

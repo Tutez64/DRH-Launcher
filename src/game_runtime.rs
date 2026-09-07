@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -9,6 +9,8 @@ use crate::install_state::InstallState;
 use crate::log_view::refresh_logs_view;
 use crate::{AppWindow, diagnostics, game_launch, game_logs, log_for_config, paths};
 use slint::{ComponentHandle, Timer, TimerMode};
+
+const GAME_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(crate) fn refresh_playing_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
     let install_dir = config.effective_install_dir();
@@ -37,7 +39,7 @@ pub(crate) fn start_game_monitor(
     game_process: Rc<RefCell<Option<game_launch::RunningGame>>>,
 ) {
     let timer_handle = Rc::clone(&timer);
-    timer.start(TimerMode::Repeated, Duration::from_secs(1), move || {
+    timer.start(TimerMode::Repeated, GAME_PROCESS_POLL_INTERVAL, move || {
         let finished = {
             let mut process = game_process.borrow_mut();
             let Some(game) = process.as_mut() else {
@@ -48,26 +50,14 @@ pub(crate) fn start_game_monitor(
             match game.try_wait() {
                 Ok(Some(status)) => {
                     let game = process.take().expect("running game disappeared");
-                    let _ = game_logs::finish(
-                        &game.session_log,
-                        &format!("Exited with status: {status}"),
-                    );
-                    Some((
-                        diagnostics::LogLevel::Info,
-                        format!("DRH exited with status: {status}"),
-                    ))
+                    Some(complete_exited_game(game, status))
                 }
                 Ok(None) => None,
                 Err(error) => {
                     let game = process.take().expect("running game disappeared");
-                    let _ = game_logs::finish(
-                        &game.session_log,
-                        &format!("Process inspection failed: {error}"),
-                    );
-                    Some((
-                        diagnostics::LogLevel::Error,
-                        format!("Could not inspect DRH process: {error}"),
-                    ))
+                    let message = format!("Could not inspect DRH process: {error}");
+                    let _ = game_logs::finish(&game.session_log, &message);
+                    Some((diagnostics::LogLevel::Error, message))
                 }
             }
         };
@@ -89,6 +79,10 @@ pub(crate) fn start_game_monitor(
     });
 }
 
+/// Whether a DRH process started by this instance is still running.
+///
+/// This only inspects the tracked handle. It does not take the process or
+/// finalize the session log; the game monitor and Stop path own that.
 pub(crate) fn process_is_running(
     game_process: &Rc<RefCell<Option<game_launch::RunningGame>>>,
 ) -> bool {
@@ -99,30 +93,47 @@ pub(crate) fn process_is_running(
 
     match game.try_wait() {
         Ok(None) => true,
-        Ok(Some(status)) => {
-            let game = process.take().expect("running game disappeared");
-            let _ = game_logs::finish(&game.session_log, &format!("Exited with status: {status}"));
-            if let Some(install_dir) = install_dir_from_session_log(&game.session_log.path) {
-                let _ = diagnostics::write(
-                    &install_dir,
-                    diagnostics::LogLevel::Info,
-                    &format!("DRH exited with status: {status}"),
-                );
-            }
-            false
-        }
+        Ok(Some(_)) => false,
         Err(_) => true,
     }
 }
 
-fn install_dir_from_session_log(session_log: &Path) -> Option<PathBuf> {
-    Some(
-        session_log
-            .parent()?
-            .parent()?
-            .parent()?
-            .parent()?
-            .to_path_buf(),
+/// Finalize a tracked game that has already exited, then stop its monitor.
+///
+/// Used when Home, close, or a restart action cannot wait for the monitor.
+/// Returns the Home message when a session was finalized.
+pub(crate) fn finalize_exited_game(
+    game_process: &Rc<RefCell<Option<game_launch::RunningGame>>>,
+    game_monitor: &Timer,
+    config: &LauncherConfig,
+) -> Option<String> {
+    let taken = {
+        let mut process = game_process.borrow_mut();
+        let Some(game) = process.as_mut() else {
+            return None;
+        };
+        match game.try_wait() {
+            Ok(Some(status)) => Some((process.take().expect("running game disappeared"), status)),
+            _ => None,
+        }
+    };
+    let (game, status) = taken?;
+
+    game_monitor.stop();
+    let (level, message) = complete_exited_game(game, status);
+    log_for_config(config, level, &message);
+    Some(message)
+}
+
+fn complete_exited_game(
+    game: game_launch::RunningGame,
+    status: ExitStatus,
+) -> (diagnostics::LogLevel, String) {
+    let result = format!("Exited with status: {status}");
+    let _ = game_logs::finish(&game.session_log, &result);
+    (
+        diagnostics::LogLevel::Info,
+        format!("DRH exited with status: {status}"),
     )
 }
 
@@ -158,7 +169,7 @@ pub(crate) fn begin_game_stop(
         graceful_error.map(|error| format!("graceful shutdown request failed: {error}"));
     let timer_handle = Rc::clone(&timer);
 
-    timer.start(TimerMode::Repeated, Duration::from_millis(100), move || {
+    timer.start(TimerMode::Repeated, GAME_PROCESS_POLL_INTERVAL, move || {
         let mut failure = None;
         let finished = {
             let mut process = game_process.borrow_mut();
@@ -298,6 +309,7 @@ fn finish_game_stop(
                     Rc::clone(game_process),
                 );
             } else {
+                let _ = finalize_exited_game(game_process, game_monitor, config);
                 refresh_home_state(&ui, config, &error);
             }
             ui.set_close_confirmation_busy(false);
