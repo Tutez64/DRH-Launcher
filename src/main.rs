@@ -2664,22 +2664,8 @@ fn start_release_check(
                     .expect("latest release lock poisoned")
                     .replace(release.clone());
                 remember_latest_drh_release(&release);
-                let installed_launch_options = load_installed_launch_options(&event_config);
-                refresh_launch_options_view(
-                    &ui,
-                    &event_config,
-                    installed_launch_options.as_ref(),
-                    "Save",
-                );
                 home_view_state(&event_config, Some(&release), &message)
             } else {
-                let installed_launch_options = load_installed_launch_options(&event_config);
-                refresh_launch_options_view(
-                    &ui,
-                    &event_config,
-                    installed_launch_options.as_ref(),
-                    "Save",
-                );
                 let mut state = home_view_state_from_cache(&event_config, &message);
                 if cached_latest_drh_release().is_none()
                     && matches!(
