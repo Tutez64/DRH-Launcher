@@ -1,9 +1,17 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 
 use crate::config::LauncherConfig;
-use crate::{AppWindow, GameSessionView, LogLineView, bytes, diagnostics, game_logs};
-use slint::{Brush, Color, Model, ModelRc, VecModel};
+use crate::{
+    AppWindow, GameSessionView, LogLineView, bytes, diagnostics, game_logs, invoke_on_event_loop,
+    log_for_config,
+};
+use slint::{Brush, Color, ComponentHandle, Model, ModelRc, VecModel};
+
+static LEGACY_LOG_MIGRATION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LogViewportPosition {
@@ -17,6 +25,104 @@ pub(crate) fn refresh_logs_view(ui: &AppWindow, config: &LauncherConfig) {
 
 pub(crate) fn refresh_log_content(ui: &AppWindow, config: &LauncherConfig) {
     refresh_logs_view_impl(ui, config, false);
+}
+
+pub(crate) fn start_legacy_session_log_migration(
+    ui: &AppWindow,
+    config: LauncherConfig,
+    app_shutting_down: Arc<AtomicBool>,
+) {
+    refresh_logs_view(ui, &config);
+
+    if LEGACY_LOG_MIGRATION_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let install_dir = config.effective_install_dir();
+    let pending = match game_logs::archives_needing_listing_migration(&install_dir) {
+        Ok(pending) => pending,
+        Err(error) => {
+            LEGACY_LOG_MIGRATION_IN_PROGRESS.store(false, Ordering::SeqCst);
+            log_for_config(
+                &config,
+                diagnostics::LogLevel::Warn,
+                &format!("Could not inspect game session logs for listing metadata: {error}"),
+            );
+            return;
+        }
+    };
+
+    if pending.is_empty() {
+        LEGACY_LOG_MIGRATION_IN_PROGRESS.store(false, Ordering::SeqCst);
+        return;
+    }
+
+    let total = pending.len();
+    ui.set_refresh_logs_enabled(false);
+    ui.set_game_log_migration_status(migration_status(0, total).into());
+    log_for_config(
+        &config,
+        diagnostics::LogLevel::Info,
+        &format!("Rewriting listing metadata for {total} game session log(s)."),
+    );
+
+    let ui = ui.as_weak();
+    thread::spawn(move || {
+        let mut migrated = 0_usize;
+        let mut failed = 0_usize;
+        for (index, path) in pending.iter().enumerate() {
+            match game_logs::migrate_legacy_archive(path) {
+                Ok(_) => migrated += 1,
+                Err(error) => {
+                    failed += 1;
+                    log_for_config(
+                        &config,
+                        diagnostics::LogLevel::Warn,
+                        &format!(
+                            "Could not rewrite listing metadata for {}: {error}",
+                            path.display()
+                        ),
+                    );
+                }
+            }
+
+            let done = index + 1;
+            let ui = ui.clone();
+            invoke_on_event_loop(&config, &app_shutting_down, move || {
+                let Some(ui) = ui.upgrade() else {
+                    return;
+                };
+                ui.set_game_log_migration_status(migration_status(done, total).into());
+            });
+        }
+
+        let summary = if failed == 0 {
+            format!("Rewrote listing metadata for {migrated} game session log(s).")
+        } else {
+            format!("Rewrote listing metadata for {migrated} game session log(s); {failed} failed.")
+        };
+        let level = if failed == 0 {
+            diagnostics::LogLevel::Info
+        } else {
+            diagnostics::LogLevel::Warn
+        };
+        log_for_config(&config, level, &summary);
+
+        let event_config = config.clone();
+        invoke_on_event_loop(&config, &app_shutting_down, move || {
+            LEGACY_LOG_MIGRATION_IN_PROGRESS.store(false, Ordering::SeqCst);
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            ui.set_game_log_migration_status("".into());
+            ui.set_refresh_logs_enabled(true);
+            refresh_logs_view(&ui, &event_config);
+        });
+    });
+}
+
+fn migration_status(done: usize, total: usize) -> String {
+    format!("Migrating session logs: {done}/{total}")
 }
 
 fn refresh_logs_view_impl(ui: &AppWindow, config: &LauncherConfig, refresh_game_sessions: bool) {

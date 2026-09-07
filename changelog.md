@@ -51,6 +51,12 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 ### Improved
 
+- Home uses a 256px DRH icon instead of a 1024px one,
+  which reduces the launcher binary by ~1.3 MiB.
+- Listing game sessions no longer decompresses every completed log.
+  New archives store a small listing prefix.
+  Older archives are rewritten with that prefix the first time
+  **Settings → Logs** is opened, with a progress line so the window stays usable.
 - Home leaves **Stop** much quicker (almost immediately) when DRH exits.
 - **Versions**, **Mods**, and **Settings** no longer repeat the page name as
   an in-page heading.

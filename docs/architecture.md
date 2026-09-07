@@ -740,8 +740,14 @@ standard output and standard error, and the final process result.
 
 Game output is written directly to an uncompressed `.log` while the process is
 running. When the session ends, the launcher appends its result and compresses
-the complete file as an independent Zstandard archive at level 10. The original
-`.log` is removed only after the `.log.zst` has been written successfully.
+the complete file as an independent Zstandard archive at level 10. The archive
+starts with a small zstd skippable frame that stores Started, Version and
+Duration so the session list does not have to decompress the game output. The
+original `.log` is removed only after the `.log.zst` has been written
+successfully. Legacy archives without that prefix are rewritten with one in the
+background the first time Settings > Logs is opened, with a progress line on
+that page. Until that rewrite, other list callers read only the start of the
+decompressed stream.
 An uncompressed `.log` therefore represents an active session or a recoverable
 session whose finalization was interrupted or failed. The viewer handles both
 states. Sessions are not deleted based on their count. Session filenames use

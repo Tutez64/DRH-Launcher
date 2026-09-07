@@ -584,6 +584,8 @@ export component AppWindow inherits Window {
     in property <[LogLineView]> log-lines;
     in property <[GameSessionView]> game-log-sessions;
     in property <string> game-log-sessions-label: "Game sessions";
+    in property <string> game-log-migration-status;
+    in property <bool> refresh-logs-enabled: true;
     in property <[VersionEntryView]> drh-version-entries;
     in property <[VersionEntryView]> launcher-version-entries;
     in property <[MarkdownBlockView]> selected-version-changelog-blocks;
@@ -717,6 +719,7 @@ export component AppWindow inherits Window {
     callback cancel-appimage-dialog();
     callback confirm-appimage-action();
     callback refresh-logs();
+    callback ensure-logs();
     callback ensure-version-history();
     callback refresh-version-history();
     callback select-version-history-source(int);
@@ -763,6 +766,15 @@ export component AppWindow inherits Window {
     changed active-page => {
         root.help-menu-open = false;
         root.info-tooltip-visible = false;
+        if root.active-page == 4 && root.settings-page == 1 {
+            root.ensure-logs();
+        }
+    }
+
+    changed settings-page => {
+        if root.active-page == 4 && root.settings-page == 1 {
+            root.ensure-logs();
+        }
     }
 
     title: "DRH Launcher";
@@ -2070,6 +2082,13 @@ export component AppWindow inherits Window {
                                 }
                             }
 
+                            if root.game-log-migration-status != "" : Text {
+                                text: root.game-log-migration-status;
+                                color: Theme.text-muted;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+
                             if root.log-source == 0 : LogViewer {
                                 title: root.launcher-log-title;
                                 meta: root.log-meta;
@@ -2183,7 +2202,7 @@ export component AppWindow inherits Window {
                                 SecondaryButton {
                                     horizontal-stretch: 1;
                                     text: "Refresh";
-                                    enabled: root.open-logs-folder-enabled;
+                                    enabled: root.open-logs-folder-enabled && root.refresh-logs-enabled;
                                     clicked => {
                                         root.refresh-logs();
                                     }

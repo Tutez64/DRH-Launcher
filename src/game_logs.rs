@@ -1,13 +1,16 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, Read, Seek, Write};
+use std::io::{self, Cursor, Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crate::{diagnostics, paths};
 
 const ZSTD_COMPRESSION_LEVEL: i32 = 10;
+const LISTING_SECTION_BYTES: usize = 8 * 1024;
+const LISTING_FRAME_MAGIC: u32 = 0x184D2A50;
+const LISTING_FRAME_MAX_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct GameSessionLog {
@@ -89,6 +92,30 @@ pub fn finish(session: &GameSessionLog, result: &str) -> Result<PathBuf, String>
 }
 
 pub fn list(install_dir: &Path) -> Result<Vec<GameSessionEntry>, String> {
+    list_with_legacy_migration(install_dir, false)
+}
+
+pub(crate) fn archives_needing_listing_migration(
+    install_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let logs_dir = paths::game_logs_dir(install_dir);
+    if !logs_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut pending = Vec::new();
+    for path in session_paths(&logs_dir)? {
+        if is_compressed_path(&path) && read_listing_frame(&path)?.is_none() {
+            pending.push(path);
+        }
+    }
+    Ok(pending)
+}
+
+fn list_with_legacy_migration(
+    install_dir: &Path,
+    migrate_legacy: bool,
+) -> Result<Vec<GameSessionEntry>, String> {
     let logs_dir = paths::game_logs_dir(install_dir);
     if !logs_dir.exists() {
         return Ok(Vec::new());
@@ -97,7 +124,10 @@ pub fn list(install_dir: &Path) -> Result<Vec<GameSessionEntry>, String> {
     let mut paths = session_paths(&logs_dir)?;
     paths.sort_by(|left, right| right.file_name().cmp(&left.file_name()));
 
-    paths.into_iter().map(session_entry).collect()
+    paths
+        .into_iter()
+        .map(|path| session_entry(path, migrate_legacy))
+        .collect()
 }
 
 pub fn read(path: &Path) -> Result<String, String> {
@@ -151,10 +181,14 @@ pub fn path_for_external_open(path: &Path) -> Result<PathBuf, String> {
     Ok(export_path)
 }
 
-fn session_entry(path: PathBuf) -> Result<GameSessionEntry, String> {
+fn session_entry(path: PathBuf, migrate_legacy: bool) -> Result<GameSessionEntry, String> {
     if is_compressed_path(&path) {
-        let contents = read(&path)?;
-        return Ok(session_entry_from_sections(path, &contents, &contents));
+        let listing = match read_listing_frame(&path)? {
+            Some(listing) => listing,
+            None if migrate_legacy => migrate_legacy_archive(&path)?,
+            None => read_decompressed_prefix(&path, LISTING_SECTION_BYTES)?,
+        };
+        return Ok(session_entry_from_sections(path, &listing, &listing));
     }
 
     let mut file =
@@ -163,9 +197,9 @@ fn session_entry(path: PathBuf) -> Result<GameSessionEntry, String> {
         .metadata()
         .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
         .len();
-    let header = read_file_section(&mut file, 0, 8 * 1024, &path)?;
-    let tail_offset = size.saturating_sub(8 * 1024);
-    let tail = read_file_section(&mut file, tail_offset, 8 * 1024, &path)?;
+    let header = read_file_section(&mut file, 0, LISTING_SECTION_BYTES, &path)?;
+    let tail_offset = size.saturating_sub(LISTING_SECTION_BYTES as u64);
+    let tail = read_file_section(&mut file, tail_offset, LISTING_SECTION_BYTES, &path)?;
 
     Ok(session_entry_from_sections(path, &header, &tail))
 }
@@ -177,7 +211,13 @@ fn session_entry_from_sections(path: PathBuf, header: &str, tail: &str) -> GameS
             .unwrap_or_else(|| "Unknown session".to_string())
     });
     let version = header_value(header, "Version: ").unwrap_or_else(|| "unknown".to_string());
-    let duration = header_value(tail, "Duration: ").unwrap_or_else(|| "in progress".to_string());
+    let duration = header_value(tail, "Duration: ").unwrap_or_else(|| {
+        if is_compressed_path(&path) {
+            "completed".to_string()
+        } else {
+            "in progress".to_string()
+        }
+    });
 
     GameSessionEntry {
         path,
@@ -294,50 +334,185 @@ fn read_bytes(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+fn listing_payload_from_log(path: &Path) -> Result<Vec<u8>, String> {
+    let mut file =
+        File::open(path).map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    let size = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect {}: {error}", path.display()))?
+        .len();
+    let header = read_file_section(&mut file, 0, LISTING_SECTION_BYTES, path)?;
+    let tail = read_file_section(
+        &mut file,
+        size.saturating_sub(LISTING_SECTION_BYTES as u64),
+        LISTING_SECTION_BYTES,
+        path,
+    )?;
+    Ok(listing_payload_from_sections(&header, &tail))
+}
+
+fn listing_payload_from_contents(contents: &str) -> Vec<u8> {
+    listing_payload_from_sections(
+        prefix_bytes(contents, LISTING_SECTION_BYTES),
+        suffix_bytes(contents, LISTING_SECTION_BYTES),
+    )
+}
+
+fn listing_payload_from_sections(header: &str, tail: &str) -> Vec<u8> {
+    let started = header_value(header, "Started: ").unwrap_or_default();
+    let version = header_value(header, "Version: ").unwrap_or_default();
+    let duration = header_value(tail, "Duration: ").unwrap_or_default();
+    format!("Started: {started}\nVersion: {version}\nDuration: {duration}\n").into_bytes()
+}
+
+fn prefix_bytes(contents: &str, max_bytes: usize) -> &str {
+    let mut end = max_bytes.min(contents.len());
+    while end > 0 && !contents.is_char_boundary(end) {
+        end -= 1;
+    }
+    &contents[..end]
+}
+
+fn suffix_bytes(contents: &str, max_bytes: usize) -> &str {
+    if contents.len() <= max_bytes {
+        return contents;
+    }
+    let mut start = contents.len() - max_bytes;
+    while start < contents.len() && !contents.is_char_boundary(start) {
+        start += 1;
+    }
+    &contents[start..]
+}
+
+pub(crate) fn migrate_legacy_archive(path: &Path) -> Result<String, String> {
+    let contents = read(path)?;
+    let listing = listing_payload_from_contents(&contents);
+    let listing_text = String::from_utf8_lossy(&listing).into_owned();
+    let _ = write_zstd_archive(path, &mut Cursor::new(contents.as_bytes()), &listing, true);
+    Ok(listing_text)
+}
+
+fn write_listing_frame(output: &mut impl Write, listing: &[u8]) -> io::Result<()> {
+    output.write_all(&LISTING_FRAME_MAGIC.to_le_bytes())?;
+    output.write_all(&(listing.len() as u32).to_le_bytes())?;
+    output.write_all(listing)?;
+    Ok(())
+}
+
+fn read_listing_frame(path: &Path) -> Result<Option<String>, String> {
+    let mut file =
+        File::open(path).map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    let mut header = [0_u8; 8];
+    let read = file
+        .read(&mut header)
+        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+    if read < 8 {
+        return Ok(None);
+    }
+
+    let magic = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+    if magic & 0xFFFF_FFF0 != LISTING_FRAME_MAGIC {
+        return Ok(None);
+    }
+
+    let size = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+    if size == 0 || size > LISTING_FRAME_MAX_BYTES {
+        return Ok(None);
+    }
+
+    let mut payload = vec![0_u8; size];
+    if file.read_exact(&mut payload).is_err() {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&payload).into_owned()))
+}
+
+fn read_decompressed_prefix(path: &Path, max_bytes: usize) -> Result<String, String> {
+    let file =
+        File::open(path).map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    let mut decoder = zstd::stream::read::Decoder::new(file)
+        .map_err(|error| format!("Could not decompress {}: {error}", path.display()))?;
+    let mut bytes = vec![0_u8; max_bytes];
+    let read = decoder
+        .read(&mut bytes)
+        .map_err(|error| format!("Could not decompress {}: {error}", path.display()))?;
+    Ok(String::from_utf8_lossy(&bytes[..read]).into_owned())
+}
+
 fn compress(path: &Path) -> Result<PathBuf, String> {
     let compressed_path = appended_extension(path, ".zst");
-    let temporary_path = appended_extension(&compressed_path, ".tmp");
+    let listing = listing_payload_from_log(path)?;
+    let mut input =
+        File::open(path).map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    write_zstd_archive(&compressed_path, &mut input, &listing, false)?;
+    if let Err(error) = fs::remove_file(path) {
+        let _ = fs::remove_file(&compressed_path);
+        return Err(format!("Could not remove {}: {error}", path.display()));
+    }
+    Ok(compressed_path)
+}
 
+fn write_zstd_archive(
+    destination: &Path,
+    uncompressed: &mut impl Read,
+    listing: &[u8],
+    overwrite: bool,
+) -> Result<(), String> {
+    if destination.exists() && !overwrite {
+        return Err(format!(
+            "Could not create {}: file already exists",
+            destination.display()
+        ));
+    }
+
+    let temporary_path = appended_extension(destination, ".tmp");
     let result = (|| {
-        let input = File::open(path)
-            .map_err(|error| format!("Could not open {}: {error}", path.display()))?;
-        let output = File::create(&temporary_path)
+        let mut output = File::create(&temporary_path)
             .map_err(|error| format!("Could not create {}: {error}", temporary_path.display()))?;
+        write_listing_frame(&mut output, listing)
+            .map_err(|error| format!("Could not write {}: {error}", temporary_path.display()))?;
         let mut encoder = zstd::stream::write::Encoder::new(output, ZSTD_COMPRESSION_LEVEL)
-            .map_err(|error| format!("Could not compress {}: {error}", path.display()))?;
-        std::io::copy(&mut BufReader::new(input), &mut encoder)
-            .map_err(|error| format!("Could not compress {}: {error}", path.display()))?;
-        let output = encoder
-            .finish()
-            .map_err(|error| format!("Could not finish compressing {}: {error}", path.display()))?;
+            .map_err(|error| format!("Could not compress {}: {error}", destination.display()))?;
+        io::copy(uncompressed, &mut encoder)
+            .map_err(|error| format!("Could not compress {}: {error}", destination.display()))?;
+        let output = encoder.finish().map_err(|error| {
+            format!(
+                "Could not finish compressing {}: {error}",
+                destination.display()
+            )
+        })?;
         output
             .sync_all()
             .map_err(|error| format!("Could not flush {}: {error}", temporary_path.display()))?;
 
-        if compressed_path.exists() {
-            return Err(format!(
-                "Could not create {}: file already exists",
-                compressed_path.display()
-            ));
-        }
-        fs::rename(&temporary_path, &compressed_path).map_err(|error| {
-            format!(
-                "Could not move {} to {}: {error}",
-                temporary_path.display(),
-                compressed_path.display()
-            )
-        })?;
-        if let Err(error) = fs::remove_file(path) {
-            let _ = fs::remove_file(&compressed_path);
-            return Err(format!("Could not remove {}: {error}", path.display()));
-        }
-        Ok(compressed_path.clone())
+        replace_archive(&temporary_path, destination, overwrite)
     })();
 
     if result.is_err() {
         let _ = fs::remove_file(&temporary_path);
     }
     result
+}
+
+fn replace_archive(source: &Path, destination: &Path, overwrite: bool) -> Result<(), String> {
+    if destination.exists() && !overwrite {
+        return Err(format!(
+            "Could not create {}: file already exists",
+            destination.display()
+        ));
+    }
+    #[cfg(not(unix))]
+    if destination.exists() {
+        return replace_file(source, destination);
+    }
+
+    fs::rename(source, destination).map_err(|error| {
+        format!(
+            "Could not move {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })
 }
 
 fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
@@ -408,6 +583,119 @@ mod tests {
         assert!(contents.contains("Command: game --flag"));
         assert!(contents.contains("[INFO] Game started"));
         assert!(contents.contains("Result: Exited with status 0"));
+    }
+
+    #[test]
+    fn lists_legacy_compressed_sessions_without_duration_as_completed() {
+        let temp = tempdir().unwrap();
+        let logs_dir = paths::game_logs_dir(temp.path());
+        fs::create_dir_all(&logs_dir).unwrap();
+        let compressed = logs_dir.join("2026-01-01-00-00-00Z.log.zst");
+        let output = File::create(&compressed).unwrap();
+        let mut encoder =
+            zstd::stream::write::Encoder::new(output, ZSTD_COMPRESSION_LEVEL).unwrap();
+        encoder
+            .write_all(b"=== Dungeon Rampage Haxe session ===\nStarted: 2026-01-01 00:00:00 UTC\nVersion: V9\n--- Game output ---\n")
+            .unwrap();
+        encoder.write_all(&vec![b'x'; 256 * 1024]).unwrap();
+        encoder.finish().unwrap();
+
+        let sessions = list(temp.path()).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].detail, "V9 · completed");
+        assert_eq!(sessions[0].path, compressed);
+    }
+
+    #[test]
+    fn migrates_legacy_archives_to_listing_frames() {
+        let temp = tempdir().unwrap();
+        let logs_dir = paths::game_logs_dir(temp.path());
+        fs::create_dir_all(&logs_dir).unwrap();
+        let compressed = logs_dir.join("2026-01-01-00-00-00Z.log.zst");
+        let output = File::create(&compressed).unwrap();
+        let mut encoder =
+            zstd::stream::write::Encoder::new(output, ZSTD_COMPRESSION_LEVEL).unwrap();
+        encoder
+            .write_all(
+                b"=== Dungeon Rampage Haxe session ===\nStarted: 2026-01-01 00:00:00 UTC\nVersion: V13\n--- Game output ---\n",
+            )
+            .unwrap();
+        encoder.write_all(&vec![b'x'; 64 * 1024]).unwrap();
+        encoder
+            .write_all(
+                b"\n--- Session finished ---\nDuration: 12m 3s\nResult: Exited with status 0\n",
+            )
+            .unwrap();
+        encoder.finish().unwrap();
+
+        assert!(read_listing_frame(&compressed).unwrap().is_none());
+        let before_migrate = list(temp.path()).unwrap();
+        assert_eq!(before_migrate[0].detail, "V13 · completed");
+        assert!(read_listing_frame(&compressed).unwrap().is_none());
+
+        let sessions = list_with_legacy_migration(temp.path(), true).unwrap();
+        let contents = read(&compressed).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title, "2026-01-01 00:00:00 UTC");
+        assert_eq!(sessions[0].detail, "V13 · 12m 3s");
+        assert!(read_listing_frame(&compressed).unwrap().is_some());
+        assert!(contents.contains(&"x".repeat(64)));
+        assert!(contents.contains("Duration: 12m 3s"));
+        assert_eq!(
+            list_with_legacy_migration(temp.path(), true).unwrap()[0].detail,
+            "V13 · 12m 3s"
+        );
+        assert!(
+            archives_needing_listing_migration(temp.path())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn finds_legacy_archives_that_need_listing_frames() {
+        let temp = tempdir().unwrap();
+        let logs_dir = paths::game_logs_dir(temp.path());
+        fs::create_dir_all(&logs_dir).unwrap();
+        let compressed = logs_dir.join("2026-01-01-00-00-00Z.log.zst");
+        let output = File::create(&compressed).unwrap();
+        let mut encoder =
+            zstd::stream::write::Encoder::new(output, ZSTD_COMPRESSION_LEVEL).unwrap();
+        encoder
+            .write_all(b"Started: 2026-01-01 00:00:00 UTC\n")
+            .unwrap();
+        encoder.finish().unwrap();
+
+        assert_eq!(
+            archives_needing_listing_migration(temp.path()).unwrap(),
+            vec![compressed]
+        );
+    }
+
+    #[test]
+    fn lists_compressed_sessions_from_prefix_without_reading_body() {
+        let temp = tempdir().unwrap();
+        let logs_dir = paths::game_logs_dir(temp.path());
+        fs::create_dir_all(&logs_dir).unwrap();
+        let compressed = logs_dir.join("2026-01-01-00-00-00Z.log.zst");
+        let mut output = File::create(&compressed).unwrap();
+        write_listing_frame(
+            &mut output,
+            b"Started: 2026-01-01 00:00:00 UTC\nVersion: V13\nDuration: 12m 3s\n",
+        )
+        .unwrap();
+        let mut encoder =
+            zstd::stream::write::Encoder::new(output, ZSTD_COMPRESSION_LEVEL).unwrap();
+        encoder.write_all(&vec![b'x'; 1024 * 1024]).unwrap();
+        encoder.finish().unwrap();
+
+        let sessions = list(temp.path()).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title, "2026-01-01 00:00:00 UTC");
+        assert_eq!(sessions[0].detail, "V13 · 12m 3s");
     }
 
     #[test]

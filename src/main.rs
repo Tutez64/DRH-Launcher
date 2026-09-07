@@ -82,7 +82,7 @@ use launch_options::{
 };
 use log_view::{
     LogViewportPosition, extract_log_selection, refresh_log_content, refresh_logs_view,
-    remember_game_log_position, saved_game_log_position,
+    remember_game_log_position, saved_game_log_position, start_legacy_session_log_migration,
 };
 use platform::Platform;
 use release_source::ReleaseSource;
@@ -1163,12 +1163,34 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
         ui.unwrap().on_refresh_logs(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
 
-            refresh_logs_view(&ui, &config.borrow());
+            start_legacy_session_log_migration(
+                &ui,
+                config.borrow().clone(),
+                Arc::clone(&app_shutting_down),
+            );
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
+        ui.unwrap().on_ensure_logs(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+
+            start_legacy_session_log_migration(
+                &ui,
+                config.borrow().clone(),
+                Arc::clone(&app_shutting_down),
+            );
         });
     }
 
