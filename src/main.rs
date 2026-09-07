@@ -2679,7 +2679,7 @@ fn start_release_check(
                 home_view_state_from_cache(
                     &event_config,
                     HomeActivity::Idle,
-                    &HomeMessage::UpdateCheckFailed,
+                    &HomeMessage::UpdateCheckFailed(message),
                 )
             };
             if ui.get_install_action_text() != InstallState::Playing.primary_action() {

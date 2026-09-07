@@ -31,7 +31,7 @@ pub(crate) enum HomeMessage {
     ConfigWarning(String),
     Notice(String),
     Error(String),
-    UpdateCheckFailed,
+    UpdateCheckFailed(String),
 }
 
 impl HomeMessage {
@@ -56,10 +56,9 @@ impl HomeMessage {
             Self::Exited => Some("DRH exited.".to_string()),
             Self::ConfigWarning(warning) => Some(format!("Configuration warning: {warning}")),
             Self::Notice(text) => Some(text.clone()),
-            Self::Error(text) => Some(format_home_error_message(text)),
-            Self::UpdateCheckFailed => Some(
-                "Could not check for updates; installed DRH can still be launched.".to_string(),
-            ),
+            Self::Error(text) | Self::UpdateCheckFailed(text) => {
+                Some(format_home_error_message(text))
+            }
         }
     }
 
@@ -245,8 +244,7 @@ pub(crate) fn home_view_state(
 
     let show_release_overlay =
         matches!(activity, HomeActivity::Idle | HomeActivity::CheckingUpdates)
-            && (message.uses_release_overlay()
-                || (*message == HomeMessage::UpdateCheckFailed && latest_release.is_some()));
+            && message.uses_release_overlay();
 
     let mut used_overlay = false;
     if show_release_overlay && let Some(release) = latest_release {
@@ -254,8 +252,7 @@ pub(crate) fn home_view_state(
         used_overlay = true;
     }
 
-    if !used_overlay
-        && *message == HomeMessage::UpdateCheckFailed
+    if let HomeMessage::UpdateCheckFailed(error) = message
         && status.state == InstallState::Installed
     {
         state.install_status = InstallState::LaunchableButMaybeOutdated
@@ -264,9 +261,7 @@ pub(crate) fn home_view_state(
         state.install_action_text = InstallState::LaunchableButMaybeOutdated
             .primary_action()
             .to_string();
-        state.home_support_text = HomeMessage::UpdateCheckFailed
-            .support_text(&version_status)
-            .expect("update-check failure has support text");
+        state.home_support_text = format_home_error_message(error);
         used_overlay = true;
     }
 
@@ -528,6 +523,28 @@ mod tests {
                 .starts_with("Could not restore previous version")
         );
         assert!(!error_state.home_support_text.contains("Update available"));
+
+        let failed_check = home_view_state_from_cache(
+            &config,
+            HomeActivity::Idle,
+            &HomeMessage::UpdateCheckFailed(
+                "Could not check GitHub releases: connection reset".to_string(),
+            ),
+        );
+        assert_eq!(
+            failed_check.install_status,
+            InstallState::LaunchableButMaybeOutdated.status_text()
+        );
+        assert_eq!(
+            failed_check.install_action_text,
+            InstallState::LaunchableButMaybeOutdated.primary_action()
+        );
+        assert!(
+            failed_check
+                .home_support_text
+                .contains("Could not check GitHub releases")
+        );
+        assert!(!failed_check.home_support_text.contains("Update available"));
 
         *lock_latest_known_drh_release() = None;
     }
