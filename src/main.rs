@@ -61,8 +61,9 @@ use github_releases::{
 };
 use home_view::{
     apply_home_notices_view, apply_home_view_state, apply_player_count_view,
-    apply_updating_home_state, home_view_state, installed_active_release_version,
-    refresh_home_state, remember_latest_drh_version, set_status_message,
+    apply_updating_home_state, cached_latest_drh_release, home_view_state,
+    home_view_state_from_cache, installed_active_release_version, refresh_home_state,
+    remember_latest_drh_release, set_status_message,
 };
 use install_state::InstallState;
 use installer::{
@@ -2625,7 +2626,7 @@ fn start_release_check(
         diagnostics::LogLevel::Info,
         "Checking GitHub releases.",
     );
-    let mut checking_state = home_view_state(&config, None, "Checking GitHub releases...");
+    let mut checking_state = home_view_state_from_cache(&config, "Checking GitHub releases...");
     checking_state.update_check_enabled = false;
     checking_state.update_check_text = "Checking...".to_string();
     apply_home_view_state(ui, checking_state);
@@ -2662,7 +2663,7 @@ fn start_release_check(
                     .lock()
                     .expect("latest release lock poisoned")
                     .replace(release.clone());
-                remember_latest_drh_version(&release.version);
+                remember_latest_drh_release(&release);
                 let installed_launch_options = load_installed_launch_options(&event_config);
                 refresh_launch_options_view(
                     &ui,
@@ -2679,11 +2680,13 @@ fn start_release_check(
                     installed_launch_options.as_ref(),
                     "Save",
                 );
-                let mut state = home_view_state(&event_config, None, &message);
-                if matches!(
-                    inspect_install(event_config.install_dir.as_deref()).state,
-                    InstallState::Installed
-                ) {
+                let mut state = home_view_state_from_cache(&event_config, &message);
+                if cached_latest_drh_release().is_none()
+                    && matches!(
+                        inspect_install(event_config.install_dir.as_deref()).state,
+                        InstallState::Installed
+                    )
+                {
                     state.install_status = InstallState::LaunchableButMaybeOutdated
                         .status_text()
                         .to_string();

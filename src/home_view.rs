@@ -13,7 +13,10 @@ use crate::{
     rollback_blocked_update_version,
 };
 
-static LATEST_KNOWN_DRH_VERSION: Mutex<Option<String>> = Mutex::new(None);
+static LATEST_KNOWN_DRH_RELEASE: Mutex<Option<PlatformRelease>> = Mutex::new(None);
+
+#[cfg(test)]
+static LATEST_RELEASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 const HOME_ERROR_MAX_LEN: usize = 80;
 const HOME_ERROR_LOGS_SUFFIX: &str = " See Settings → Logs for details.";
@@ -35,7 +38,7 @@ pub(crate) struct HomeViewState {
 }
 
 pub(crate) fn refresh_home_state(ui: &AppWindow, config: &LauncherConfig, message: &str) {
-    let state = home_view_state(config, None, message);
+    let state = home_view_state_from_cache(config, message);
     apply_home_view_state(ui, state);
     apply_home_notices_view(ui, config);
     apply_player_count_view(ui);
@@ -56,12 +59,17 @@ pub(crate) fn apply_updating_home_state(ui: &AppWindow, config: &LauncherConfig,
     apply_player_count_view(ui);
 }
 
-pub(crate) fn remember_latest_drh_version(version: &str) {
-    let version = version.trim();
+pub(crate) fn remember_latest_drh_release(release: &PlatformRelease) {
+    let version = release.version.trim();
     if version.is_empty() {
         return;
     }
-    *lock_latest_known_drh_version() = Some(version.to_string());
+    *lock_latest_known_drh_release() = Some(release.clone());
+}
+
+pub(crate) fn home_view_state_from_cache(config: &LauncherConfig, message: &str) -> HomeViewState {
+    let latest_release = cached_latest_drh_release();
+    home_view_state(config, latest_release.as_ref(), message)
 }
 
 pub(crate) fn official_update_warning(config: &LauncherConfig) -> String {
@@ -91,11 +99,15 @@ pub(crate) fn apply_player_count_view(ui: &AppWindow) {
 }
 
 fn latest_known_drh_version() -> Option<String> {
-    lock_latest_known_drh_version().clone()
+    cached_latest_drh_release().map(|release| release.version)
 }
 
-fn lock_latest_known_drh_version() -> std::sync::MutexGuard<'static, Option<String>> {
-    LATEST_KNOWN_DRH_VERSION
+pub(crate) fn cached_latest_drh_release() -> Option<PlatformRelease> {
+    lock_latest_known_drh_release().clone()
+}
+
+fn lock_latest_known_drh_release() -> std::sync::MutexGuard<'static, Option<PlatformRelease>> {
+    LATEST_KNOWN_DRH_RELEASE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -339,6 +351,10 @@ fn is_progress_message(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::github_releases::{ReleaseAsset, ReleaseMetadataSource};
+    use crate::install_metadata::{InstalledRelease, InstalledState};
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn truncates_long_home_errors_and_points_to_logs() {
@@ -360,5 +376,76 @@ mod tests {
             home_support_text("Version: V1", message),
             format!("{message}.{HOME_ERROR_LOGS_SUFFIX}")
         );
+    }
+
+    #[test]
+    fn cached_latest_release_keeps_update_available_after_refresh() {
+        let _test_guard = LATEST_RELEASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *lock_latest_known_drh_release() = None;
+
+        let temp = tempdir().unwrap();
+        let game_dir = paths::game_dir(temp.path());
+        fs::create_dir_all(&game_dir).unwrap();
+        let executable = game_dir.join(game_install::game_executable_names()[0]);
+        if cfg!(target_os = "macos") {
+            fs::create_dir_all(&executable).unwrap();
+        } else {
+            fs::write(&executable, "").unwrap();
+        }
+        InstalledState {
+            active: InstalledRelease {
+                version: "V9".to_string(),
+                platform: "linux-x64".to_string(),
+                source: "Tutez64/DRHL-Release-Fixtures".to_string(),
+                release_url: "https://example.test/V9".to_string(),
+                archive: "archive-V9.tar.gz".to_string(),
+                archive_sha256: "abc123".to_string(),
+                archive_size: 123,
+                installed_at: "unix:0".to_string(),
+                launch_options: None,
+                steam_buildid: None,
+            },
+            previous: None,
+            blocked_update_version: None,
+        }
+        .save(temp.path())
+        .unwrap();
+        let config = LauncherConfig {
+            install_dir: Some(temp.path().to_path_buf()),
+            ..LauncherConfig::default()
+        };
+
+        let without_cache = home_view_state_from_cache(&config, "Ready.");
+        assert_eq!(without_cache.install_action_text, "Play");
+
+        remember_latest_drh_release(&test_release("V10"));
+        let with_cache = home_view_state_from_cache(&config, "Restored previous version V9.");
+        assert_eq!(with_cache.install_action_text, "Update");
+        assert_eq!(
+            with_cache.install_status,
+            InstallState::UpdateAvailable.status_text()
+        );
+
+        *lock_latest_known_drh_release() = None;
+    }
+
+    fn test_release(version: &str) -> PlatformRelease {
+        PlatformRelease {
+            version: version.to_string(),
+            name: format!("Dungeon Rampage Haxe {version}"),
+            html_url: format!("https://example.test/{version}"),
+            metadata_source: ReleaseMetadataSource::GitHubAssetFallback,
+            launch_options: None,
+            steam_buildid: None,
+            asset: ReleaseAsset {
+                platform_id: "linux-x64".to_string(),
+                name: format!("Dungeon.Rampage.Haxe.{version}.Linux.tar.gz"),
+                download_url: "https://example.test/archive.tar.gz".to_string(),
+                size: 123,
+                digest: Some("sha256:abc123".to_string()),
+            },
+        }
     }
 }
