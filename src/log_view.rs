@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::config::LauncherConfig;
-use crate::{AppWindow, GameSessionView, LogLineView, diagnostics, game_logs};
+use crate::{AppWindow, GameSessionView, LogLineView, bytes, diagnostics, game_logs};
 use slint::{Brush, Color, Model, ModelRc, VecModel};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -185,7 +185,7 @@ fn format_game_log_meta(count: usize, size: u64) -> String {
     format!(
         "{} · {}",
         format_line_count(count),
-        game_logs::format_file_size(size)
+        bytes::format_bytes(size)
     )
 }
 

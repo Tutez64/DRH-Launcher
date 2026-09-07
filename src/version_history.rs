@@ -12,7 +12,7 @@ use crate::home_view::{installed_active_release_version, restore_previous_releas
 use crate::install_state::InstallState;
 use crate::platform::Platform;
 use crate::release_source::ReleaseSource;
-use crate::{AppWindow, VersionEntryView, diagnostics, format_bytes, log_for_config};
+use crate::{AppWindow, VersionEntryView, bytes, diagnostics, log_for_config};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 pub(crate) fn start_version_history_refresh(
@@ -423,7 +423,7 @@ fn drh_version_entry_detail(entry: &PlatformReleaseHistoryEntry) -> String {
         entry
             .platform_release
             .as_ref()
-            .map(|release| format_bytes(release.asset.size))
+            .map(|release| bytes::format_bytes(release.asset.size))
             .unwrap_or_else(|| "N/A".to_string()),
     );
     parts.join(" · ")
@@ -434,7 +434,10 @@ fn selected_drh_version_detail(entry: &PlatformReleaseHistoryEntry, status: &str
     match &entry.platform_release {
         Some(release) => {
             parts.push(format!("Asset: {}", release.asset.name));
-            parts.push(format!("Size: {}", format_bytes(release.asset.size)));
+            parts.push(format!(
+                "Size: {}",
+                bytes::format_bytes(release.asset.size)
+            ));
             parts.push(release_manifest_detail(entry.manifest_available));
         }
         None if entry.manifest_available => {
@@ -469,7 +472,7 @@ fn repository_release_detail(release: &RepositoryRelease) -> String {
     let mut parts = vec![release_date(release)];
     parts.push(
         launcher_release_asset(release)
-            .map(|asset| format_bytes(asset.size))
+            .map(|asset| bytes::format_bytes(asset.size))
             .unwrap_or_else(|| "N/A".to_string()),
     );
     parts.join(" · ")
@@ -480,7 +483,7 @@ fn selected_repository_release_detail(release: &RepositoryRelease, status: &str)
     match launcher_release_asset(release) {
         Some(asset) => {
             parts.push(format!("Asset: {}", asset.name));
-            parts.push(format!("Size: {}", format_bytes(asset.size)));
+            parts.push(format!("Size: {}", bytes::format_bytes(asset.size)));
         }
         None => {
             parts.push(format!(

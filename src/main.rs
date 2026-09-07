@@ -4,6 +4,7 @@
 
 mod archive;
 mod atomic_file;
+mod bytes;
 mod changelog_markdown;
 mod config;
 mod diagnostics;
@@ -2796,8 +2797,8 @@ pub(crate) fn invoke_on_event_loop(
 }
 
 fn format_download_progress(asset_name: &str, progress: &DownloadProgress) -> String {
-    let downloaded = format_bytes(progress.downloaded);
-    let total = format_bytes(progress.total);
+    let downloaded = bytes::format_bytes(progress.downloaded);
+    let total = bytes::format_bytes(progress.total);
 
     match progress_percent(progress) {
         Some(percent) => format!("Downloading {asset_name}: {percent}% ({downloaded} / {total})"),
@@ -2819,23 +2820,6 @@ fn should_log_download_progress(percent: Option<u64>, last_logged_percent: Optio
         Some(percent) if percent % 10 == 0 => last_logged_percent != Some(percent),
         None => last_logged_percent.is_none(),
         _ => false,
-    }
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = KIB * 1024.0;
-    const GIB: f64 = MIB * 1024.0;
-
-    let bytes = bytes as f64;
-    if bytes >= GIB {
-        format!("{:.1} GiB", bytes / GIB)
-    } else if bytes >= MIB {
-        format!("{:.1} MiB", bytes / MIB)
-    } else if bytes >= KIB {
-        format!("{:.1} KiB", bytes / KIB)
-    } else {
-        format!("{bytes:.0} B")
     }
 }
 
