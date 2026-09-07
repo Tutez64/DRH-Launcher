@@ -180,7 +180,7 @@ Useful secondary actions:
 - go to options
 - open a compact Help menu for recovery actions such as restore, reinstall and logs
 
-The home UI state should be derived from a small view model rather than scattered direct widget updates. This keeps installed state, latest-release state, process state and temporary progress messages easier to reason about as the launcher grows. During install, repair, reinstall, or version install operations, the Home title should switch to `DRH is updating` while the support text shows the current step. Home error feedback should stay compact: show a short excerpt of the failure and point users to `Settings > Logs` for the full message.
+The home UI state should be derived from a small view model rather than scattered direct widget updates. This keeps installed state, latest-release state, process state and temporary progress messages easier to reason about as the launcher grows. During install, repair, reinstall, or version install operations, the Home title should switch to `Updating...` while the support text shows the current step. Home error feedback should stay compact: show a short excerpt of the failure and point users to `Settings > Logs` for the full message.
 
 ### Version History UI
 
