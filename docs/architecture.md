@@ -93,7 +93,6 @@ The intended managed content layout is:
       game/
         <active-session-timestamp>.log
         <completed-session-timestamp>.log.zst
-    cache/
     downloads/
     staging/
   Dungeon Rampage Haxe/
@@ -120,7 +119,7 @@ The exact executable names and native libraries vary by platform.
 
 The launcher should model installation state explicitly instead of relying on scattered booleans.
 
-Expected states:
+Expected UI states:
 
 ```text
 NotInstalled
@@ -132,11 +131,15 @@ BrokenInstall
 LaunchableButMaybeOutdated
 ```
 
-`UpdateAvailable` means a newer compatible version exists and the launcher can offer or start an update.
+Disk inspection only reports `NotInstalled`, `Installed`, or `BrokenInstall`. `UpdateAvailable`, `Updating`, `Playing`, and `LaunchableButMaybeOutdated` are Home overlays derived from that inspect result plus latest-release metadata, process state, and the current Home message.
 
-`Playing` means DRH was launched by DRH Launcher and the launcher still sees the child process running. While in this state, the primary action should become `Stop` instead of launching another instance. This state is process-based UI state, not installed metadata written to disk.
+`UpdateAvailable` means a newer compatible version exists and the launcher can offer or start an update. After a successful GitHub check, that latest release is cached so Restore, Stop, and a local Home refresh can still show `Update` or "up to date" without contacting GitHub again.
+
+`Playing` means DRH was launched by DRH Launcher and the launcher still sees the child process, or remaining members of its launch tree, running. While in this state, the primary action should become `Stop` instead of launching another instance. This state is process-based UI state, not installed metadata written to disk.
 
 `LaunchableButMaybeOutdated` means the installed game appears runnable, but the launcher cannot confirm that it is up to date or cannot update it automatically right now. Examples include offline mode, GitHub check failure, failed download, missing manifest data, or an older version that is still accepted. The primary action can remain `Play`, with a warning or secondary update action. The UI should expose the concrete reason when available, such as "Could not check GitHub releases" or "Download failed".
+
+A later GitHub check that fails must not keep showing `Installed` or `UpdateAvailable` from a previous success. If the game is installed, Home should switch to `LaunchableButMaybeOutdated` and show the GitHub error. Restore and Stop still reuse the cached latest release when no new check has run.
 
 `BrokenInstall` means the configured install directory exists but required files are missing or inconsistent.
 When active install metadata and a matching cached archive are available, `Repair` should first reinstall the active version from the verified cached archive. If local repair is not possible, the launcher may fall back to the latest compatible release flow.
@@ -170,7 +173,13 @@ The main navigation is:
 - `Mods`
 - `Settings`
 
-The home screen should stay focused on the primary install/play/update/stop flow. It should not permanently show long logs, install paths or diagnostic details. When extra context is useful, such as download progress, verification, update availability, repair, reinstall, version install, or stop in progress, it should appear as compact support text near the primary action through `home_support_text()`.
+The home screen should stay focused on the primary install/play/update/stop flow. It should not permanently show long logs, install paths or diagnostic details. When extra context is useful, such as download progress, verification, update availability, repair, reinstall, version install, or stop in progress, it should appear as compact support text near the primary action.
+
+Home is driven by a small view model rather than scattered widget updates. `HomeMessage` is the durable or transient text: ready, running, progress, installed, stopped, exited, config warning, notice, error, or a failed GitHub check. `HomeActivity` is the current flow: `Idle`, `CheckingUpdates`, `Updating`, or `Playing` with a stopping flag. Disk inspect, cached latest release, activity, and message are combined into the Home title, primary action, and support text.
+
+The latest-release overlay (up to date, update available, latest version) applies only while Home is idle or checking for updates, and only for messages that are meant to show release status: ready, running, installed, stopped, and exited. Progress, notices, errors, and a failed GitHub check must not be overwritten by that overlay.
+
+During install, repair, reinstall, or version install operations, the Home title should switch to `Updating...` while the support text shows the current step. Home error feedback should stay compact: show a short excerpt of the failure and point users to `Settings > Logs` for the full message.
 
 Discord and GitHub links can live in `Settings > About` or another secondary location. They should be easy to find without taking space away from the primary install/play flow.
 
@@ -179,8 +188,6 @@ Useful secondary actions:
 - check for updates
 - go to options
 - open a compact Help menu for recovery actions such as restore, reinstall and logs
-
-The home UI state should be derived from a small view model rather than scattered direct widget updates. This keeps installed state, latest-release state, process state and temporary progress messages easier to reason about as the launcher grows. During install, repair, reinstall, or version install operations, the Home title should switch to `Updating...` while the support text shows the current step. Home error feedback should stay compact: show a short excerpt of the failure and point users to `Settings > Logs` for the full message.
 
 ### Version History UI
 
@@ -216,12 +223,16 @@ DRH-Launcher --play
 
 For the first release, when an update is available, `--play` opens the full UI with an explanatory message instead of updating silently. Steam shortcut integration itself is deferred until a later phase.
 
-When DRH is launched from the launcher UI, DRH Launcher keeps the child process handle and uses it to prevent multiple launches from the same launcher instance. If the process exits normally, the UI returns to the installed state. If the user presses `Stop`, DRH Launcher terminates the tracked process and returns to the installed state. Stop requests, graceful shutdown, forced termination after timeout, and the final process result should all be written to `launcher.log` in addition to the game-session log.
+When DRH is launched from the launcher UI, DRH Launcher keeps the child process handle and uses it to prevent multiple launches from the same launcher instance. On Unix, the game is started in its own process group so Stop can target the whole launch tree. A 100ms timer inspects the tracked process. If it exits normally, the monitor finalizes and compresses the game-session log and Home returns to the idle overlay (Play, Update, or LaunchableButMaybeOutdated, depending on the cached latest release).
+
+`Stop` sends a graceful shutdown to the whole launch tree (`SIGTERM` on Unix, `WM_CLOSE` on Windows), then waits. Pre-launch wrappers such as `prime-run` can exit as soon as they receive `SIGTERM` while the actual game is still running, so Stop must not treat the wrapper's exit as the end of the session. After a 3-second timeout, remaining members are force-stopped (`SIGKILL` on Unix, `kill` on Windows). Stop requests, remaining-process waits, forced termination, and the final process result should all be written to `launcher.log` in addition to the game-session log.
+
+Checking whether the game is still running is inspect-only: it must not take the process handle or finalize the session log. The monitor and Stop path own session finalization. When Home, close, AppImage install or uninstall, or a launcher update cannot wait for the monitor, they finalize a process that has already exited.
 
 Closing DRH Launcher while its tracked DRH process is still running requires
 confirmation. Confirming first requests a normal application shutdown, then
 falls back to forced termination after a short timeout. DRHL waits for the
-process to exit, finalizes and compresses the game-session log, then closes. If
+launch tree to exit, finalizes and compresses the game-session log, then closes. If
 stopping DRH or finalizing the session fails, the launcher remains open and
 reports the error.
 
@@ -257,11 +268,13 @@ DRH feature flags currently accept command-line values in this shape:
 
 Passing a flag without a value enables it. Passing `false` disables it, including flags whose game default is `true`.
 
-Known game arguments should eventually be described by release metadata rather than parsed from source code at runtime. The UI currently exposes launch arguments as an explicit mode:
+Release metadata describes known game arguments. The UI currently exposes launch arguments as an explicit mode:
 
 - `Game defaults`: launch DRH without extra launcher-provided game arguments.
 - `DRHL recommended`: the launcher default, built from per-argument `recommended` values in the release manifest.
 - `Custom`: use the manually entered argument string.
+
+When the installed release has frame-rate metadata, `--fps` is always prepended from the Options control, in every mode.
 
 The source of truth in DRH is currently the constructor of `src/brain/utils/FeatureFlags.hx`, where feature flags and their default `true` / `false` values are listed.
 
@@ -556,13 +569,14 @@ For example, if a user updates from `V7` to `V9`, `Dungeon Rampage Haxe/previous
 
 The UI always shows `Restore previous version` in the Help menu. The action is enabled only when `installed.json.previous` exists and `Dungeon Rampage Haxe/previous/` exists on disk. When rollback metadata exists but the directory is missing, the button stays visible and disabled, matching the reinstall control. Restoring swaps `current/` and `previous/`, so the version being replaced remains available as the next rollback target. The replaced version is also recorded as `blocked_update_version`: if the user restores from `V10` to `V9`, `V10` should not be proposed again automatically, but a later release such as `V11` should be offered normally. Full multi-version management can be added later if there is a real need.
 
-Help-menu recovery actions such as restore and reinstall do not require an extra confirmation dialog in the first release. Restore is reversible in one click and both actions are labeled explicitly from installed metadata.
+Help-menu recovery actions such as restore and reinstall do not require an extra confirmation dialog. Restore is reversible in one click and both actions are labeled explicitly from installed metadata.
 
 Destructive or potentially surprising actions should require confirmation, including:
 
-- reinstalling DRH
-- uninstalling DRH
-- replacing the installed game with an older version
+- replacing the installed game with a selected historical release from `Versions`
+- uninstalling the Linux AppImage
+- closing DRH Launcher while a tracked DRH process is still running
+- uninstalling DRH when that action exists
 - removing Steam shortcuts
 
 ## Partial Updates
@@ -704,7 +718,7 @@ The game may need explicit support to load mods cleanly. Until then, the launche
 `About` should include:
 
 - DRH Launcher version
-- Discord and GitHub links
+- Discord and GitHub project links
 - license information
 - technology credits
 
@@ -815,13 +829,3 @@ Logs should be useful for diagnosing:
 - game process start, exit and stop actions
 - game launch failures
 - Steam shortcut actions
-
-## About Page
-
-The `Settings > About` page should include:
-
-- Discord link
-- GitHub project links
-- license information
-- technology credits
-- DRH Launcher version
