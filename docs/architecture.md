@@ -223,18 +223,18 @@ DRH-Launcher --play
 
 For the first release, when an update is available, `--play` opens the full UI with an explanatory message instead of updating silently. Steam shortcut integration itself is deferred until a later phase.
 
-When DRH is launched from the launcher UI, DRH Launcher keeps the child process handle and uses it to prevent multiple launches from the same launcher instance. On Unix, the game is started in its own process group so Stop can target the whole launch tree. A 100ms timer inspects the tracked process. If it exits normally, the monitor finalizes and compresses the game-session log and Home returns to the idle overlay (Play, Update, or LaunchableButMaybeOutdated, depending on the cached latest release).
+When DRH is launched from the launcher UI, DRH Launcher keeps the child process handle and uses it to prevent multiple launches from the same launcher instance. On Unix, the game is started in its own process group so Stop can target the whole launch tree. A 100ms timer inspects the tracked process. If it exits normally, the monitor writes the session-log result, starts compressing that log in the background, and Home returns to the idle overlay (Play, Update, or LaunchableButMaybeOutdated, depending on the cached latest release) without waiting for the archive.
 
 `Stop` sends a graceful shutdown to the whole launch tree (`SIGTERM` on Unix, `WM_CLOSE` on Windows), then waits. Pre-launch wrappers such as `prime-run` can exit as soon as they receive `SIGTERM` while the actual game is still running, so Stop must not treat the wrapper's exit as the end of the session. After a 3-second timeout, remaining members are force-stopped (`SIGKILL` on Unix, `kill` on Windows). Stop requests, remaining-process waits, forced termination, and the final process result should all be written to `launcher.log` in addition to the game-session log.
 
-Checking whether the game is still running is inspect-only: it must not take the process handle or finalize the session log. The monitor and Stop path own session finalization. When Home, close, AppImage install or uninstall, or a launcher update cannot wait for the monitor, they finalize a process that has already exited.
+Checking whether the game is still running is inspect-only: it must not take the process handle or finalize the session log. The monitor and Stop path own session finalization. When Home, close, AppImage install or uninstall, or a launcher update cannot wait for the monitor, they finalize a process that has already exited. Close, AppImage install or uninstall, and a launcher update then wait for any in-flight session-log compression so a completed session is not left uncompressed.
 
 Closing DRH Launcher while its tracked DRH process is still running requires
 confirmation. Confirming first requests a normal application shutdown, then
 falls back to forced termination after a short timeout. DRHL waits for the
-launch tree to exit, finalizes and compresses the game-session log, then closes. If
-stopping DRH or finalizing the session fails, the launcher remains open and
-reports the error.
+launch tree to exit, writes the session-log result, waits for in-flight
+compression of that log, then closes. If stopping DRH or writing the session
+result fails, the launcher remains open and reports the error.
 
 This tracking only covers processes started by the current launcher instance. Detecting a DRH process launched directly by the user or by another launcher instance can be added later if it proves useful, but it should be treated carefully to avoid killing an unrelated process by mistake.
 
@@ -641,6 +641,8 @@ Even so, the launcher should avoid deleting unrelated files in the install direc
 
 The Home screen shows Steam-related status because DRH authenticates against official servers. Notices share one card above Play: never more than one visible message, with dots to cycle when several apply. Hovering the card opens a popover with the full detail. Play is never blocked.
 
+The local library scan (`steamlocate` and related filesystem checks) runs after the first Home paint so it does not delay the window. Until that probe finishes, Home does not show Steam-missing, Steam-closed, or ownership notices, so those do not flash from an unprobed default. The official-update notice can still appear: it uses the installed release and network BuildID, not that scan.
+
 Priority, highest first:
 
 - whether the Steam client is installed (`steamlocate`, local filesystem including extra libraries, Flatpak, and Snap) and whether it is running (pid files and process list). `steamlocate` does not report a running client, so that check stays local
@@ -739,19 +741,25 @@ launcher gets a separate game-session log containing launch metadata, the game's
 standard output and standard error, and the final process result.
 
 Game output is written directly to an uncompressed `.log` while the process is
-running. When the session ends, the launcher appends its result and compresses
-the complete file as an independent Zstandard archive at level 10. The archive
-starts with a small zstd skippable frame that stores Started, Version and
-Duration so the session list does not have to decompress the game output. The
-original `.log` is removed only after the `.log.zst` has been written
-successfully. Legacy archives without that prefix are rewritten with one in the
-background the first time Settings > Logs is opened, with a progress line on
-that page. Until that rewrite, other list callers read only the start of the
-decompressed stream.
-An uncompressed `.log` therefore represents an active session or a recoverable
-session whose finalization was interrupted or failed. The viewer handles both
-states. Sessions are not deleted based on their count. Session filenames use
-sortable UTC timestamps so a specific play session can be identified and shared.
+running. When the session ends, the launcher appends the result footer
+(Ended, Duration, Result) immediately. From the GUI, Zstandard compression at
+level 10 then runs on a worker thread so Home stays usable. `--play`, and a
+launch that fails before the process starts, compress on the calling thread
+instead. The archive is an independent Zstandard file. It starts with a small
+zstd skippable frame that stores Started, Version and Duration so the session
+list does not have to decompress the game output. The original `.log` is
+removed only after the `.log.zst` has been written successfully. Closing the
+launcher, installing or uninstalling the AppImage, or applying a launcher
+update waits for any in-flight compression so a completed session is not left
+uncompressed. Legacy archives without that prefix are rewritten with one in
+the background the first time Settings > Logs is opened, with a progress line
+on that page. Until that rewrite, other list callers read only the start of
+the decompressed stream.
+An uncompressed `.log` therefore represents an active session, a session whose
+archive is still being written, or a recoverable session whose finalization was
+interrupted or failed. The viewer handles those states. Sessions are not deleted
+based on their count. Session filenames use sortable UTC timestamps so a specific
+play session can be identified and shared.
 
 The launcher provides an in-app log viewer in `Settings > Logs` with separate
 launcher and game-session views, plus actions to open a selected session or the
