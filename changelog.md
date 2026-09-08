@@ -55,6 +55,9 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
   which reduces the launcher binary by ~1.3 MiB (~2.6 MiB on macOS).
 - Release binaries are stripped, and Slint's unused system-tray stack is
   left out, which reduces the launcher binary by ~6 MiB on Linux and macOS.
+- GitHub, Steam, and launcher-update HTTP share one reqwest 0.12 + rustls + ring
+  stack, instead of also embedding reqwest 0.13 and aws-lc,
+  which reduces the launcher binary by ~3 MiB (~6 MiB on macOS).
 - Listing game sessions no longer decompresses every completed log.
   New archives store a small listing prefix.
   Older archives are rewritten with that prefix the first time

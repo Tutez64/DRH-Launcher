@@ -17,7 +17,11 @@ path = "src/main.rs"
 cargo-packager-updater = "0.2.3"
 directories = "6.0.0"
 flate2 = "1.1.10"
-reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
+# Stay on reqwest 0.12 while cargo-packager-updater does: 0.2.3 depends on
+# reqwest 0.12 + rustls-tls-native-roots (ring). Bumping our reqwest to 0.13
+# reintroduces a second HTTP/TLS stack (reqwest 0.13 + aws-lc). Patch
+# releases of 0.12 are fine. Move to 0.13 only when the updater does.
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
