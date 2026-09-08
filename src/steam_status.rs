@@ -3,13 +3,16 @@ use std::fs;
 #[cfg(unix)]
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::steam_buildid::STEAM_APP_ID;
 
 static STEAM_STATUS: Mutex<SteamStatus> = Mutex::new(SteamStatus::not_detected());
+static REFRESH_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SteamStatus {
+    pub probed: bool,
     pub steam_installed: bool,
     pub steam_running: bool,
     pub official_game_installed: bool,
@@ -18,6 +21,7 @@ pub struct SteamStatus {
 impl SteamStatus {
     const fn not_detected() -> Self {
         Self {
+            probed: false,
             steam_installed: false,
             steam_running: false,
             official_game_installed: false,
@@ -27,6 +31,7 @@ impl SteamStatus {
     pub fn probe() -> Self {
         let steam_dirs = steam_dirs();
         Self {
+            probed: true,
             steam_installed: !steam_dirs.is_empty(),
             steam_running: steam_is_running(),
             official_game_installed: official_game_is_installed(&steam_dirs),
@@ -42,6 +47,24 @@ pub fn refresh_status() -> SteamStatus {
     let status = SteamStatus::probe();
     *lock_steam_status() = status;
     status
+}
+
+/// Runs a Steam library probe unless another one is already in flight.
+pub fn try_refresh_status() -> Option<SteamStatus> {
+    if REFRESH_IN_FLIGHT
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_err()
+    {
+        return None;
+    }
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            REFRESH_IN_FLIGHT.store(false, Ordering::Release);
+        }
+    }
+    let _guard = Guard;
+    Some(refresh_status())
 }
 
 fn lock_steam_status() -> std::sync::MutexGuard<'static, SteamStatus> {

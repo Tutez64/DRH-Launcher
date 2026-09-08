@@ -117,17 +117,23 @@ fn notices_from(
 ) -> Vec<HomeNotice> {
     let mut notices = Vec::new();
 
-    if !steam.steam_installed {
-        notices.push(steam_missing_notice());
-    } else if !steam.steam_running {
-        notices.push(steam_closed_notice());
+    if steam.probed {
+        if !steam.steam_installed {
+            notices.push(steam_missing_notice());
+        } else if !steam.steam_running {
+            notices.push(steam_closed_notice());
+        }
     }
 
     if !official_update.is_empty() {
         notices.push(official_update_notice(official_update));
     }
 
-    if steam.steam_installed && !steam.official_game_installed && !ownership_dismissed {
+    if steam.probed
+        && steam.steam_installed
+        && !steam.official_game_installed
+        && !ownership_dismissed
+    {
         notices.push(ownership_notice());
     }
 
@@ -255,10 +261,33 @@ mod tests {
 
     fn steam(installed: bool, running: bool, official_installed: bool) -> SteamStatus {
         SteamStatus {
+            probed: true,
             steam_installed: installed,
             steam_running: running,
             official_game_installed: official_installed,
         }
+    }
+
+    fn unprobed() -> SteamStatus {
+        SteamStatus {
+            probed: false,
+            steam_installed: false,
+            steam_running: false,
+            official_game_installed: false,
+        }
+    }
+
+    #[test]
+    fn unprobed_status_does_not_show_steam_notices() {
+        let notices = notices_from(
+            unprobed(),
+            "The official Dungeon Rampage was updated. Wait for the next DRH release.",
+            false,
+        );
+        assert_eq!(
+            notices.iter().map(|notice| notice.kind).collect::<Vec<_>>(),
+            vec![HomeNoticeKind::OfficialUpdate]
+        );
     }
 
     #[test]

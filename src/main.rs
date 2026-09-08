@@ -186,7 +186,6 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         "Save",
     );
 
-    steam_status::refresh_status();
     let initial_home_message = if let Some(notice) = startup_notice {
         HomeMessage::Notice(notice)
     } else if let Some(warning) = &config_load_warning {
@@ -1868,7 +1867,6 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         Arc::clone(&app_shutting_down),
         Arc::clone(&last_players_text),
     );
-    refresh_steam_status_view(&ui, &config.borrow());
     start_steam_network_timer(
         ui.as_weak(),
         Rc::clone(&config),
@@ -1876,7 +1874,12 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         Arc::clone(&last_players_text),
         &steam_network_timer,
     );
-    start_steam_local_timer(ui.as_weak(), Rc::clone(&config), &steam_local_timer);
+    start_steam_local_timer(
+        ui.as_weak(),
+        Rc::clone(&config),
+        Arc::clone(&app_shutting_down),
+        &steam_local_timer,
+    );
 
     ui.run()
 }
@@ -2543,19 +2546,43 @@ fn recorded_steam_buildid_message(version: &str, buildid: Option<u64>) -> String
 fn start_steam_local_timer(
     ui: slint::Weak<AppWindow>,
     config: Rc<RefCell<LauncherConfig>>,
+    app_shutting_down: Arc<AtomicBool>,
     timer: &Timer,
 ) {
+    {
+        let ui = ui.clone();
+        let config = Rc::clone(&config);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
+        Timer::single_shot(Duration::ZERO, move || {
+            start_steam_status_check(ui, config.borrow().clone(), app_shutting_down);
+        });
+    }
     timer.start(TimerMode::Repeated, Duration::from_secs(10), move || {
-        let Some(ui) = ui.upgrade() else {
-            return;
-        };
-        refresh_steam_status_view(&ui, &config.borrow());
+        start_steam_status_check(
+            ui.clone(),
+            config.borrow().clone(),
+            Arc::clone(&app_shutting_down),
+        );
     });
 }
 
-fn refresh_steam_status_view(ui: &AppWindow, config: &LauncherConfig) {
-    steam_status::refresh_status();
-    apply_home_notices_view(ui, config);
+fn start_steam_status_check(
+    ui: slint::Weak<AppWindow>,
+    config: LauncherConfig,
+    app_shutting_down: Arc<AtomicBool>,
+) {
+    thread::spawn(move || {
+        if steam_status::try_refresh_status().is_none() {
+            return;
+        }
+        let event_config = config.clone();
+        invoke_on_event_loop(&config, &app_shutting_down, move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            apply_home_notices_view(&ui, &event_config);
+        });
+    });
 }
 
 fn start_steam_network_timer(
