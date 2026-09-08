@@ -82,6 +82,7 @@ pub fn download_and_verify_with_progress(
 
         let expected_size = asset.size;
         let mut bytes_written = 0_u64;
+        let mut hasher = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
         on_progress(DownloadProgress {
             downloaded: bytes_written,
@@ -95,8 +96,10 @@ pub fn download_and_verify_with_progress(
                 break;
             }
 
-            file.write_all(&buffer[..bytes_read])
+            let chunk = &buffer[..bytes_read];
+            file.write_all(chunk)
                 .map_err(|error| format!("Could not write {}: {error}", temp_path.display()))?;
+            hasher.update(chunk);
             bytes_written += bytes_read as u64;
             on_progress(DownloadProgress {
                 downloaded: bytes_written,
@@ -113,8 +116,7 @@ pub fn download_and_verify_with_progress(
             ));
         }
 
-        let actual_sha256 = sha256_file(&temp_path)
-            .map_err(|error| format!("Could not hash {}: {error}", temp_path.display()))?;
+        let actual_sha256 = hex_lower(&hasher.finalize());
         if actual_sha256 != expected_sha256 {
             return Err(format!(
                 "SHA-256 mismatch for {}: expected {}, got {}",
@@ -409,6 +411,22 @@ mod tests {
             digest,
             "d7f08e6a07ee091d21cbbd9702c217f75dcb26418edd45ac3c7345f5ebc70686"
         );
+    }
+
+    #[test]
+    fn streamed_chunks_match_file_hash() {
+        let data = b"drh-launcher incremental hash";
+        let mut hasher = Sha256::new();
+        for chunk in data.chunks(5) {
+            hasher.update(chunk);
+        }
+        let streamed = hex_lower(&hasher.finalize());
+
+        let temp = tempdir().unwrap();
+        let file_path = temp.path().join("sample.bin");
+        fs::write(&file_path, data).unwrap();
+
+        assert_eq!(streamed, sha256_file(&file_path).unwrap());
     }
 
     #[test]
