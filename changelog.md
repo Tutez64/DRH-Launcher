@@ -64,6 +64,8 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
   Older archives are rewritten with that prefix the first time
   **Settings → Logs** is opened, with a progress line so the window stays usable.
 - Home leaves **Stop** much quicker (almost immediately) when DRH exits.
+- Game-session logs are compressed in the background after DRH exits, so Home
+  stays usable instead of freezing on large logs.
 - Game-archive SHA-256 is hashed while downloading, instead of rereading the
   file afterwards.
 - **Versions**, **Mods**, and **Settings** no longer repeat the page name as

@@ -63,32 +63,37 @@ pub fn create(
 }
 
 pub fn finish(session: &GameSessionLog, result: &str) -> Result<PathBuf, String> {
+    write_session_result(session, result)?;
+    compress_finished_log(&session.path)
+}
+
+pub(crate) fn write_session_result(session: &GameSessionLog, result: &str) -> Result<(), String> {
     let ended_at = SystemTime::now();
     let duration = ended_at
         .duration_since(session.started_at)
         .unwrap_or_default();
-    {
-        let mut file = OpenOptions::new()
-            .append(true)
-            .open(&session.path)
-            .map_err(|error| format!("Could not open {}: {error}", session.path.display()))?;
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(&session.path)
+        .map_err(|error| format!("Could not open {}: {error}", session.path.display()))?;
 
-        writeln!(file)
-            .and_then(|_| writeln!(file, "--- Session finished ---"))
-            .and_then(|_| {
-                writeln!(
-                    file,
-                    "Ended: {}",
-                    diagnostics::format_system_time_utc(ended_at)
-                )
-            })
-            .and_then(|_| writeln!(file, "Duration: {}", format_duration(duration)))
-            .and_then(|_| writeln!(file, "Result: {result}"))
-            .and_then(|_| file.flush())
-            .map_err(|error| format!("Could not finish {}: {error}", session.path.display()))?;
-    }
+    writeln!(file)
+        .and_then(|_| writeln!(file, "--- Session finished ---"))
+        .and_then(|_| {
+            writeln!(
+                file,
+                "Ended: {}",
+                diagnostics::format_system_time_utc(ended_at)
+            )
+        })
+        .and_then(|_| writeln!(file, "Duration: {}", format_duration(duration)))
+        .and_then(|_| writeln!(file, "Result: {result}"))
+        .and_then(|_| file.flush())
+        .map_err(|error| format!("Could not finish {}: {error}", session.path.display()))
+}
 
-    compress(&session.path)
+pub(crate) fn compress_finished_log(path: &Path) -> Result<PathBuf, String> {
+    compress(path)
 }
 
 pub fn list(install_dir: &Path) -> Result<Vec<GameSessionEntry>, String> {
@@ -583,6 +588,24 @@ mod tests {
         assert!(contents.contains("Command: game --flag"));
         assert!(contents.contains("[INFO] Game started"));
         assert!(contents.contains("Result: Exited with status 0"));
+    }
+
+    #[test]
+    fn write_session_result_then_compress_matches_finish() {
+        let temp = tempdir().unwrap();
+        let (file, session) = create(temp.path(), Some("V9"), "linux-x64", "game").unwrap();
+        drop(file);
+        write_session_result(&session, "Exited with status 0").unwrap();
+        assert!(session.path.exists());
+
+        let sessions = list(temp.path()).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].detail, "V9 · 0s");
+        assert_eq!(sessions[0].path, session.path);
+
+        let compressed_path = compress_finished_log(&session.path).unwrap();
+        assert!(!session.path.exists());
+        assert_eq!(list(temp.path()).unwrap()[0].path, compressed_path);
     }
 
     #[test]

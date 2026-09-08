@@ -53,8 +53,8 @@ use download::{
 };
 use game_install::inspect_install;
 use game_runtime::{
-    begin_game_stop, finalize_exited_game, process_is_running, refresh_playing_state,
-    start_game_monitor,
+    SessionLogFinisher, begin_game_stop, finalize_exited_game, process_is_running,
+    refresh_playing_state, start_game_monitor,
 };
 use github_releases::{
     PlatformRelease, PlatformReleaseHistoryEntry, ReleaseMetadataSource, RepositoryRelease,
@@ -158,6 +158,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
     let launcher_version_history = Arc::new(Mutex::new(Vec::<RepositoryRelease>::new()));
     let pending_drh_version_install = Arc::new(Mutex::new(None::<String>));
     let app_shutting_down = Arc::new(AtomicBool::new(false));
+    let session_log_finisher = SessionLogFinisher::new(Arc::clone(&app_shutting_down));
     let game_process = Rc::new(RefCell::new(None::<game_launch::RunningGame>));
     let game_monitor = Rc::new(Timer::default());
     let game_stop_timer = Rc::new(Timer::default());
@@ -215,6 +216,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let game_monitor = Rc::clone(&game_monitor);
         let game_stop_timer = Rc::clone(&game_stop_timer);
         let app_shutting_down = Arc::clone(&app_shutting_down);
+        let session_log_finisher = session_log_finisher.clone();
         let release_source = release_source.clone();
         ui.unwrap().on_install_or_play(move || {
             let Some(ui) = ui.upgrade() else {
@@ -236,11 +238,20 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     config.clone(),
                     Rc::clone(&game_process),
                     Rc::clone(&game_monitor),
+                    session_log_finisher.clone(),
                     false,
                 );
                 return;
             }
-            if finalize_exited_game(&game_process, &game_monitor, &config).is_some() {
+            if finalize_exited_game(
+                &game_process,
+                &game_monitor,
+                &config,
+                ui.as_weak(),
+                &session_log_finisher,
+            )
+            .is_some()
+            {
                 refresh_home_state(&ui, &config, HomeMessage::Exited);
                 refresh_logs_view(&ui, &config);
                 return;
@@ -318,6 +329,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                             ui.as_weak(),
                             config.clone(),
                             Rc::clone(&game_process),
+                            session_log_finisher.clone(),
                         );
                     }
                     Err(error) => {
@@ -454,6 +466,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let game_process = Rc::clone(&game_process);
         let game_monitor = Rc::clone(&game_monitor);
         let app_shutting_down = Arc::clone(&app_shutting_down);
+        let session_log_finisher = session_log_finisher.clone();
         ui.unwrap().on_confirm_appimage_action(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -467,14 +480,22 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 ui.set_appimage_dialog_error(appimage_running_game_message(mode).into());
                 return;
             }
-            let _ = finalize_exited_game(&game_process, &game_monitor, &config.borrow());
+            let _ = finalize_exited_game(
+                &game_process,
+                &game_monitor,
+                &config.borrow(),
+                ui.as_weak(),
+                &session_log_finisher,
+            );
 
             ui.set_appimage_dialog_busy(true);
             ui.set_appimage_dialog_error("".into());
             let ui = ui.as_weak();
             let config = config.borrow().clone();
             let app_shutting_down = Arc::clone(&app_shutting_down);
+            let session_log_finisher = session_log_finisher.clone();
             thread::spawn(move || {
+                session_log_finisher.wait();
                 let result = if mode == 2 {
                     linux_appimage::uninstall()
                 } else {
@@ -533,6 +554,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let game_monitor = Rc::clone(&game_monitor);
         let latest_launcher_update = Arc::clone(&latest_launcher_update);
         let app_shutting_down = Arc::clone(&app_shutting_down);
+        let session_log_finisher = session_log_finisher.clone();
         ui.unwrap().on_launcher_update_action(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -548,7 +570,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 ui.set_launcher_update_status(message.into());
                 return;
             }
-            let _ = finalize_exited_game(&game_process, &game_monitor, &config.borrow());
+            let _ = finalize_exited_game(
+                &game_process,
+                &game_monitor,
+                &config.borrow(),
+                ui.as_weak(),
+                &session_log_finisher,
+            );
 
             let update = latest_launcher_update
                 .lock()
@@ -574,7 +602,9 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             let ui = ui.as_weak();
             let config = config.borrow().clone();
             let app_shutting_down = Arc::clone(&app_shutting_down);
+            let session_log_finisher = session_log_finisher.clone();
             thread::spawn(move || {
+                session_log_finisher.wait();
                 if let Err(error) = update.install_and_restart() {
                     log_for_config(&config, diagnostics::LogLevel::Error, &error);
                     invoke_on_event_loop(&config, &app_shutting_down, move || {
@@ -1717,6 +1747,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let game_process = Rc::clone(&game_process);
         let game_monitor = Rc::clone(&game_monitor);
         let app_shutting_down = Arc::clone(&app_shutting_down);
+        let session_log_finisher = session_log_finisher.clone();
         ui.unwrap().window().on_close_requested(move || {
             let Some(ui) = ui.upgrade() else {
                 return CloseRequestResponse::HideWindow;
@@ -1733,7 +1764,13 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 return CloseRequestResponse::KeepWindowShown;
             }
 
-            let _ = finalize_exited_game(&game_process, &game_monitor, &config.borrow());
+            let _ = finalize_exited_game(
+                &game_process,
+                &game_monitor,
+                &config.borrow(),
+                ui.as_weak(),
+                &session_log_finisher,
+            );
             app_shutting_down.store(true, Ordering::Relaxed);
             CloseRequestResponse::HideWindow
         });
@@ -1762,6 +1799,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         let game_monitor = Rc::clone(&game_monitor);
         let game_stop_timer = Rc::clone(&game_stop_timer);
         let app_shutting_down = Arc::clone(&app_shutting_down);
+        let session_log_finisher = session_log_finisher.clone();
         ui.unwrap().on_confirm_close(move || {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -1781,6 +1819,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 config.borrow().clone(),
                 Rc::clone(&game_process),
                 Rc::clone(&game_monitor),
+                session_log_finisher.clone(),
                 true,
             );
         });
@@ -1881,7 +1920,9 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         &steam_local_timer,
     );
 
-    ui.run()
+    let result = ui.run();
+    session_log_finisher.wait();
+    result
 }
 
 fn install_panic_hook() {
