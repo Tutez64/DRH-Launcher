@@ -702,7 +702,9 @@ Layout, under the managed install root, outside the replaceable game tree:
 
 A directory without `mod.json` is not a mod. `mod.json` is a shared
 launcher/game contract (identity, API version, DRH version range, entry
-module, declared `uses`). The schema is still draft; see the game document.
+module, declared `uses`). No `dependencies` field in v1: the game isolates
+each mod in its own hxScript `Environment`. The schema is still draft; see
+the game document.
 
 v1 Mods page: a **minimal catalog**, not a placeholder and not a polished
 store.
