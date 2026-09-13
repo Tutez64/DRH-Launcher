@@ -726,10 +726,8 @@ store.
 - show `uses` (`api` / `extends` / `replace`); recommend `api`. Warn that
   `extends` may break on DRH updates and that `replace` may clash with
   other mods (overlap of rewritten methods/fields/`new`)
-- warn when a zip/review touches checksummed official tables (can fail to
-  launch); not a fairness rating
 - once, a first-run disclosure before the user actually plays with mods
-  (code in-process, sandbox is not a jail, official servers/checksums, updates, replace clashes,
+  (code in-process, sandbox is not a jail, official servers, updates, replace clashes,
   how to return to vanilla, one line that DRH/mods are not the official
   client). Stored in launcher config; do not show every launch. Browsing
   the catalog does not require it.
