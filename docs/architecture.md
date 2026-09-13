@@ -105,6 +105,7 @@ The intended managed content layout is:
       Resources/
       DbConfiguration/
   mods/
+    enabled.json
 ```
 
 The exact executable names and native libraries vary by platform.
@@ -668,26 +669,74 @@ The UI should make this explicit and avoid treating Steam shortcut editing as gu
 
 ## Mods
 
-Mods are planned for a later phase.
+Mods are designed; implementation is a later phase. The runtime design lives in the game
+repository: [docs/modding.md](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/modding.md).
+That document is the source of truth for how mods load, compile (hxScript /
+cppia in the game process), how they are published, and how they talk to DRH.
+This section only covers what DRH Launcher should do.
 
-Initial intended layout:
+The launcher orchestrates mods. It does not compile them, does not patch
+`Dungeon Rampage Haxe/current/`, and does not overlay files destructively.
+Compilation happens in the game process at load time.
+
+Discovery uses an **index we control**, not a third-party store and not
+Discord as a catalog. The index lists artifacts (`id`, version, SHA-256,
+URL, compat), not author repositories. A new mod version is not offered
+until it is in the index. A later website can consume the same index.
+
+Layout, under the managed install root, outside the replaceable game tree:
 
 ```text
-mods/
-  SomeMod/
-    mod.json
-    Resources/
+<install-dir>/
+  Dungeon Rampage Haxe/
+    current/
+    previous/
+  mods/
+    enabled.json
+    SomeMod/
+      mod.json
+      src/
+      Resources/
+      locale/
 ```
 
-Expected future features:
+A directory without `mod.json` is not a mod. `mod.json` is a shared
+launcher/game contract (identity, API version, DRH version range, entry
+module, declared `uses`). The schema is still draft; see the game document.
 
-- enable or disable mods
-- load order
-- compatibility with DRH versions
-- open mods folder
-- verify modified files
+v1 Mods page: a **minimal catalog**, not a placeholder and not a polished
+store.
 
-The game may need explicit support to load mods cleanly. Until then, the launcher should avoid destructive file overlays when possible.
+- fetch and cache the index (verify like other downloads: size, SHA-256,
+  no silent third-party redirects)
+- list available mods (name, version, author, short description, DRH
+  compat, `uses`)
+- install: download zip, verify SHA-256, extract under `mods/<id>/`
+- show installed vs listed; enable or disable; load order
+- offer updates when the index has a newer artifact for the same `id`
+- open the mods folder; install from a local zip (unlisted, labeled as
+  not index-reviewed)
+- empty state that points at Discord / index docs
+- pass **`--mods-dir`** (absolute path to `<install-dir>/mods/`) and write
+  `enabled.json` there (ordered ids; disabled mods omitted). Do not put
+  enablement in `current/` or in each `mod.json`. Without the flag the
+  game loads no mods.
+- show `uses` (`api` / `extends` / `replace`); recommend `api`. Warn that
+  `extends` may break on DRH updates and that `replace` may clash with
+  other mods (overlap of rewritten methods/fields/`new`)
+- warn when a zip/review touches checksummed official tables (can fail to
+  launch); not a fairness rating
+- once, a first-run disclosure before the user actually plays with mods
+  (code in-process, official servers/checksums, updates, replace clashes,
+  how to return to vanilla, one line that DRH/mods are not the official
+  client). Stored in launcher config; do not show every launch. Browsing
+  the catalog does not require it.
+
+Out of v1: ratings, comments, galleries, collections, in-launcher
+publishing, Thunderstore/Nexus as identity.
+
+The launcher must not copy, patch, or verify overlay files inside
+`Dungeon Rampage Haxe/current/`.
 
 ## Settings
 
