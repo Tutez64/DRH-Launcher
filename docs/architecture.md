@@ -693,6 +693,7 @@ Layout, under the managed install root, outside the replaceable game tree:
     previous/
   mods/
     enabled.json
+    last-run.json
     SomeMod/
       mod.json
       src/
@@ -723,6 +724,10 @@ store.
   `enabled.json` there (ordered ids; disabled mods omitted). Do not put
   enablement in `current/` or in each `mod.json`. Without the flag the
   game loads no mods.
+- after Play, read `last-run.json` from that folder (game-owned: per-mod
+  `ok` / `failed` / `skipped`, compiled vs interpreted). Show it on the
+  Mods page. Not live IPC; a crash before the write leaves the previous
+  file.
 - show `uses` (`api` / `extends` / `replace`); recommend `api`. Warn that
   `extends` may break on DRH updates and that `replace` may clash with
   other mods (overlap of rewritten methods/fields/`new`)
