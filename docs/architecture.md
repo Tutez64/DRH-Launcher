@@ -676,8 +676,11 @@ cppia in the game process), how they are published, and how they talk to DRH.
 This section only covers what DRH Launcher should do.
 
 The game host (v1) uses a fork of hxScript and keeps it even if the
-same features land upstream: package-wide `@:scriptable` on DRH-owned
-types, and explicit `replace` so host `new` constructs the subclass.
+same features land upstream: package-wide `@:scriptable` on every
+package under `src/` (including vendored and generated code),
+`-D hxscript_bridge_packages=openfl,lime` so HUD code can `extend`
+display types, and explicit `replace` so host `new` constructs the
+subclass. `extend` is not `replace`; there is no OpenFL/Lime blacklist.
 The launcher only surfaces that as `uses` tags and warnings.
 
 The launcher orchestrates mods. It does not compile them, does not patch
