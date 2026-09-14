@@ -734,7 +734,8 @@ store.
 - after Play, read `last-run.json` from that folder (game-owned: per-mod
   `ok` / `failed` / `skipped`, compiled vs interpreted). Show it on the
   Mods page. Not live IPC; a crash before the write leaves the previous
-  file.
+  file. The game also logs one line per mod at load; the session log
+  already captures that.
 - show `uses` (`api` / `extends` / `replace`); recommend `api`. Warn that
   `extends` may break on DRH updates and that `replace` may clash with
   other mods (overlap of rewritten methods/fields/`new`)
