@@ -698,7 +698,6 @@ Layout, under the managed install root, outside the replaceable game tree:
       mod.json
       src/
       Resources/
-      locale/
 ```
 
 A directory without `mod.json` is not a mod. `mod.json` is a shared
