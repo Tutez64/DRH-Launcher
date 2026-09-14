@@ -703,7 +703,8 @@ Layout, under the managed install root, outside the replaceable game tree:
 
 A directory without `mod.json` is not a mod. `mod.json` is a shared
 launcher/game contract (identity, API version, DRH version range, entry
-module, declared `uses`). No `dependencies` field in v1: the game isolates
+module, declared `uses`). `id` is kebab-case, 3–64 characters, no
+leading or trailing hyphen. No `dependencies` field in v1: the game isolates
 each mod in its own hxScript `Environment`. The schema is still draft; see
 the game document.
 
@@ -715,6 +716,9 @@ store.
 - list available mods (name, version, author, short description, DRH
   compat, `uses`)
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
+  using the same archive path rules as game releases (no `..`, no
+  absolute paths, files and directories only). `id` must match
+  `^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`. No uncompressed size cap.
 - show installed vs listed; enable or disable; load order
 - offer updates when the index has a newer artifact for the same `id`
 - open the mods folder; install from a local zip (unlisted, labeled as
