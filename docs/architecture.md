@@ -222,7 +222,7 @@ DRH-Launcher --play
 
 `DRH-Launcher --play` is intended for Steam and shortcuts. It should quickly check required state, apply or prompt for important updates when needed, then launch DRH without forcing the full UI when everything is ready.
 
-For the first release, when an update is available, `--play` opens the full UI with an explanatory message instead of updating silently. Steam shortcut integration itself is deferred until a later phase.
+For the first release, when an update is available, `--play` opens the full UI with an explanatory message instead of updating silently. The same filet applies to mods: `--play` with a non-empty `mods/enabled.json` and a first-run mods disclosure that has not been confirmed yet opens the full UI; it does not launch DRH until the user confirms. Browsing the catalog without enabling mods does not require it. Steam shortcut integration itself is deferred until a later phase.
 
 When DRH is launched from the launcher UI, DRH Launcher keeps the child process handle and uses it to prevent multiple launches from the same launcher instance. On Unix, the game is started in its own process group so Stop can target the whole launch tree. A 100ms timer inspects the tracked process. If it exits normally, the monitor writes the session-log result, starts compressing that log in the background, and Home returns to the idle overlay (Play, Update, or LaunchableButMaybeOutdated, depending on the cached latest release) without waiting for the archive.
 
@@ -741,8 +741,9 @@ store.
 - once, a first-run disclosure before the user actually plays with mods
   (code in-process, sandbox is not a jail, official servers, updates, replace clashes,
   how to return to vanilla, one line that DRH/mods are not the official
-  client). Stored in launcher config; do not show every launch. Browsing
-  the catalog does not require it.
+  client). Stored in launcher config; do not show every launch. `--play`
+  with a non-empty `enabled.json` and no confirmation yet opens the full
+  UI, like an available update. Browsing the catalog does not require it.
 
 Out of v1: ratings, comments, galleries, collections, in-launcher
 publishing, Thunderstore/Nexus as identity.
