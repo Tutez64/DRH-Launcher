@@ -722,7 +722,10 @@ store.
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match
   `^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`. No uncompressed size cap.
-- show installed vs listed; enable or disable; load order
+- show installed vs listed; enable or disable; load order. On the Mods
+  page scan (not during `--play`), drop `enabled.json` ids whose folder
+  is gone and rewrite the file. The game skips those ids, logs, and
+  records `skipped` in `last-run.json`.
 - offer updates when the index has a newer artifact for the same `id`
 - open the mods folder; install from a local zip (unlisted, labeled as
   not index-reviewed)
