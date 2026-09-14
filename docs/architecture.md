@@ -675,6 +675,11 @@ That document is the source of truth for how mods load, compile (hxScript /
 cppia in the game process), how they are published, and how they talk to DRH.
 This section only covers what DRH Launcher should do.
 
+The game host (v1) uses a fork of hxScript and keeps it even if the
+same features land upstream: package-wide `@:scriptable` on DRH-owned
+types, and explicit `replace` so host `new` constructs the subclass.
+The launcher only surfaces that as `uses` tags and warnings.
+
 The launcher orchestrates mods. It does not compile them, does not patch
 `Dungeon Rampage Haxe/current/`, and does not overlay files destructively.
 Compilation happens in the game process at load time.
