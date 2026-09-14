@@ -714,7 +714,10 @@ store.
 - fetch and cache the index (verify like other downloads: size, SHA-256,
   no silent third-party redirects)
 - list available mods (name, version, author, short description, DRH
-  compat, `uses`)
+  compat, `uses`). `drh` is a closed tag string (`"20"`, `"20,21"`,
+  `"20-22"`), required for `extends` / `replace`. `api`-only mods
+  follow `api: N`. Warn `extends` / `replace` if the installed tag is
+  newer than the set.
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match
