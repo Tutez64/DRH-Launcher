@@ -675,13 +675,12 @@ That document is the source of truth for how mods load, compile (hxScript /
 cppia in the game process), how they are published, and how they talk to DRH.
 This section only covers what DRH Launcher should do.
 
-The game host (v1) uses a fork of hxScript and keeps it even if the
-same features land upstream: package-wide `@:scriptable` on every
-package under `src/` (including vendored and generated code),
-`-D hxscript_bridge_packages=openfl,lime` so HUD code can `extend`
-display types, and explicit `replace` so host `new` constructs the
-subclass. `extend` is not `replace`; there is no OpenFL/Lime blacklist.
-The launcher only surfaces that as `uses` tags and warnings.
+The game host (v1) uses a fork of hxScript, tracked against upstream
+like DRH's other submodules (changes stacked on the fork, PR'd upstream
+right after). It bridges every eligible class under DRH's `src/` plus
+OpenFL/Lime display types, and adds explicit `replace`. `extend` is not
+`replace`. The launcher only surfaces that as `uses` tags and warnings;
+the details are in the game document.
 
 The launcher orchestrates mods. It does not compile them, does not patch
 `Dungeon Rampage Haxe/current/`, and does not overlay files destructively.
