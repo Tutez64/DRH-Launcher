@@ -742,10 +742,13 @@ store.
   enablement in `current/` or in each `mod.json`. Without the flag the
   game loads no mods.
 - after Play, read `last-run.json` from that folder (game-owned: per-mod
-  `ok` / `failed` / `skipped`, compiled vs interpreted). Show it on the
-  Mods page. Not live IPC; a crash before the write leaves the previous
-  file. The game also logs one line per mod at load; the session log
-  already captures that.
+  `ok` / `failed` / `skipped`, compiled vs interpreted, plus a header
+  with the game tag, UTC start time, and `ready`). Show it on the Mods
+  page; use the header to label a file older than the last Play as
+  stale, and `ready: false` as "boot did not reach the game" rather than
+  a green `ok`. Not live IPC; a crash before the write leaves the
+  previous file. The game also logs one line per mod at load; the
+  session log already captures that.
 - show `uses` (`api` / `extends` / `replace`); recommend `api`. Warn that
   `extends` may break on DRH updates and that `replace` may clash with
   other mods (overlap of rewritten methods/fields/`new`)
