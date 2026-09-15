@@ -703,7 +703,7 @@ Layout, under the managed install root, outside the replaceable game tree:
   mods/
     enabled.json
     last-run.json
-    SomeMod/
+    some_mod/         # folder name = id
       mod.json
       src/
       Resources/
@@ -711,10 +711,13 @@ Layout, under the managed install root, outside the replaceable game tree:
 
 A directory without `mod.json` is not a mod. `mod.json` is a shared
 launcher/game contract (identity, API version, DRH version range, entry
-module, declared `uses`). `id` is kebab-case, 3–64 characters, no
-leading or trailing hyphen. No `dependencies` field in v1: the game isolates
-each mod in its own hxScript `Environment`. The schema is still draft; see
-the game document.
+module, declared `uses`, `dependencies`). `id` is snake_case, 3–64
+characters, starts with a letter, no trailing underscore: it is also the
+mod's Haxe package on the game side (`mods.<id>`), so the launcher never
+converts it. `dependencies` lists ids only (no versions): the launcher
+orders `enabled.json` so a mod comes after its dependencies and warns
+when one is not enabled; it does not auto-install or solve versions. The
+schema is still draft; see the game document.
 
 v1 Mods page: a **minimal catalog**, not a placeholder and not a polished
 store.
@@ -730,10 +733,13 @@ store.
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match
-  `^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`. No uncompressed size cap.
-- show installed vs listed; enable or disable; load order. On the Mods
-  page scan (not during `--play`), drop `enabled.json` ids whose folder
-  is gone and rewrite the file. The game skips those ids, logs, and
+  `^[a-z][a-z0-9_]{1,62}[a-z0-9]$`. No uncompressed size cap.
+- show installed vs listed; enable or disable; load order. The written
+  order is topological on `dependencies` (dependencies first), the
+  user's order where the graph leaves it free; an enabled mod whose
+  dependency is disabled or missing gets a warning, not a block. On the
+  Mods page scan (not during `--play`), drop `enabled.json` ids whose
+  folder is gone and rewrite the file. The game skips those ids, logs, and
   records `skipped` in `last-run.json`.
 - offer updates when the index has a newer artifact for the same `id`
 - open the mods folder; install from a local zip (unlisted, labeled as
