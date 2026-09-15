@@ -677,10 +677,12 @@ This section only covers what DRH Launcher should do.
 
 The game host (v1) uses a fork of hxScript, tracked against upstream
 like DRH's other submodules (changes stacked on the fork, PR'd upstream
-right after). It bridges every eligible class under DRH's `src/` plus
-OpenFL/Lime display types, and adds explicit `replace`. `extend` is not
-`replace`. The launcher only surfaces that as `uses` tags and warnings;
-the details are in the game document.
+right after). It bridges every eligible class in DRH's own source roots
+and in the vendored engine (`openfl`, `lime`, `swf`, `steamwrap`; whole
+packages, to be narrowed only after measuring the first build), not the
+toolchain (hxcpp, hxScript, std), and adds explicit `replace`. `extend`
+is not `replace`. The launcher only surfaces that as `uses` tags and
+warnings; the details are in the game document.
 
 The launcher orchestrates mods. It does not compile them, does not patch
 `Dungeon Rampage Haxe/current/`, and does not overlay files destructively.
@@ -744,11 +746,18 @@ store.
 - after Play, read `last-run.json` from that folder (game-owned: per-mod
   `ok` / `failed` / `skipped`, compiled vs interpreted, plus a header
   with the game tag, UTC start time, and `ready`). Show it on the Mods
-  page; use the header to label a file older than the last Play as
-  stale, and `ready: false` as "boot did not reach the game" rather than
-  a green `ok`. Not live IPC; a crash before the write leaves the
-  previous file. The game also logs one line per mod at load; the
-  session log already captures that.
+  page. Staleness is decided against the Play time **the launcher
+  recorded** (it already has it for the session log): a `started` older
+  than that means the game crashed before its first write and the file
+  is the previous run's. `ready` is `false` from the first write (after
+  `onInit`) until the game's `onReady` hook has run; read it with the
+  tracked process state: process alive + `false` is "still loading",
+  process exited + `false` is "boot stopped before the game was ready"
+  (service discovery failed, cheat block), never a green `ok`. An
+  account without an active avatar reaches `onReady` and reports
+  `true` even though no town appears; the launcher does not try to
+  detect that. Not live IPC. The game also logs one line per mod at
+  load; the session log already captures that.
 - show `uses` (`api` / `extends` / `replace`); recommend `api`. Warn that
   `extends` may break on DRH updates and that `replace` may clash with
   other mods (overlap of rewritten methods/fields/`new`)
