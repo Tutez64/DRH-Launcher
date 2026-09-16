@@ -226,7 +226,7 @@ For the first release, when an update is available, `--play` opens the full UI w
 
 When DRH is launched from the launcher UI, DRH Launcher keeps the child process handle and uses it to prevent multiple launches from the same launcher instance. On Unix, the game is started in its own process group so Stop can target the whole launch tree. A 100ms timer inspects the tracked process. If it exits normally, the monitor writes the session-log result, starts compressing that log in the background, and Home returns to the idle overlay (Play, Update, or LaunchableButMaybeOutdated, depending on the cached latest release) without waiting for the archive.
 
-`Stop` sends a graceful shutdown to the whole launch tree (`SIGTERM` on Unix, `WM_CLOSE` on Windows), then waits. Pre-launch wrappers such as `prime-run` can exit as soon as they receive `SIGTERM` while the actual game is still running, so Stop must not treat the wrapper's exit as the end of the session. After a 3-second timeout, remaining members are force-stopped (`SIGKILL` on Unix, `kill` on Windows). Stop requests, remaining-process waits, forced termination, and the final process result should all be written to `launcher.log` in addition to the game-session log.
+`Stop` sends a graceful shutdown to the whole launch tree (`SIGTERM` on Unix, `WM_CLOSE` on Windows), then waits. Pre-launch wrappers such as `prime-run` can exit as soon as they receive `SIGTERM` while the actual game is still running, so Stop must not treat the wrapper's exit as the end of the session. After a 3-second timeout, remaining members are force-stopped (`SIGKILL` on Unix, `kill` on Windows). On the game side both signals are graceful only if DRH's main loop is pumping events: they become a window-close, and DRH runs its shutdown hooks (mod `onDispose`, Steam cleanup) from `exiting` when that is processed. A process stuck in a long synchronous step (mod compilation at boot, a hung frame) never reaches them and is force-stopped at 3 s; the launcher should not assume a Stop ran the game's cleanup. Stop requests, remaining-process waits, forced termination, and the final process result should all be written to `launcher.log` in addition to the game-session log.
 
 Checking whether the game is still running is inspect-only: it must not take the process handle or finalize the session log. The monitor and Stop path own session finalization. When Home, close, AppImage install or uninstall, or a launcher update cannot wait for the monitor, they finalize a process that has already exited. Close, AppImage install or uninstall, and a launcher update then wait for any in-flight session-log compression so a completed session is not left uncompressed.
 
@@ -712,12 +712,20 @@ Layout, under the managed install root, outside the replaceable game tree:
 A directory without `mod.json` is not a mod. `mod.json` is a shared
 launcher/game contract (identity, API version, DRH version range, entry
 module, declared `uses`, `dependencies`). `id` is snake_case, 3–64
-characters, starts with a letter, no trailing underscore: it is also the
-mod's Haxe package on the game side (`mods.<id>`), so the launcher never
-converts it. `dependencies` lists ids only (no versions): the launcher
-orders `enabled.json` so a mod comes after its dependencies and warns
-when one is not enabled; it does not auto-install or solve versions. The
-schema is still draft; see the game document.
+characters, starts with a letter, no trailing underscore, and is neither
+a Haxe keyword (`class`, `new`, `var`, `macro`, `switch`, …) nor a
+Windows reserved device name (`con`, `nul`, `aux`, `prn`, `com1`–`com9`,
+`lpt1`–`lpt9`): it is also the mod's Haxe package on the game side
+(`mods.<id>`) and its folder name, so the launcher never converts it.
+The full keyword list lives in the game document; launcher, index CI and
+game apply the same one. `dependencies` lists ids only (no versions):
+the launcher orders `enabled.json` so a mod comes after its dependencies
+and warns when one is not enabled; it does not auto-install or solve
+versions. A dependency cycle is not an error: the game compiles all
+enabled mods in one batch, so mutual imports work; only the init order
+inside the cycle is undefined. The launcher keeps the user's order for
+the cycle's members and shows a warning naming them; it never refuses to
+enable for that. The schema is still draft; see the game document.
 
 v1 Mods page: a **minimal catalog**, not a placeholder and not a polished
 store.
@@ -733,10 +741,14 @@ store.
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match
-  `^[a-z][a-z0-9_]{1,62}[a-z0-9]$`. No uncompressed size cap.
+  `^[a-z][a-z0-9_]{1,62}[a-z0-9]$` and be outside the Haxe keyword and
+  Windows reserved-name lists; otherwise refuse the install. No
+  uncompressed size cap.
 - show installed vs listed; enable or disable; load order. The written
   order is topological on `dependencies` (dependencies first), the
-  user's order where the graph leaves it free; an enabled mod whose
+  user's order where the graph leaves it free; a cycle is sorted as one
+  block (strongly connected component), user's order inside it, with a
+  warning naming its members; an enabled mod whose
   dependency is disabled or missing gets a warning, not a block. On the
   Mods page scan (not during `--play`), drop `enabled.json` ids whose
   folder is gone and rewrite the file. The game skips those ids, logs, and
