@@ -106,7 +106,14 @@ The intended managed content layout is:
       DbConfiguration/
   mods/
     enabled.json
+    last-run.json
+    some_mod/
+      mod.json
+      src/
+      Resources/
 ```
+
+`some_mod/` is an example installed mod; folder name = `id`. `last-run.json` is written by the game when launched with `--mods-dir`. See Mods.
 
 The exact executable names and native libraries vary by platform.
 
@@ -536,6 +543,7 @@ Rules:
 - never launch a downloaded artifact before verification
 - treat GitHub releases from the configured DRH repository as the initial trusted source
 - do not silently follow release metadata to arbitrary third-party download domains unless this is explicitly allowed later
+- mod artifacts are that allowed exception: URLs come from the index we control, and each download is still size + SHA-256 verified. Do not follow redirects off the hashed URL's host
 - log enough detail to diagnose failed downloads, invalid hashes and extraction errors
 
 Cryptographic signatures may be added later, but SHA-256 verification against GitHub release metadata is enough for the first implementation.
@@ -675,23 +683,17 @@ That document is the source of truth for how mods load, compile (hxScript /
 cppia in the game process), how they are published, and how they talk to DRH.
 This section only covers what DRH Launcher should do.
 
-The game host (v1) uses a fork of hxScript, tracked against upstream
-like DRH's other submodules (changes stacked on the fork, PR'd upstream
-right after). It bridges every eligible class in DRH's own source roots
-and in the vendored engine (`openfl`, `lime`, `swf`, `steamwrap`; whole
-packages, to be narrowed only after measuring the first build), not the
-toolchain (hxcpp, hxScript, std), and adds explicit `replace`. `extend`
-is not `replace`. The launcher only surfaces that as `uses` tags and
-warnings; the details are in the game document.
-
 The launcher orchestrates mods. It does not compile them, does not patch
 `Dungeon Rampage Haxe/current/`, and does not overlay files destructively.
-Compilation happens in the game process at load time.
+Compilation happens in the game process at load time. The launcher
+surfaces `uses` (`api` / `extends` / `replace`) as tags and warnings.
+Host details stay in the game document.
 
 Discovery uses an **index we control**, not a third-party store and not
 Discord as a catalog. The index lists artifacts (`id`, version, SHA-256,
-URL, compat), not author repositories. A new mod version is not offered
-until it is in the index. A later website can consume the same index.
+URL, `api`, `drh`, `uses`), not author repositories. A new mod version is
+not offered until it is in the index. A later website can consume the
+same index.
 
 Layout, under the managed install root, outside the replaceable game tree:
 
@@ -730,8 +732,9 @@ enable for that. The schema is still draft; see the game document.
 v1 Mods page: a **minimal catalog**, not a placeholder and not a polished
 store.
 
-- fetch and cache the index (verify like other downloads: size, SHA-256,
-  no silent third-party redirects)
+- fetch and cache the index (size, SHA-256). Artifact URLs are
+  author-hosted and come from the index; verify the hash, and do not
+  follow redirects off that host
 - list available mods (name, version, author, short description, DRH
   compat, `uses`). `drh` is required, a closed tag string (`"20"`,
   `"20,21"`, `"20-22"`). Warn — do not block — if the installed tag is
@@ -757,17 +760,32 @@ store.
 - open the mods folder; install from a local zip (unlisted, labeled as
   not index-reviewed)
 - empty state that points at Discord / index docs
-- pass **`--mods-dir`** (absolute path to `<install-dir>/mods/`) and write
-  `enabled.json` there (ordered ids; disabled mods omitted). Do not put
+- pass **`--mods-dir`** as a quoted absolute path to `<install-dir>/mods/`
+  (paths may contain spaces) and write `enabled.json` there. Same shape
+  as the game document (draft):
+
+  ```json
+  {
+    "mods": [
+      { "id": "example_hud" },
+      { "id": "chat_macros" }
+    ]
+  }
+  ```
+
+  Array order is load order; disabled mods are omitted. Do not put
   enablement in `current/` or in each `mod.json`. Without the flag the
   game loads no mods.
 - after Play, read `last-run.json` from that folder (game-owned: per-mod
   `ok` / `failed` / `skipped`, compiled vs interpreted, plus a header
-  with the game tag, UTC start time, and `ready`). Show it on the Mods
-  page. Staleness is decided against the Play time **the launcher
-  recorded** (it already has it for the session log): a `started` older
-  than that means the game crashed before its first write and the file
-  is the previous run's. `ready` is `false` from the first write (after
+  with `drh`, UTC `started`, and `ready`). `drh` is the tag-number
+  string of the game that wrote the file (`"20"`, no `V` — same space
+  as `mod.json`; compare to `installed.json` by stripping `V`). Show it
+  on the Mods page. Staleness is decided against the Play time **the
+  launcher recorded** (it already has it for the session log): a
+  `started` older than that, or a missing file, means the game crashed
+  before its first write (or this is the first Play) and the file is
+  not this run's. `ready` is `false` from the first write (after
   `onInit`) until the game's `onReady` hook has run; read it with the
   tracked process state: process alive + `false` is "still loading",
   process exited + `false` is "boot stopped before the game was ready"
