@@ -543,7 +543,7 @@ Rules:
 - never launch a downloaded artifact before verification
 - treat GitHub releases from the configured DRH repository as the initial trusted source
 - do not silently follow release metadata to arbitrary third-party download domains unless this is explicitly allowed later
-- mod artifacts are that allowed exception: URLs come from the index we control, and each download is still size + SHA-256 verified. Do not follow redirects off the hashed URL's host
+- mod artifacts are that allowed exception: URLs come from the index we control, and each download is still size + SHA-256 verified against the saved bytes. Follow redirects only back to the indexed host, or to `release-assets.githubusercontent.com` when that host is `github.com`
 - log enough detail to diagnose failed downloads, invalid hashes and extraction errors
 
 Cryptographic signatures may be added later, but SHA-256 verification against GitHub release metadata is enough for the first implementation.
@@ -733,8 +733,8 @@ v1 Mods page: a **minimal catalog**, not a placeholder and not a polished
 store.
 
 - fetch and cache the index (size, SHA-256). Artifact URLs are
-  author-hosted and come from the index; verify the hash, and do not
-  follow redirects off that host
+  author-hosted and come from the index; verify the SHA-256 of the
+  saved bytes. Redirects: [Trust and Security](#trust-and-security)
 - list available mods (name, version, author, short description, DRH
   compat, `uses`). `drh` is required, a closed tag string (`"20"`,
   `"20,21"`, `"20-22"`). Warn — do not block — if the installed tag is
