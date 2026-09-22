@@ -425,11 +425,11 @@ After a successful replacement, DRH Launcher should write `data/installed.json` 
 ```json
 {
   "active": {
-    "version": "V13",
+    "version": "V14",
     "platform": "linux-x64",
     "source": "Tutez64/Dungeon-Rampage-Haxe",
-    "release_url": "https://github.com/Tutez64/Dungeon-Rampage-Haxe/releases/tag/V13",
-    "archive": "Dungeon.Rampage.Haxe.V13.Linux.tar.gz",
+    "release_url": "https://github.com/Tutez64/Dungeon-Rampage-Haxe/releases/tag/V14",
+    "archive": "Dungeon.Rampage.Haxe.V14.Linux.tar.gz",
     "archive_sha256": "...",
     "installed_at": "2026-05-25T12:34:56Z",
     "launch_options": {
@@ -445,7 +445,8 @@ After a successful replacement, DRH Launcher should write `data/installed.json` 
       },
       "game_arguments": []
     },
-    "steam_buildid": 25038329
+    "steam_buildid": 25038329,
+    "api": 1
   },
   "previous": {
     "version": "V7",
@@ -469,6 +470,7 @@ When available, a release manifest should describe the release state explicitly.
 {
   "version": "V3",
   "steam_buildid": 25038329,
+  "api": 1,
   "platforms": {
     "linux-x64": {
       "archive": "Dungeon.Rampage.Haxe.V3.Linux.tar.gz",
@@ -520,7 +522,7 @@ When available, a release manifest should describe the release state explicitly.
 
 `launch_options.frame_rate` is present from V11. `flag` is the DRH CLI flag. `auto.step` and `auto.maximum` generate the preset list (`24, 48, …, 240`). `auto.fallback` is the value used when display refresh cannot be read, and must be one of those presets. `custom_min` / `custom_max` bound the Custom field. The Options page maps this to Auto (match the primary display, rounded up to a preset), Preset, and Custom.
 
-`steam_buildid` is the official Steam public-branch BuildID this DRH release was converted from. Releases from V14 onward include it in the GitHub manifest. V10–V13 are mapped in DRH Launcher (`src/steam_buildid.rs`) instead of rewriting GitHub assets. DRHL only re-downloads an already-installed release’s manifest when that version is known to carry a missing field: `frame_rate` from V11, `steam_buildid` from V14. Older versions are not probed. The filled fields are then stored in `installed.json`.
+`api` is the facade contract number for that release, the same constant the host is compiled with. Releases from before the mod host omit it; those have no facade. `steam_buildid` is the official Steam public-branch BuildID this DRH release was converted from. Releases from V14 onward include it in the GitHub manifest. V10–V13 are mapped in DRH Launcher (`src/steam_buildid.rs`) instead of rewriting GitHub assets. DRHL only re-downloads an already-installed release’s manifest when that version is known to carry a missing field: `frame_rate` from V11, `steam_buildid` from V14. Older versions are not probed. The filled fields are then stored in `installed.json`.
 
 DRH Launcher resolves `archive` against the GitHub release assets. For the first implementation, manifests should not point to arbitrary external download URLs.
 
@@ -736,11 +738,9 @@ store.
   author-hosted and come from the index; verify the SHA-256 of the
   saved bytes. Redirects: [Trust and Security](#trust-and-security)
 - list available mods (name, version, author, short description, DRH
-  compat, `uses`). `drh` is required, a closed tag string (`"20"`,
-  `"20,21"`, `"20-22"`). Warn — do not block — if the installed tag is
-  older than the set (all kinds) or newer (`extends` / `replace` only).
-  Additive facade growth stays `api: N`; new wrappers use `drh` as the
-  floor. `api`-only mods trust `api: N` on a newer install.
+  compat, `uses`). `drh` and `api` warnings follow the game document
+  and never block Play. `api` is the installed release manifest's
+  field, not a question to the running game.
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match
