@@ -777,7 +777,7 @@ store.
   enablement in `current/` or in each `mod.json`. Without the flag the
   game loads no mods.
 - after Play, read `last-run.json` from that folder (game-owned: per-mod
-  `ok` / `failed` / `skipped`, compiled vs interpreted, plus a header
+  `ok` / `failed` / `skipped`, `compiled` / `interpreted` / `mixed`, plus a header
   with `drh`, UTC `started`, and `ready`). `drh` is the tag-number
   string of the game that wrote the file (`"20"`, no `V` — same space
   as `mod.json`; compare to `installed.json` by stripping `V`). Show it
