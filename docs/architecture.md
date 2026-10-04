@@ -445,8 +445,7 @@ After a successful replacement, DRH Launcher should write `data/installed.json` 
       },
       "game_arguments": []
     },
-    "steam_buildid": 25038329,
-    "api": 1
+    "steam_buildid": 25038329
   },
   "previous": {
     "version": "V7",
@@ -470,7 +469,6 @@ When available, a release manifest should describe the release state explicitly.
 {
   "version": "V3",
   "steam_buildid": 25038329,
-  "api": 1,
   "platforms": {
     "linux-x64": {
       "archive": "Dungeon.Rampage.Haxe.V3.Linux.tar.gz",
@@ -522,7 +520,7 @@ When available, a release manifest should describe the release state explicitly.
 
 `launch_options.frame_rate` is present from V11. `flag` is the DRH CLI flag. `auto.step` and `auto.maximum` generate the preset list (`24, 48, …, 240`). `auto.fallback` is the value used when display refresh cannot be read, and must be one of those presets. `custom_min` / `custom_max` bound the Custom field. The Options page maps this to Auto (match the primary display, rounded up to a preset), Preset, and Custom.
 
-`api` is the facade contract number for that release, the same constant the host is compiled with. Releases from before the mod host omit it; those have no facade. `steam_buildid` is the official Steam public-branch BuildID this DRH release was converted from. Releases from V14 onward include it in the GitHub manifest. V10–V13 are mapped in DRH Launcher (`src/steam_buildid.rs`) instead of rewriting GitHub assets. DRHL only re-downloads an already-installed release’s manifest when that version is known to carry a missing field: `frame_rate` from V11, `steam_buildid` from V14. Older versions are not probed. The filled fields are then stored in `installed.json`.
+`steam_buildid` is the official Steam public-branch BuildID this DRH release was converted from. Releases from V14 onward include it in the GitHub manifest. V10–V13 are mapped in DRH Launcher (`src/steam_buildid.rs`) instead of rewriting GitHub assets. DRHL only re-downloads an already-installed release’s manifest when that version is known to carry a missing field: `frame_rate` from V11, `steam_buildid` from V14. Older versions are not probed. The filled fields are then stored in `installed.json`.
 
 DRH Launcher resolves `archive` against the GitHub release assets. For the first implementation, manifests should not point to arbitrary external download URLs.
 
@@ -687,13 +685,15 @@ This section only covers what DRH Launcher should do.
 
 The launcher orchestrates mods. It does not compile them, does not patch
 `Dungeon Rampage Haxe/current/`, and does not overlay files destructively.
-Compilation happens in the game process at load time. The launcher
-surfaces `uses` (`api` / `extends` / `replace`) as tags and warnings.
-Host details stay in the game document.
+Compilation happens in the game process at load time. Every mod builds
+on the official `api` mod, which the launcher installs like any other
+dependency. The launcher surfaces `uses` (`extends` / `replace`, empty
+for a mod using only the `api` mod) as tags and warnings. Host details
+stay in the game document.
 
 Discovery uses an **index we control**, not a third-party store and not
 Discord as a catalog. The index lists artifacts (`id`, version, SHA-256,
-URL, `api`, `drh`, `uses`), not author repositories. A new mod version is
+URL, plus the `mod.json` fields), not author repositories. A new mod version is
 not offered until it is in the index. A later website can consume the
 same index.
 
@@ -714,22 +714,33 @@ Layout, under the managed install root, outside the replaceable game tree:
 ```
 
 A directory without `mod.json` is not a mod. `mod.json` is a shared
-launcher/game contract (identity, API version, DRH version range, entry
-module, declared `uses`, `dependencies`). `id` is snake_case, 3–64
+launcher/game contract (identity, version, the `api` version it needs,
+the DRH tags it was built for when it uses `extends` / `replace`, entry
+class, declared `uses`, versioned `dependencies`). `id` is snake_case, 3–64
 characters, starts with a letter, no trailing underscore, and is neither
 a Haxe keyword (`class`, `new`, `var`, `macro`, `switch`, …) nor a
 Windows reserved device name (`con`, `nul`, `aux`, `prn`, `com1`–`com9`,
 `lpt1`–`lpt9`): it is also the mod's Haxe package on the game side
 (`mods.<id>`) and its folder name, so the launcher never converts it.
 The full keyword list lives in the game document; launcher, index CI and
-game apply the same one. `dependencies` lists ids only (no versions):
-the launcher orders `enabled.json` so a mod comes after its dependencies
-and warns when one is not enabled; it does not auto-install or solve
-versions. A dependency cycle is not an error: the game compiles all
-enabled mods in one batch, so mutual imports work; only the init order
-inside the cycle is undefined. The launcher keeps the user's order for
-the cycle's members and shows a warning naming them; it never refuses to
-enable for that. The schema is still draft; see the game document.
+game apply the same one.
+
+`api` and each dependency take a version (`"1.2"`: same major, not
+older; with major `0`, same minor). Enabling a mod installs and enables
+its missing dependencies, `api` included, from the index: for each id,
+the highest version that satisfies every enabled mod naming it and, for
+an `extends` / `replace` mod such as `api`, whose `drh` contains the
+installed tag. One version per id; when none satisfies everyone, keep
+the installed one and warn. No backtracking. Every DRH tag publishes an
+`api` version listing it, so a release always has one. After a DRH
+install, update or rollback, resolve again. The game does not check
+versions, only that dependencies loaded.
+
+A dependency cycle is not an error: the game compiles all enabled mods
+in one batch, so mutual imports work; only the init order inside the
+cycle is undefined. The launcher keeps the user's order for the cycle's
+members and shows a warning naming them; it never refuses to enable for
+that. The schema is in the game document.
 
 v1 Mods page: a **minimal catalog**, not a placeholder and not a polished
 store.
@@ -737,10 +748,9 @@ store.
 - fetch and cache the index (size, SHA-256). Artifact URLs are
   author-hosted and come from the index; verify the SHA-256 of the
   saved bytes. Redirects: [Trust and Security](#trust-and-security)
-- list available mods (name, version, author, short description, DRH
-  compat, `uses`). `drh` and `api` warnings follow the game document
-  and never block Play. `api` is the installed release manifest's
-  field, not a question to the running game.
+- list available mods (name, version, author, `description`, DRH
+  compat, `uses`). Version and `drh` warnings follow the game document
+  and never block Play.
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match
@@ -748,11 +758,12 @@ store.
   Windows reserved-name lists; otherwise refuse the install. No
   uncompressed size cap.
 - show installed vs listed; enable or disable; load order. The written
-  order is topological on `dependencies` (dependencies first), the
-  user's order where the graph leaves it free; a cycle is sorted as one
-  block (strongly connected component), user's order inside it, with a
-  warning naming its members; an enabled mod whose
-  dependency is disabled or missing gets a warning, not a block. On the
+  order is topological on dependencies (`api` and `dependencies`,
+  dependencies first), the user's order where the graph leaves it free;
+  a cycle is sorted as one block (strongly connected component), user's
+  order inside it, with a warning naming its members. A dependency that
+  cannot be installed or that the user disabled gets a warning, not a
+  block; the game then fails the mod (`dependency <id> missing`). On the
   Mods page scan (not during `--play`), drop `enabled.json` ids whose
   folder is gone and rewrite the file. The game skips those ids, logs, and
   records `skipped` in `last-run.json`.
@@ -777,7 +788,8 @@ store.
   enablement in `current/` or in each `mod.json`. Without the flag the
   game loads no mods.
 - after Play, read `last-run.json` from that folder (game-owned: per-mod
-  `ok` / `failed` / `skipped`, `compiled` / `interpreted` / `mixed`, plus a header
+  `ok` / `failed` / `skipped`, `compiled` / `interpreted` / `mixed`; a mod
+  whose dependency failed is `failed` too, `dependency <id> failed`; plus a header
   with `drh`, UTC `started`, and `ready`). `drh` is the tag-number
   string of the game that wrote the file (`"20"`, no `V` — same space
   as `mod.json`; compare to `installed.json` by stripping `V`). Show it
@@ -794,9 +806,10 @@ store.
   `true` even though no town appears; the launcher does not try to
   detect that. Not live IPC. The game also logs one line per mod at
   load; the session log already captures that.
-- show `uses` (`api` / `extends` / `replace`); recommend `api`. Warn that
-  `extends` may break on DRH updates and that `replace` may clash with
-  other mods (overlap of rewritten methods/fields/`new`)
+- show the strongest of `uses`: `replace` > `extends` > stable only
+  (labelled `api`); recommend stable only. Warn that `extends` may break
+  on DRH updates and that `replace` may clash with other mods (overlap of
+  rewritten methods/fields/`new`)
 - once, a first-run disclosure before the user actually plays with mods
   (code in-process, official servers, updates, replace clashes,
   how to return to vanilla, one line that DRH/mods are not the official
