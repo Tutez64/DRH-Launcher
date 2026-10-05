@@ -768,8 +768,10 @@ store.
   folder is gone and rewrite the file. The game skips those ids, logs, and
   records `skipped` in `last-run.json`.
 - offer updates when the index has a newer artifact for the same `id`
-- open the mods folder; install from a local zip (unlisted, labeled as
-  not index-reviewed)
+- open the mods folder; install from a local zip or from a GitHub
+  repository link (unlisted, labeled as not index-reviewed). A link
+  installs the zip of the repository's latest published release, never a
+  branch, and is remembered to offer that repository's later releases
 - empty state that points at Discord / index docs
 - pass **`--mods-dir`** as a quoted absolute path to `<install-dir>/mods/`
   (paths may contain spaces) and write `enabled.json` there. Same shape
