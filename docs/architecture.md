@@ -731,9 +731,10 @@ its missing dependencies, `api` included, from the index: for each id,
 the highest version that satisfies every enabled mod naming it and, for
 an `extends` / `replace` mod such as `api`, whose `drh` contains the
 installed tag. One version per id; when none satisfies everyone, keep
-the installed one and warn. No backtracking. Every DRH tag publishes an
-`api` version listing it, so a release always has one. After a DRH
-install, update or rollback, resolve again. The game does not check
+the installed one and warn. No backtracking. An `api` version listing a
+new DRH tag is published after that release, once verified (see the game
+document); until then the installed one stays, with a `drh` warning.
+After a DRH install, update or rollback, resolve again. The game does not check
 versions, only that dependencies loaded.
 
 A dependency cycle is not an error: the game compiles all enabled mods
