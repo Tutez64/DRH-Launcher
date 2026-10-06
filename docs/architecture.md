@@ -740,9 +740,8 @@ versions, only that dependencies loaded.
 
 A dependency cycle is not an error: the game compiles all enabled mods
 in one batch, so mutual imports work; only the init order inside the
-cycle is undefined. The launcher keeps the user's order for the cycle's
-members and shows a warning naming them; it never refuses to enable for
-that. The schema is in the game document.
+cycle is undefined. The launcher never refuses to enable for that. The
+schema is in the game document.
 
 v1 Mods page: a **minimal catalog**, not a placeholder and not a polished
 store.
@@ -760,10 +759,8 @@ store.
   Windows reserved-name lists; otherwise refuse the install. No
   uncompressed size cap.
 - show installed vs listed; enable or disable; load order. The written
-  order is topological on dependencies (`api` and `dependencies`,
-  dependencies first), the user's order where the graph leaves it free;
-  a cycle is sorted as one block (strongly connected component), user's
-  order inside it, with a warning naming its members. A dependency that
+  order is the user's: the game starts every mod after its dependencies
+  (`api` included) whatever their place in the file. A dependency that
   cannot be installed or that the user disabled gets a warning, not a
   block; the game then fails the mod (`dependency <id> missing`). On the
   Mods page scan (not during `--play`), drop `enabled.json` ids whose
@@ -788,7 +785,7 @@ store.
   }
   ```
 
-  Array order is load order; disabled mods are omitted. Do not put
+  Array order is the user's load order; disabled mods are omitted. Do not put
   enablement in `current/` or in each `mod.json`. Without the flag the
   game loads no mods.
 - after Play, read `last-run.json` from that folder (game-owned: per-mod
