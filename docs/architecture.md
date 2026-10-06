@@ -227,6 +227,8 @@ DRH-Launcher --play
 
 `DRH-Launcher` opens the full UI.
 
+Modders also get `--new-mod`, `--check-mod`, `--run-mod`, `--pack-mod` and `--submit-mod`, which run without the UI. What each does is in the game document ([Mod repository](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/modding.md#mod-repository)); the checks are the ones the launcher applies at install, implemented once.
+
 `DRH-Launcher --play` is intended for Steam and shortcuts. It should quickly check required state, apply or prompt for important updates when needed, then launch DRH without forcing the full UI when everything is ready.
 
 For the first release, when an update is available, `--play` opens the full UI with an explanatory message instead of updating silently. The same gate applies to mods: `--play` with a non-empty `mods/enabled.json` and a first-run mods disclosure that has not been confirmed yet opens the full UI; it does not launch DRH until the user confirms. Browsing the catalog without enabling mods does not require it. Steam shortcut integration itself is deferred until a later phase.
@@ -819,8 +821,8 @@ store.
   with a non-empty `enabled.json` and no confirmation yet opens the full
   UI, like an available update. Browsing the catalog does not require it.
 
-Out of v1: ratings, comments, galleries, collections, in-launcher
-publishing, Thunderstore/Nexus as identity.
+Out of v1: ratings, comments, galleries, collections, a publishing UI
+(the modder commands cover publishing), Thunderstore/Nexus as identity.
 
 The launcher must not copy, patch, or verify overlay files inside
 `Dungeon Rampage Haxe/current/`.
