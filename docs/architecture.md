@@ -797,12 +797,14 @@ store.
   with `drh`, UTC `started`, and `ready`). `drh` is the tag-number
   string of the game that wrote the file (`"20"`, no `V` — same space
   as `mod.json`; compare to `installed.json` by stripping `V`). Show it
-  on the Mods page. Staleness is decided against the Play time **the
-  launcher recorded** (it already has it for the session log): a
-  `started` older than that, or a missing file, means the game crashed
-  before its first write (or this is the first Play) and the file is
-  not this run's. `ready` is `false` from the first write (after
-  `onInit`) until the game's `onReady` hook has run; read it with the
+  on the Mods page. Delete `last-run.json` before each Play with
+  `--mods-dir` (`--play` included), so a file present is this run's.
+  A missing file means the game is still booting while the process is
+  alive, and that it crashed before its first write once it has exited
+  (or there was no Play yet). A file that does not parse (read during
+  a write, or cut by a crash) is read again once shortly after, then
+  treated as missing. `started` is only shown. `ready` is `false` from
+  the first write (after `onInit`) until the game's `onReady` hook has run; read it with the
   tracked process state: process alive + `false` is "still loading",
   process exited + `false` is "boot stopped before the game was ready"
   (service discovery failed, cheat block), never a green `ok`. An
