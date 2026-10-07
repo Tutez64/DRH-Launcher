@@ -752,7 +752,9 @@ store.
   saved bytes. Redirects: [Trust and Security](#trust-and-security)
 - list available mods (name, version, author, `description`, DRH
   compat, `uses`). Version and `drh` warnings follow the game document
-  and never block Play.
+  and never block Play. A sideloaded mod's `name`, `author` or
+  `description` past its length limit (game document) is cut, not
+  refused.
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match
