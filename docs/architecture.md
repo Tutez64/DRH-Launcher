@@ -730,9 +730,10 @@ game apply the same one.
 `api` and each dependency take a version (`"1.2"`: same major, not
 older; with major `0`, same minor). Enabling a mod installs and enables
 its missing dependencies, `api` included, from the index: for each id,
-the highest version that satisfies every enabled mod naming it and, for
-an `extends` / `replace` mod such as `api`, whose `drh` contains the
-installed tag. One version per id; when none satisfies everyone, keep
+the highest version that satisfies every enabled mod naming it. For an
+`extends` / `replace` mod such as `api`, one whose `drh` contains the
+installed tag comes first; when none does, install the highest
+satisfying version anyway, with the `drh` warning. One version per id; when none satisfies everyone, keep
 the installed one and warn. No backtracking. An `api` version listing a
 new DRH tag is indexed before that release is published (see the game
 document). After a DRH install, update or rollback, resolve again. The game does not check
