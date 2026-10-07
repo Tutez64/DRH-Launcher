@@ -812,7 +812,9 @@ store.
 - show the strongest of `uses`: `replace` > `extends` > stable only
   (labelled `api`); recommend stable only. Warn that `extends` may break
   on DRH updates and that `replace` may clash with other mods (overlap of
-  rewritten methods/fields/`new`)
+  rewritten methods/fields/`new`). The `api` mod is shown as official,
+  without that label or warning; its `uses` and `drh` still drive which
+  version is installed
 - once, a first-run disclosure before the user actually plays with mods
   (code in-process, official servers, updates, replace clashes,
   how to return to vanilla, one line that DRH/mods are not the official
