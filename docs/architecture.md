@@ -754,7 +754,9 @@ store.
   compat, `uses`). Version and `drh` warnings follow the game document
   and never block Play. A sideloaded mod's `name`, `author` or
   `description` past its length limit (game document) is cut, not
-  refused.
+  refused. A mod's page renders its long description like a changelog:
+  the index entry's `longDescription`, or the installed mod's
+  `DESCRIPTION.md` when it is not in the index.
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match
