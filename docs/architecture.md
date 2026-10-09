@@ -755,8 +755,9 @@ store.
   and never block Play. A sideloaded mod's `name`, `author` or
   `description` past its length limit (game document) is cut, not
   refused. A mod's page renders its long description like a changelog:
-  the index entry's `longDescription`, or the installed mod's
-  `README.md` when it is not in the index.
+  the index entry's `longDescription`, or, when the mod is not in the
+  index, the part of its `README.md` the game document's markers show
+  (all of it when they are malformed).
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match
