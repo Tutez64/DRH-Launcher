@@ -756,7 +756,12 @@ store.
   [Trust and Security](#trust-and-security)
 - list available mods (name, version, author, `description`, DRH
   compat, `uses`). Version and `drh` warnings follow the game document
-  and never block Play. A sideloaded mod's `name`, `author` or
+  and never block Play. `author` is never shown alone: next to it, the
+  GitHub owner of the mod's repository (the index entry's `source`, or
+  the repository link it was installed from), once when they are the
+  same. Search and sort by author use that owner. A mod installed from a
+  local zip has no owner to show; it keeps its not-reviewed label. A
+  sideloaded mod's `name`, `author` or
   `description` past its length limit (game document) is cut, not
   refused. A mod's page shows its `description`, then renders its long
   description like a changelog: the index entry's `longDescription`, or,
@@ -830,9 +835,11 @@ store.
 - show the strongest of `uses`: `replace` > `extends` > stable only
   (labelled `api`); recommend stable only. Warn that `extends` may break
   on DRH updates and that `replace` may clash with other mods (overlap of
-  rewritten methods/fields/`new`). The `api` mod is shown as official,
-  without that label or warning; its `uses` and `drh` still drive which
-  version is installed
+  rewritten methods/fields/`new`). A mod is official when its index entry's
+  `source` is in a list built into the launcher (`Tutez64/DRH-Mod-API`
+  for now), never from its `id` or `author`: a sideloaded `api` is not.
+  The official `api` is shown without that label or warning; its
+  `uses` and `drh` still drive which version is installed
 - once, a first-run disclosure before the user actually plays with mods
   (code in-process, official servers, updates, replace clashes,
   how to return to vanilla, one line that DRH/mods are not the official
