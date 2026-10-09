@@ -757,7 +757,9 @@ store.
   refused. A mod's page renders its long description like a changelog:
   the index entry's `longDescription`, or, when the mod is not in the
   index, the part of its `README.md` the game document's markers show
-  (all of it when they are malformed).
+  (all of it when they are malformed). The page links the mod's
+  repository when it has one: the index entry's `source`, or the
+  repository link it was installed from.
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match
