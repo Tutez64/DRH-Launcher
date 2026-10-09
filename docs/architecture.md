@@ -754,10 +754,11 @@ store.
   compat, `uses`). Version and `drh` warnings follow the game document
   and never block Play. A sideloaded mod's `name`, `author` or
   `description` past its length limit (game document) is cut, not
-  refused. A mod's page renders its long description like a changelog:
-  the index entry's `longDescription`, or, when the mod is not in the
-  index, the part of its `README.md` the game document's markers show
-  (all of it when they are malformed). The page links the mod's
+  refused. A mod's page shows its `description`, then renders its long
+  description like a changelog: the index entry's `longDescription`, or,
+  when the mod is not in the index, the part of its `README.md` the game
+  document's markers show (all of it when they are malformed; nothing
+  when its shown zone is empty). The page links the mod's
   repository when it has one: the index entry's `source`, or the
   repository link it was installed from.
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
@@ -774,6 +775,11 @@ store.
   Mods page scan (not during `--play`), drop `enabled.json` ids whose
   folder is gone and rewrite the file. The game skips those ids, logs, and
   records `skipped` in `last-run.json`.
+- remember which mods were installed as a dependency (recommended).
+  Their page and list entry name the installed mods that need them; when
+  the last of those is uninstalled, offer to remove them too. A mod's
+  README never has to say it is installed with others. `api` is no
+  exception: installed with the first mod that needs it.
 - offer updates when the index has a newer artifact for the same `id`
 - open the mods folder; install from a local zip or from a GitHub
   repository link (unlisted, labeled as not index-reviewed). A link
