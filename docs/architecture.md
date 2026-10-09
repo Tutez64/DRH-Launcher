@@ -697,7 +697,9 @@ Discovery uses an **index we control**, not a third-party store and not
 Discord as a catalog. The index lists artifacts (`id`, version, SHA-256,
 URL, plus the `mod.json` fields), not author repositories. A new mod version is
 not offered until it is in the index. A later website can consume the
-same index.
+same index. The launcher reads it from a URL set at compile time, the game
+document's by default; test builds can override it, as
+`DRHL_UPDATE_ENDPOINT` does for updates.
 
 Layout, under the managed install root, outside the replaceable game tree:
 
