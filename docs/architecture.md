@@ -749,9 +749,11 @@ schema is in the game document.
 v1 Mods page: a **minimal catalog**, not a placeholder and not a polished
 store.
 
-- fetch and cache the index (size, SHA-256). Artifact URLs are
-  author-hosted and come from the index; verify the SHA-256 of the
-  saved bytes. Redirects: [Trust and Security](#trust-and-security)
+- fetch and cache the index. An unknown `format` is refused with a
+  request to update the launcher; `yanked` versions follow the game
+  document. Artifact URLs are author-hosted and come from the index;
+  verify the size and SHA-256 of the saved bytes. Redirects:
+  [Trust and Security](#trust-and-security)
 - list available mods (name, version, author, `description`, DRH
   compat, `uses`). Version and `drh` warnings follow the game document
   and never block Play. A sideloaded mod's `name`, `author` or
