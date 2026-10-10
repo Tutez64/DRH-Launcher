@@ -835,11 +835,14 @@ store.
 - show the strongest of `uses`: `replace` > `extends` > stable only
   (labelled `api`); recommend stable only. Warn that `extends` may break
   on DRH updates and that `replace` may clash with other mods (overlap of
-  rewritten methods/fields/`new`). A mod is official when its index entry's
-  `source` is in a list built into the launcher (`Tutez64/DRH-Mod-API`
-  for now), never from its `id` or `author`: a sideloaded `api` is not.
-  The official `api` is shown without that label or warning; its
-  `uses` and `drh` still drive which version is installed
+  rewritten methods/fields/`new`). One exception: the mod whose index
+  entry's `source` is `Tutez64/DRH-Mod-API`, built into the launcher, is
+  shown without that label or warning, since its compatibility follows
+  DRH's releases; its `uses` and `drh` still drive which version is
+  installed. It is recognized by that source, never by its `id`, its
+  `author` or its owner alone: a sideloaded `api` is not. No other mod
+  gets a status of its own; the owner shown next to `author` says who
+  made it
 - once, a first-run disclosure before the user actually plays with mods
   (code in-process, official servers, updates, replace clashes,
   how to return to vanilla, one line that DRH/mods are not the official
