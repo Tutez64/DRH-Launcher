@@ -38,8 +38,9 @@ fn main() {
 
 #[cfg(windows)]
 fn ignore_ctrl_c() {
-    use windows_sys::Win32::Foundation::{BOOL, TRUE};
+    use windows_sys::Win32::Foundation::TRUE;
     use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+    use windows_sys::core::BOOL;
 
     // A handler, not `SetConsoleCtrlHandler(None, TRUE)`: ignoring Ctrl+C that
     // way is inherited by the launcher.
