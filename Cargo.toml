@@ -13,6 +13,11 @@ repository = "https://github.com/Tutez64/DRH-Launcher"
 name = "DRH-Launcher"
 path = "src/main.rs"
 
+# Packaged on Windows only, as `DRH-Launcher.com` (see `resources` below).
+[[bin]]
+name = "DRH-Launcher-console"
+path = "src/bin/console.rs"
+
 [dependencies]
 cargo-packager-updater = "0.2.3"
 directories = "6.0.0"
@@ -46,6 +51,7 @@ libc = "0.2.190"
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
+    "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_UI_WindowsAndMessaging",
 ] }
@@ -74,6 +80,9 @@ icons = ["assets/icons/app-icon-256.png"]
 license-file = "LICENSE"
 long-description = "DRH Launcher installs, updates, configures, and launches Dungeon Rampage Haxe."
 binaries = [{ path = "DRH-Launcher", main = true }]
+# The console front for the modder commands. Only the Windows build has it:
+# a missing source is skipped, so the AppImage and the .app carry nothing.
+resources = [{ src = "target/release/DRH-Launcher-console.exe", target = "DRH-Launcher.com" }]
 
 [package.metadata.packager.appimage.files]
 "assets/icons/app-icon-16.png" = "usr/lib/DRH-Launcher/icons/16.png"
