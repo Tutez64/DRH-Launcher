@@ -51,7 +51,9 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [build-dependencies]
-slint-build = "1.18.1"
+# The default `renderer-software` feature only embeds resources for the
+# software renderer; build.rs embeds plain files, so it is dead weight here.
+slint-build = { version = "1.18.1", default-features = false, features = ["compat-1-18"] }
 winresource = "0.1.31"
 
 [dev-dependencies]
