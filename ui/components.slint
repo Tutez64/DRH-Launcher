@@ -813,19 +813,8 @@ export component CompactMetricBlock inherits Rectangle {
     in property <string> label;
     in property <string> value;
     property <length> horizontal-padding: 20px;
-    out property <float> measured-min-width-px:
-        max(96px, max(label-measurement.preferred-width, value-measurement.preferred-width) + root.horizontal-padding) / 1px;
-    callback width-measured(float);
 
-    init => {
-        root.width-measured(root.measured-min-width-px);
-    }
-
-    changed measured-min-width-px => {
-        root.width-measured(root.measured-min-width-px);
-    }
-
-    min-width: root.measured-min-width-px * 1px;
+    min-width: max(96px, max(label-measurement.preferred-width, value-measurement.preferred-width) + root.horizontal-padding);
     min-height: 52px;
     border-radius: 6px;
     border-width: 1px;
@@ -870,20 +859,9 @@ export component LinkButton inherits Rectangle {
     in property <int> icon-kind;
     property <length> label-left-padding: 48px;
     property <length> label-right-padding: 16px;
-    out property <float> measured-min-width-px:
-        max(120px, link-label-measurement.preferred-width + root.label-left-padding + root.label-right-padding) / 1px;
     callback clicked();
-    callback width-measured(float);
 
-    init => {
-        root.width-measured(root.measured-min-width-px);
-    }
-
-    changed measured-min-width-px => {
-        root.width-measured(root.measured-min-width-px);
-    }
-
-    min-width: root.measured-min-width-px * 1px;
+    min-width: max(120px, link-label-measurement.preferred-width + root.label-left-padding + root.label-right-padding);
     min-height: 40px;
     border-radius: 6px;
     border-width: 1px;
@@ -941,6 +919,29 @@ export component LinkButton inherits Rectangle {
         clicked => {
             root.clicked();
         }
+    }
+}
+
+// Equal-width columns that wrap: as many as fit (up to `max-columns`), sharing
+// the row's width. Each child binds `width: <flow>.cell-width`, and the caller
+// passes the widest child's `min-width` as `cell-min-width`. The children can't
+// be measured from in here: their width depends on it, which would loop. For
+// the same reason, the flow's own width must not come from its content: keep it
+// inside a ScrollView (or another fixed-width parent).
+export component EqualColumnFlow inherits Rectangle {
+    in property <length> cell-min-width;
+    in property <int> max-columns: 4;
+    in property <length> spacing: 8px;
+    property <int> columns: max(1, min(root.max-columns, floor((root.width + root.spacing) / (root.cell-min-width + root.spacing))));
+    out property <length> cell-width: (root.width - (root.columns - 1) * root.spacing) / root.columns;
+
+    horizontal-stretch: 1;
+    height: flow.preferred-height;
+
+    flow := FlexboxLayout {
+        width: parent.width;
+        spacing: root.spacing;
+        @children
     }
 }
 
@@ -1064,26 +1065,17 @@ export component CompactCheck inherits Rectangle {
     }
 }
 
+// Its texts must not bind `wrap`, even to `no-wrap` (the default): Slint 1.18's
+// FlexboxLayout would then size the row from the text and ignore `height`.
 export component LaunchOptionToggle inherits Rectangle {
     in property <string> text;
     in property <bool> checked;
     property <length> label-left-padding: 38px;
     property <length> label-right-padding: 12px;
-    out property <float> measured-min-width-px:
-        max(112px, measurement.preferred-width + root.label-left-padding + root.label-right-padding) / 1px;
     callback toggled(bool);
-    callback width-measured(float);
-
-    init => {
-        root.width-measured(root.measured-min-width-px);
-    }
-
-    changed measured-min-width-px => {
-        root.width-measured(root.measured-min-width-px);
-    }
 
     height: 38px;
-    min-width: root.measured-min-width-px * 1px;
+    min-width: max(112px, measurement.preferred-width + root.label-left-padding + root.label-right-padding);
     border-radius: 6px;
     border-width: 1px;
     border-color: root.checked ? Theme.accent-warm : touch.has-hover ? Theme.border-accent-muted : Theme.border-muted;
@@ -1094,7 +1086,6 @@ export component LaunchOptionToggle inherits Rectangle {
         font-size: 13px;
         font-weight: 700;
         letter-spacing: 0px;
-        wrap: no-wrap;
         overflow: clip;
         opacity: 0;
     }
@@ -1128,7 +1119,6 @@ export component LaunchOptionToggle inherits Rectangle {
         font-size: 13px;
         font-weight: root.checked ? 700 : 600;
         letter-spacing: 0px;
-        wrap: no-wrap;
         vertical-alignment: center;
         overflow: elide;
     }

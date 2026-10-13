@@ -325,7 +325,6 @@ pub(crate) fn apply_launch_options_to_view(
     extra_args: String,
 ) {
     let state = launch_options_state(&options);
-    ui.set_launch_option_min_width_px(132.0);
     ui.set_launch_options(ModelRc::new(VecModel::from(options)));
     ui.set_launch_options_state(state.into());
     ui.set_custom_game_args(extra_args.into());

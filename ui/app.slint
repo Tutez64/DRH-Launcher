@@ -5,6 +5,7 @@ import {
     CompactCheck,
     CompactMetricBlock,
     DiscreteSlider,
+    EqualColumnFlow,
     GameSessionButton,
     HelpGitHubButton,
     HelpMenuButton,
@@ -652,9 +653,6 @@ export component AppWindow inherits Window {
     in property <bool> launch-argument-controls-visible: false;
     in property <bool> launch-argument-modes-enabled: false;
     in property <[LaunchOptionView]> launch-options;
-    in property <float> launch-option-min-width-px: 210;
-    in property <float> drhl-metric-min-width-px: 96;
-    in property <float> link-button-min-width-px: 120;
     in-out property <string> launch-options-state;
     in-out property <string> saved-launch-options-state;
     property <bool> launch-options-dirty: root.pre-launch-command != root.saved-pre-launch-command
@@ -745,9 +743,6 @@ export component AppWindow inherits Window {
     callback save-launch-options();
     callback select-launch-arguments-mode(int);
     callback toggle-launch-option(int, bool);
-    callback launch-option-width-measured(float);
-    callback drhl-metric-width-measured(float);
-    callback link-button-width-measured(float);
     callback cancel-launch-options();
     callback cancel-close();
     callback confirm-close();
@@ -1551,32 +1546,15 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    if root.launch-argument-controls-visible && root.launch-options.length > 0 : option-area := Rectangle {
-                                        horizontal-stretch: 1;
-                                        height: option-grid.preferred-height;
+                                    if root.launch-argument-controls-visible && root.launch-options.length > 0 : launch-option-flow := EqualColumnFlow {
+                                        cell-min-width: launch-option-measure.min-width;
 
-                                        option-grid := GridLayout {
-                                            width: parent.width;
-                                            property <length> available-width: option-area.width;
-                                            property <int> columns:
-                                                option-grid.available-width >= root.launch-option-min-width-px * 4px + 24px ? 4
-                                                : option-grid.available-width >= root.launch-option-min-width-px * 3px + 16px ? 3
-                                                : option-grid.available-width >= root.launch-option-min-width-px * 2px + 8px ? 2
-                                                : 1;
-                                            spacing: 8px;
-
-                                            for option[index] in root.launch-options: LaunchOptionToggle {
-                                                min-width: root.launch-option-min-width-px * 1px;
-                                                row: index / option-grid.columns;
-                                                col: Math.mod(index, option-grid.columns);
-                                                text: option.name;
-                                                checked: option.checked;
-                                                toggled(checked) => {
-                                                    root.toggle-launch-option(index, checked);
-                                                }
-                                                width-measured(width) => {
-                                                    root.launch-option-width-measured(width);
-                                                }
+                                        for option[index] in root.launch-options: LaunchOptionToggle {
+                                            width: launch-option-flow.cell-width;
+                                            text: option.name;
+                                            checked: option.checked;
+                                            toggled(checked) => {
+                                                root.toggle-launch-option(index, checked);
                                             }
                                         }
                                     }
@@ -2243,51 +2221,27 @@ export component AppWindow inherits Window {
                                         title: "DRH Launcher";
                                         description: "The recommended way to install, update, configure, and play Dungeon Rampage Haxe.";
 
-                                        drhl-metrics-area := Rectangle {
-                                            horizontal-stretch: 1;
-                                            height: drhl-metrics-grid.preferred-height;
+                                        drhl-metrics := EqualColumnFlow {
+                                            cell-min-width: max(version-metric.min-width, technologies-metric.min-width, license-metric.min-width);
+                                            max-columns: 3;
+                                            spacing: 6px;
 
-                                            drhl-metrics-grid := GridLayout {
-                                                width: parent.width;
-                                                property <length> available-width: drhl-metrics-area.width;
-                                                property <int> columns:
-                                                    drhl-metrics-grid.available-width >= root.drhl-metric-min-width-px * 3px + 12px ? 3
-                                                    : drhl-metrics-grid.available-width >= root.drhl-metric-min-width-px * 2px + 6px ? 2
-                                                    : 1;
-                                                spacing: 6px;
+                                            version-metric := CompactMetricBlock {
+                                                width: drhl-metrics.cell-width;
+                                                label: "Version";
+                                                value: root.launcher-version;
+                                            }
 
-                                                CompactMetricBlock {
-                                                    min-width: root.drhl-metric-min-width-px * 1px;
-                                                    row: 0;
-                                                    col: 0;
-                                                    label: "Version";
-                                                    value: root.launcher-version;
-                                                    width-measured(width) => {
-                                                        root.drhl-metric-width-measured(width);
-                                                    }
-                                                }
+                                            technologies-metric := CompactMetricBlock {
+                                                width: drhl-metrics.cell-width;
+                                                label: "Technologies";
+                                                value: "Rust and Slint";
+                                            }
 
-                                                CompactMetricBlock {
-                                                    min-width: root.drhl-metric-min-width-px * 1px;
-                                                    row: 0 / drhl-metrics-grid.columns;
-                                                    col: Math.mod(1, drhl-metrics-grid.columns);
-                                                    label: "Technologies";
-                                                    value: "Rust and Slint";
-                                                    width-measured(width) => {
-                                                        root.drhl-metric-width-measured(width);
-                                                    }
-                                                }
-
-                                                CompactMetricBlock {
-                                                    min-width: root.drhl-metric-min-width-px * 1px;
-                                                    row: 2 / drhl-metrics-grid.columns;
-                                                    col: Math.mod(2, drhl-metrics-grid.columns);
-                                                    label: "License";
-                                                    value: "GPL-3.0-or-later";
-                                                    width-measured(width) => {
-                                                        root.drhl-metric-width-measured(width);
-                                                    }
-                                                }
+                                            license-metric := CompactMetricBlock {
+                                                width: drhl-metrics.cell-width;
+                                                label: "License";
+                                                value: "GPL-3.0-or-later";
                                             }
                                         }
                                     }
@@ -2308,74 +2262,43 @@ export component AppWindow inherits Window {
                                         title: "Links";
                                         description: "Community and source repositories. If you appreciate my work, starring the GitHub repositories helps support the projects.";
 
-                                        link-buttons-area := Rectangle {
-                                            horizontal-stretch: 1;
-                                            height: link-buttons-grid.preferred-height;
+                                        link-buttons := EqualColumnFlow {
+                                            cell-min-width: max(discord-link.min-width, drh-link.min-width, drhl-link.min-width, ax4-link.min-width);
+                                            spacing: 10px;
 
-                                            link-buttons-grid := GridLayout {
-                                                width: parent.width;
-                                                property <length> available-width: link-buttons-area.width;
-                                                property <int> columns:
-                                                    link-buttons-grid.available-width >= root.link-button-min-width-px * 4px + 30px ? 4
-                                                    : link-buttons-grid.available-width >= root.link-button-min-width-px * 3px + 20px ? 3
-                                                    : link-buttons-grid.available-width >= root.link-button-min-width-px * 2px + 10px ? 2
-                                                    : 1;
-                                                spacing: 10px;
-
-                                                LinkButton {
-                                                    min-width: root.link-button-min-width-px * 1px;
-                                                    row: 0;
-                                                    col: 0;
-                                                    text: "Discord";
-                                                    icon-kind: 0;
-                                                    clicked => {
-                                                        root.open-discord-link();
-                                                    }
-                                                    width-measured(width) => {
-                                                        root.link-button-width-measured(width);
-                                                    }
+                                            discord-link := LinkButton {
+                                                width: link-buttons.cell-width;
+                                                text: "Discord";
+                                                icon-kind: 0;
+                                                clicked => {
+                                                    root.open-discord-link();
                                                 }
+                                            }
 
-                                                LinkButton {
-                                                    min-width: root.link-button-min-width-px * 1px;
-                                                    row: 1 / link-buttons-grid.columns;
-                                                    col: Math.mod(1, link-buttons-grid.columns);
-                                                    text: "DRH GitHub";
-                                                    icon-kind: 1;
-                                                    clicked => {
-                                                        root.open-drh-github-link();
-                                                    }
-                                                    width-measured(width) => {
-                                                        root.link-button-width-measured(width);
-                                                    }
+                                            drh-link := LinkButton {
+                                                width: link-buttons.cell-width;
+                                                text: "DRH GitHub";
+                                                icon-kind: 1;
+                                                clicked => {
+                                                    root.open-drh-github-link();
                                                 }
+                                            }
 
-                                                LinkButton {
-                                                    min-width: root.link-button-min-width-px * 1px;
-                                                    row: 2 / link-buttons-grid.columns;
-                                                    col: Math.mod(2, link-buttons-grid.columns);
-                                                    text: "DRHL GitHub";
-                                                    icon-kind: 1;
-                                                    clicked => {
-                                                        root.open-drhl-github-link();
-                                                    }
-                                                    width-measured(width) => {
-                                                        root.link-button-width-measured(width);
-                                                    }
+                                            drhl-link := LinkButton {
+                                                width: link-buttons.cell-width;
+                                                text: "DRHL GitHub";
+                                                icon-kind: 1;
+                                                clicked => {
+                                                    root.open-drhl-github-link();
                                                 }
+                                            }
 
-                                                LinkButton {
-                                                    min-width: root.link-button-min-width-px * 1px;
-                                                    row: 3 / link-buttons-grid.columns;
-                                                    col: Math.mod(3, link-buttons-grid.columns);
-                                                    text: "ax4 GitHub";
-                                                    icon-kind: 1;
-                                                    clicked => {
-                                                        root.open-ax4-github-link();
-                                                    }
-                                                    width-measured(width) => {
-                                                        root.link-button-width-measured(width);
-                                                    }
+                                            ax4-link := LinkButton {
+                                                width: link-buttons.cell-width;
+                                                text: "ax4 GitHub";
+                                                icon-kind: 1;
+                                                clicked => {
+                                                    root.open-ax4-github-link();
                                                 }
                                             }
                                         }
@@ -2394,6 +2317,22 @@ export component AppWindow inherits Window {
         running: root.download-cache-save-text != "Save" && !root.download-cache-limit-dirty;
         triggered => {
             root.download-cache-save-text = "Save";
+        }
+    }
+
+    // A hidden copy of the launch-option toggles: its width is the widest
+    // toggle's, which the visible ones share (see EqualColumnFlow). The explicit
+    // position keeps its size constraints out of the window's: without it, the
+    // window could not grow taller than the stacked toggles.
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        visible: false;
+
+        launch-option-measure := VerticalLayout {
+            for option in root.launch-options: LaunchOptionToggle {
+                text: option.name;
+            }
         }
     }
 

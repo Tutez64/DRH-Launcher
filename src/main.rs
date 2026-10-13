@@ -1017,45 +1017,6 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
 
     {
         let ui = ui.as_weak();
-        ui.unwrap().on_launch_option_width_measured(move |width| {
-            let Some(ui) = ui.upgrade() else {
-                return;
-            };
-
-            if width > ui.get_launch_option_min_width_px() {
-                ui.set_launch_option_min_width_px(width);
-            }
-        });
-    }
-
-    {
-        let ui = ui.as_weak();
-        ui.unwrap().on_drhl_metric_width_measured(move |width| {
-            let Some(ui) = ui.upgrade() else {
-                return;
-            };
-
-            if width > ui.get_drhl_metric_min_width_px() {
-                ui.set_drhl_metric_min_width_px(width);
-            }
-        });
-    }
-
-    {
-        let ui = ui.as_weak();
-        ui.unwrap().on_link_button_width_measured(move |width| {
-            let Some(ui) = ui.upgrade() else {
-                return;
-            };
-
-            if width > ui.get_link_button_min_width_px() {
-                ui.set_link_button_min_width_px(width);
-            }
-        });
-    }
-
-    {
-        let ui = ui.as_weak();
         ui.unwrap().on_toggle_launch_option(move |index, checked| {
             let Some(ui) = ui.upgrade() else {
                 return;
