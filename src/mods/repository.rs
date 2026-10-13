@@ -12,19 +12,12 @@ pub fn source_of(dir: &Path) -> Result<String, String> {
             format!("GITHUB_REPOSITORY {repository} is not a github.com repository")
         });
     }
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["remote", "get-url", "origin"])
-        .output()
-        .map_err(|error| format!("Could not run git: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
+    let remote = git(Some(dir), &["remote", "get-url", "origin"]).map_err(|_| {
+        format!(
             "{} has no origin remote: push it to GitHub first",
             dir.display()
-        ));
-    }
-    let remote = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        )
+    })?;
     normalize(&remote).ok_or_else(|| format!("The origin remote {remote} is not on github.com"))
 }
 
@@ -54,6 +47,27 @@ pub fn owner(source: &str) -> Option<&str> {
         .strip_prefix("https://github.com/")?
         .split('/')
         .next()
+}
+
+/// Runs git, in `dir` when given; its error output on failure.
+pub fn git(dir: Option<&Path>, args: &[&str]) -> Result<String, String> {
+    let mut command = Command::new("git");
+    if let Some(dir) = dir {
+        command.arg("-C").arg(dir);
+    }
+    let output = command
+        .args(args)
+        .output()
+        .map_err(|error| format!("Could not run git (is it installed?): {error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(format!(
+            "git {} failed: {}",
+            args.first().unwrap_or(&""),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
 }
 
 #[cfg(test)]
