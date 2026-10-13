@@ -95,6 +95,9 @@ The intended managed content layout is:
         <completed-session-timestamp>.log.zst
     downloads/
     staging/
+    mod-cache/        # --run-mod: indexed mod versions, one folder each
+    run-mod/          # --run-mod: the mods folder it composes, rebuilt each run
+    run-mod-zip/      # --run-mod on a zip: the zip extracted
   Dungeon Rampage Haxe/
     current/
       Dungeon Rampage Haxe
@@ -227,7 +230,9 @@ DRH-Launcher --play
 
 `DRH-Launcher` opens the full UI.
 
-Modders also get `--new-mod`, `--check-mod`, `--run-mod`, `--pack-mod` and `--submit-mod`, which run without the UI. What each does is in the game document ([Mod repository](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/modding.md#mod-repository)); the checks are the ones the launcher applies at install, implemented once.
+Modders also get `--new-mod`, `--check-mod`, `--run-mod`, `--pack-mod` and `--submit-mod`, which run without the UI, print to the console, and exit with 0 on success, 1 on failure and 2 on wrong arguments. What each does is in the game document ([Mod repository](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/modding.md#mod-repository)); the checks are the ones the launcher applies at install, implemented once.
+
+On Windows the release build is a GUI program: a shell neither waits for it nor shows its output. The installer also puts `DRH-Launcher.com` next to `DRH-Launcher.exe`, a console program built from `src/bin/console.rs`: a shell picks `.com` before `.exe` for a name typed without extension, so `DRH-Launcher --check-mod .` reaches it, from cmd as from PowerShell. It runs the `.exe` with the same arguments and returns its exit code; the `.exe` attaches to its console for a modder command. Shortcuts and Steam still start the `.exe`, without a console. The launcher is not added to `PATH`: the modders' guide gives the full path.
 
 `DRH-Launcher --play` is intended for Steam and shortcuts. It should quickly check required state, apply or prompt for important updates when needed, then launch DRH without forcing the full UI when everything is ready.
 
@@ -679,7 +684,7 @@ The UI should make this explicit and avoid treating Steam shortcut editing as gu
 
 ## Mods
 
-Mods are designed; implementation is a later phase. The runtime design lives in the game
+The modder commands ([Launch Modes](#launch-modes)) exist; the Mods page is a later phase. The runtime design lives in the game
 repository: [docs/modding.md](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/modding.md).
 That document is the source of truth for how mods load, compile (hxScript /
 cppia in the game process), how they are published, and how they talk to DRH.
@@ -697,9 +702,9 @@ Discovery uses an **index we control**, not a third-party store and not
 Discord as a catalog. The index lists artifacts (`id`, version, SHA-256,
 URL, plus the `mod.json` fields), not author repositories. A new mod version is
 not offered until it is in the index. A later website can consume the
-same index. The launcher reads it from a URL set at compile time, the game
-document's by default; test builds can override it, as
-`DRHL_UPDATE_ENDPOINT` does for updates.
+same index. The launcher reads it from the game document's URL;
+`DRHL_MOD_INDEX_URL`, at compile time or at run time, points a test build
+at another one, as `DRHL_UPDATE_ENDPOINT` does for updates.
 
 Layout, under the managed install root, outside the replaceable game tree:
 
