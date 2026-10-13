@@ -1676,7 +1676,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                 remember_game_log_position(
                     &mut game_log_positions.borrow_mut(),
                     current_session_id,
-                    ui.get_game_log_viewport_y(),
+                    ui.get_game_log_content_y(),
                     ui.get_game_log_at_end(),
                 );
             }
@@ -1689,11 +1689,11 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                     saved_game_log_position(&game_log_positions.borrow(), &session_id)
                 });
             if let Some(position) = restored_position {
-                ui.set_game_log_viewport_y(position.y);
+                ui.set_game_log_content_y(position.y);
                 ui.set_game_log_at_end(position.at_end);
                 ui.set_game_log_position_known(true);
             } else {
-                ui.set_game_log_viewport_y(0.0);
+                ui.set_game_log_content_y(0.0);
                 ui.set_game_log_at_end(false);
                 ui.set_game_log_position_known(false);
             }

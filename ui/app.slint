@@ -67,11 +67,11 @@ component LogViewer inherits Rectangle {
     in property <[LogLineView]> lines;
     in property <bool> default-scroll-to-end;
     in property <bool> saved-position-known;
-    in property <length> saved-viewport-y;
+    in property <length> saved-content-y;
     in property <bool> saved-at-end;
     in property <int> position-key;
     callback wrap-columns-measured(int);
-    callback viewport-position-changed(length, bool);
+    callback content-position-changed(length, bool);
     callback copy-requested(int, int, int, int) -> string;
     callback set-hide-haxe-iteratee-log-lines(bool);
     property <bool> display-settings-open: false;
@@ -79,11 +79,11 @@ component LogViewer inherits Rectangle {
     property <bool> restoring-position: true;
     property <int> stable-restore-ticks: 0;
     property <length> last-restore-target: 1px;
-    property <length> current-viewport-y: log-list.viewport-y;
+    property <length> current-content-y: log-list.content-y;
     property <length> line-height: 20px;
     property <length> content-height: root.lines.length * root.line-height;
-    property <length> end-viewport-y: min(0px, log-list.visible-height - root.content-height);
-    property <bool> at-end: log-list.viewport-y <= root.end-viewport-y + 1px;
+    property <length> end-content-y: min(0px, log-list.visible-height - root.content-height);
+    property <bool> at-end: log-list.content-y <= root.end-content-y + 1px;
     property <length> char-width: character-measurement.preferred-width / 64;
     property <int> sel-anchor-line: 0;
     property <int> sel-anchor-col: 0;
@@ -125,9 +125,9 @@ component LogViewer inherits Rectangle {
         root.clear-selection();
     }
 
-    changed current-viewport-y => {
+    changed current-content-y => {
         if (!root.restoring-position) {
-            root.viewport-position-changed(root.current-viewport-y, root.at-end);
+            root.content-position-changed(root.current-content-y, root.at-end);
         }
         if (root.selecting) {
             root.apply-pointer-selection();
@@ -152,7 +152,7 @@ component LogViewer inherits Rectangle {
         if (root.lines.length == 0) {
             return 0;
         }
-        return min(root.lines.length - 1, max(0, floor((-log-list.viewport-y + y) / root.line-height)));
+        return min(root.lines.length - 1, max(0, floor((-log-list.content-y + y) / root.line-height)));
     }
 
     function apply-pointer-selection() {
@@ -426,7 +426,7 @@ component LogViewer inherits Rectangle {
                         }
                         scroll-event(event) => {
                             if (root.selecting) {
-                                log-list.viewport-y = min(0px, max(root.end-viewport-y, log-list.viewport-y + event.delta-y));
+                                log-list.content-y = min(0px, max(root.end-content-y, log-list.content-y + event.delta-y));
                                 root.apply-pointer-selection();
                                 return accept;
                             }
@@ -441,10 +441,10 @@ component LogViewer inherits Rectangle {
                         triggered => {
                             if (root.pointer-y < 0px) {
                                 let step = max(4px, min(72px, -root.pointer-y / 3));
-                                log-list.viewport-y = min(0px, log-list.viewport-y + step);
+                                log-list.content-y = min(0px, log-list.content-y + step);
                             } else if (root.pointer-y > log-list.visible-height) {
                                 let step = max(4px, min(72px, (root.pointer-y - log-list.visible-height) / 3));
-                                log-list.viewport-y = max(root.end-viewport-y, log-list.viewport-y - step);
+                                log-list.content-y = max(root.end-content-y, log-list.content-y - step);
                             }
                             root.apply-pointer-selection();
                         }
@@ -472,11 +472,11 @@ component LogViewer inherits Rectangle {
                         }
 
                         let target = root.saved-position-known
-                            ? root.saved-at-end ? root.end-viewport-y : root.saved-viewport-y
-                            : root.default-scroll-to-end ? root.end-viewport-y : 0px;
-                        log-list.viewport-y = target;
+                            ? root.saved-at-end ? root.end-content-y : root.saved-content-y
+                            : root.default-scroll-to-end ? root.end-content-y : 0px;
+                        log-list.content-y = target;
 
-                        if (target == root.last-restore-target && log-list.viewport-y == target) {
+                        if (target == root.last-restore-target && log-list.content-y == target) {
                             root.stable-restore-ticks += 1;
                         } else {
                             root.last-restore-target = target;
@@ -485,7 +485,7 @@ component LogViewer inherits Rectangle {
 
                         if (root.stable-restore-ticks >= 3) {
                             root.restoring-position = false;
-                            root.viewport-position-changed(log-list.viewport-y, root.at-end);
+                            root.content-position-changed(log-list.content-y, root.at-end);
                         }
                     }
                 }
@@ -595,10 +595,10 @@ export component AppWindow inherits Window {
     in-out property <int> game-log-wrap-columns: 120;
     in-out property <int> log-source: 0;
     in-out property <int> selected-game-log-index: -1;
-    in-out property <length> launcher-log-viewport-y: 0px;
+    in-out property <length> launcher-log-content-y: 0px;
     in-out property <bool> launcher-log-position-known: false;
     in-out property <bool> launcher-log-at-end: false;
-    in-out property <length> game-log-viewport-y: 0px;
+    in-out property <length> game-log-content-y: 0px;
     in-out property <bool> game-log-position-known: false;
     in-out property <bool> game-log-at-end: false;
     in property <string> selected-game-log-id;
@@ -1333,8 +1333,8 @@ export component AppWindow inherits Window {
                         options-page-scroll := ScrollView {
                             horizontal-stretch: 1;
                             vertical-stretch: 1;
-                            viewport-width: self.width;
-                            viewport-height: options-page-content.preferred-height;
+                            content-width: self.width;
+                            content-height: options-page-content.preferred-height;
 
                             options-page-content := VerticalLayout {
                                 width: options-page-scroll.width;
@@ -1734,8 +1734,8 @@ export component AppWindow inherits Window {
                                 ScrollView {
                                     horizontal-stretch: 1;
                                     vertical-stretch: 1;
-                                    viewport-width: self.width;
-                                    viewport-height: version-changelog-content.preferred-height;
+                                    content-width: self.width;
+                                    content-height: version-changelog-content.preferred-height;
 
                                     version-changelog-content := VerticalLayout {
                                         width: parent.width;
@@ -1853,8 +1853,8 @@ export component AppWindow inherits Window {
                             general-page-scroll := ScrollView {
                                 horizontal-stretch: 1;
                                 vertical-stretch: 1;
-                                viewport-width: self.width;
-                                viewport-height: general-page-content.preferred-height;
+                                content-width: self.width;
+                                content-height: general-page-content.preferred-height;
 
                                 general-page-content := VerticalLayout {
                                     width: general-page-scroll.width;
@@ -2095,7 +2095,7 @@ export component AppWindow inherits Window {
                                 lines: root.log-lines;
                                 default-scroll-to-end: true;
                                 saved-position-known: root.launcher-log-position-known;
-                                saved-viewport-y: root.launcher-log-viewport-y;
+                                saved-content-y: root.launcher-log-content-y;
                                 saved-at-end: root.launcher-log-at-end;
                                 position-key: 0;
                                 horizontal-stretch: 1;
@@ -2103,8 +2103,8 @@ export component AppWindow inherits Window {
                                 wrap-columns-measured(columns) => {
                                     root.log-wrap-columns-measured(0, columns);
                                 }
-                                viewport-position-changed(position, at-end) => {
-                                    root.launcher-log-viewport-y = position;
+                                content-position-changed(position, at-end) => {
+                                    root.launcher-log-content-y = position;
                                     root.launcher-log-at-end = at-end;
                                     root.launcher-log-position-known = true;
                                 }
@@ -2156,7 +2156,7 @@ export component AppWindow inherits Window {
                                     lines: root.log-lines;
                                     default-scroll-to-end: false;
                                     saved-position-known: root.game-log-position-known;
-                                    saved-viewport-y: root.game-log-viewport-y;
+                                    saved-content-y: root.game-log-content-y;
                                     saved-at-end: root.game-log-at-end;
                                     position-key: root.selected-game-log-index;
                                     horizontal-stretch: 1;
@@ -2164,8 +2164,8 @@ export component AppWindow inherits Window {
                                     wrap-columns-measured(columns) => {
                                         root.log-wrap-columns-measured(1, columns);
                                     }
-                                    viewport-position-changed(position, at-end) => {
-                                        root.game-log-viewport-y = position;
+                                    content-position-changed(position, at-end) => {
+                                        root.game-log-content-y = position;
                                         root.game-log-at-end = at-end;
                                         root.game-log-position-known = true;
                                     }
@@ -2218,8 +2218,8 @@ export component AppWindow inherits Window {
                             about-page-scroll := ScrollView {
                                 horizontal-stretch: 1;
                                 vertical-stretch: 1;
-                                viewport-width: self.width;
-                                viewport-height: about-page-content.preferred-height;
+                                content-width: self.width;
+                                content-height: about-page-content.preferred-height;
 
                                 about-page-content := VerticalLayout {
                                     width: about-page-scroll.width;
