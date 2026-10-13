@@ -63,6 +63,16 @@ pub fn installed_metadata_file(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("installed.json")
 }
 
+/// Indexed mod versions `--run-mod` installs, one folder each.
+pub fn mod_cache_dir(install_dir: &std::path::Path) -> PathBuf {
+    data_dir(install_dir).join("mod-cache")
+}
+
+/// The mods folder `--run-mod` composes and passes to the game.
+pub fn run_mod_dir(install_dir: &std::path::Path) -> PathBuf {
+    data_dir(install_dir).join("run-mod")
+}
+
 pub fn safe_file_name<'a>(name: &'a str, description: &str) -> Result<&'a str, String> {
     if name.is_empty() {
         return Err(format!("{description} is empty"));

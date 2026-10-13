@@ -23,6 +23,8 @@ mod launch_options;
 mod launcher_update;
 mod linux_appimage;
 mod log_view;
+mod mod_commands;
+mod mods;
 mod paths;
 mod platform;
 mod play_mode;
@@ -116,6 +118,11 @@ const XDG_APP_ID: &str = "io.github.Tutez64.DRHLauncher";
 
 fn main() {
     install_panic_hook();
+
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if let Some(code) = mod_commands::run_if_requested(&args) {
+        std::process::exit(code);
+    }
 
     let startup_notice = match play_mode::startup_mode_from_args(std::env::args_os().skip(1)) {
         Ok(play_mode::StartupMode::Gui) => None,

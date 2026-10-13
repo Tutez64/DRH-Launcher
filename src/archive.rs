@@ -101,7 +101,7 @@ fn extract_tar_gz(archive_path: &Path, destination: &Path) -> Result<(), String>
     Ok(())
 }
 
-fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), String> {
+pub(crate) fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), String> {
     let file = File::open(archive_path)
         .map_err(|error| format!("Could not open {}: {error}", archive_path.display()))?;
     let mut archive = ZipArchive::new(file)
