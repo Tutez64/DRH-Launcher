@@ -39,10 +39,15 @@ pub fn run_mod(path: &Path) -> Result<(), String> {
             install.status_text()
         ));
     }
-    let installed_tag = install
-        .installed_version
-        .as_deref()
-        .and_then(|version| version.trim_start_matches(['V', 'v']).parse().ok());
+    // `V14`, or a local build's `V14-something`: the tag's number.
+    let installed_tag = install.installed_version.as_deref().and_then(|version| {
+        let digits: String = version
+            .trim_start_matches(['V', 'v'])
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        digits.parse().ok()
+    });
 
     let source = if path.is_file() {
         let unpacked = paths::data_dir(&install_dir).join("run-mod-zip");
