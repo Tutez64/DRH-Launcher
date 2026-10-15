@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use crate::mods::check::check_mod;
+use crate::mods::index_ci::{build_index, check_entry};
 use crate::mods::new::new_mod;
 use crate::mods::pack::pack_mod;
 use crate::mods::run::run_mod;
@@ -21,6 +22,11 @@ pub enum Command {
     /// The mod's folder, and the account holding the index fork when it is
     /// not the repository's owner.
     Submit(PathBuf, Option<String>),
+    /// Index CI: an added entry, the index it joins, a work folder, and
+    /// whether a reviewer accepted a takeover.
+    CheckEntry(PathBuf, PathBuf, PathBuf, bool),
+    /// Index CI: the index checkout and the file to write.
+    BuildIndex(PathBuf, PathBuf),
 }
 
 const USAGE: &str = "usage:
@@ -28,14 +34,19 @@ const USAGE: &str = "usage:
   DRH-Launcher --check-mod <dir>
   DRH-Launcher --run-mod <dir or zip>
   DRH-Launcher --pack-mod <dir> [<out-dir>]
-  DRH-Launcher --submit-mod <dir> [<fork-owner>]";
+  DRH-Launcher --submit-mod <dir> [<fork-owner>]
+index CI:
+  DRH-Launcher --check-entry <entry.json> <base-index-dir> <work-dir> [--takeover]
+  DRH-Launcher --build-index <index-dir> <out-file>";
 
-const NAMES: [&str; 5] = [
+const NAMES: [&str; 7] = [
     "--new-mod",
     "--check-mod",
     "--run-mod",
     "--pack-mod",
     "--submit-mod",
+    "--check-entry",
+    "--build-index",
 ];
 
 /// `None` when the arguments name no modder command: the launcher starts as
@@ -56,6 +67,13 @@ pub fn from_args(args: &[OsString]) -> Option<Result<Command, String>> {
         ("--submit-mod", [dir, owner]) => {
             Command::Submit(dir.clone(), Some(owner.to_string_lossy().into_owned()))
         }
+        ("--check-entry", [entry, base, work]) => {
+            Command::CheckEntry(entry.clone(), base.clone(), work.clone(), false)
+        }
+        ("--check-entry", [entry, base, work, flag]) if flag.as_os_str() == "--takeover" => {
+            Command::CheckEntry(entry.clone(), base.clone(), work.clone(), true)
+        }
+        ("--build-index", [dir, out]) => Command::BuildIndex(dir.clone(), out.clone()),
         _ => return Some(Err(USAGE.to_string())),
     };
     Some(Ok(command))
@@ -109,6 +127,30 @@ fn run(command: Command) -> Result<(), String> {
             Ok(())
         }
         Command::Submit(dir, owner) => submit_mod(&dir, owner.as_deref()),
+        Command::CheckEntry(entry, base, work, takeover) => {
+            let report = check_entry(&entry, &base, &work, takeover);
+            for note in &report.notes {
+                println!("note: {note}");
+            }
+            for problem in &report.problems {
+                println!("error: {problem}");
+            }
+            if report.problems.is_empty() {
+                println!("{}: ok", entry.display());
+                Ok(())
+            } else {
+                Err(format!(
+                    "{} problem(s) in {}",
+                    report.problems.len(),
+                    entry.display()
+                ))
+            }
+        }
+        Command::BuildIndex(dir, out) => {
+            let count = build_index(&dir, &out)?;
+            println!("{}: {count} entries", out.display());
+            Ok(())
+        }
     }
 }
 

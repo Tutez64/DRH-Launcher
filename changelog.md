@@ -3,7 +3,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 ### Added
 
-- Commands for modders, run from a terminal without opening the launcher: `--new-mod` starts a mod from the template, `--check-mod` checks it, `--run-mod` plays it with what it needs, `--pack-mod` builds its release, `--submit-mod` proposes it to the mod index. On Windows, `DRH-Launcher.com`, installed next to the launcher, lets a terminal wait for them and show their output.
+- Commands for modders, run from a terminal without opening the launcher: `--new-mod` starts a mod from the template, `--check-mod` checks it, `--run-mod` plays it with what it needs, `--pack-mod` builds its release, `--submit-mod` proposes it to the mod index. The index's CI runs `--check-entry` and `--build-index`. On Windows, `DRH-Launcher.com`, installed next to the launcher, lets a terminal wait for them and show their output.
 
 ### Fixed
 

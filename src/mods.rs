@@ -3,6 +3,7 @@
 
 pub mod check;
 pub mod index;
+pub mod index_ci;
 pub mod install;
 pub mod manifest;
 pub mod new;

@@ -230,7 +230,7 @@ DRH-Launcher --play
 
 `DRH-Launcher` opens the full UI.
 
-Modders also get `--new-mod`, `--check-mod`, `--run-mod`, `--pack-mod` and `--submit-mod`, which run without the UI, print to the console, and exit with 0 on success, 1 on failure and 2 on wrong arguments. What each does is in the game document ([Mod repository](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/modding.md#mod-repository)); the checks are the ones the launcher applies at install, implemented once.
+Modders also get `--new-mod`, `--check-mod`, `--run-mod`, `--pack-mod` and `--submit-mod`, which run without the UI, print to the console, and exit with 0 on success, 1 on failure and 2 on wrong arguments. What each does is in the game document ([Mod repository](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/modding.md#mod-repository)); the checks are the ones the launcher applies at install, implemented once. The mod index's CI runs two more: `--check-entry`, on each entry a pull request adds, and `--build-index`, which writes the `index.json` it deploys.
 
 On Windows the release build is a GUI program: a shell neither waits for it nor shows its output. The installer also puts `DRH-Launcher.com` next to `DRH-Launcher.exe`, a console program built from `src/bin/console.rs`: a shell picks `.com` before `.exe` for a name typed without extension, so `DRH-Launcher --check-mod .` reaches it, from cmd as from PowerShell. It runs the `.exe` with the same arguments and returns its exit code; the `.exe` attaches to its console for a modder command. Shortcuts and Steam still start the `.exe`, without a console. The launcher is not added to `PATH`: the modders' guide gives the full path.
 

@@ -20,28 +20,38 @@ pub fn cached_mod(entry: &Entry, cache: &Path) -> Result<PathBuf, String> {
     if !valid_id(&entry.id) {
         return Err(format!("{} is not a valid mod id", entry.id));
     }
-    let stem = format!("{}-{version}", entry.id);
-    let folder = cache.join(&stem);
-    if folder.join("mod.json").is_file() {
-        return Ok(folder);
+    let folder = cache.join(format!("{}-{version}", entry.id));
+    if !folder.join("mod.json").is_file() {
+        download_and_extract(entry, &folder)?;
     }
+    Ok(folder)
+}
 
-    fs::create_dir_all(cache)
-        .map_err(|error| format!("Could not create {}: {error}", cache.display()))?;
-    let zip = cache.join(format!("{stem}.zip"));
+/// Downloads the entry's zip without an account, checks its size and
+/// SHA-256, and extracts it into `folder`, created next to it.
+pub fn download_and_extract(entry: &Entry, folder: &Path) -> Result<(), String> {
+    let parent = folder
+        .parent()
+        .ok_or_else(|| format!("{} has no parent folder", folder.display()))?;
+    let name = folder
+        .file_name()
+        .ok_or_else(|| format!("{} has no name", folder.display()))?
+        .to_string_lossy();
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create {}: {error}", parent.display()))?;
+    let zip = parent.join(format!("{name}.zip"));
     download_verified(entry, &zip)?;
-    let staging = cache.join(format!("{stem}.extracting"));
+    let staging = parent.join(format!("{name}.extracting"));
     let _ = fs::remove_dir_all(&staging);
     let extracted = extract_zip(&zip, &staging).and_then(|()| {
-        fs::rename(&staging, &folder)
+        fs::rename(&staging, folder)
             .map_err(|error| format!("Could not move {}: {error}", staging.display()))
     });
     let _ = fs::remove_file(&zip);
-    if let Err(error) = extracted {
+    if extracted.is_err() {
         let _ = fs::remove_dir_all(&staging);
-        return Err(error);
     }
-    Ok(folder)
+    extracted
 }
 
 fn download_verified(entry: &Entry, path: &Path) -> Result<(), String> {
