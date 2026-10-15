@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::version::Version;
 
-const DEFAULT_INDEX_URL: &str = "https://tutez64.github.io/DRH-Mod-Index/index.json";
+const DEFAULT_INDEX_URL: &str = "https://tutez64.github.io/DRH-Mods-Index/index.json";
 
 /// The generated file's format this launcher reads.
 pub const FORMAT: u64 = 1;

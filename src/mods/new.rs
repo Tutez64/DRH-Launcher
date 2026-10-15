@@ -1,4 +1,4 @@
-//! `--new-mod`: a fresh mod repository from `DRH-Mod-Template`.
+//! `--new-mod`: a fresh mod repository from `DRH-Mods-Template`.
 
 use std::fs;
 use std::io::{BufRead, Write};
@@ -8,7 +8,7 @@ use super::index::Index;
 use super::manifest::{API_ID, MAX_AUTHOR_CHARS, MAX_NAME_CHARS, valid_id};
 use super::repository::git;
 
-const TEMPLATE_URL: &str = "https://github.com/Tutez64/DRH-Mod-Template";
+const TEMPLATE_URL: &str = "https://github.com/Tutez64/DRH-Mods-Template";
 
 /// The answers `--new-mod` asks for.
 pub struct NewMod {
@@ -64,8 +64,8 @@ pub fn new_mod(dir: &Path, input: &mut impl BufRead) -> Result<(), String> {
         repository
     );
     println!("{} is ready in {}.", answers.id, dir.display());
-    println!("Create its repository (opened in your browser: {url}),");
-    println!("add the topic drh-mod to it, then push:");
+    println!("Create its repository, named DRH-Mod-<Name> to be indexed");
+    println!("(opened in your browser: {url}), then push:");
     println!(
         "  git -C \"{}\" remote add origin https://github.com/<you>/{repository}",
         dir.display()

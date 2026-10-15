@@ -13,7 +13,7 @@ use super::index::{Entry, FORMAT, Index};
 use super::install::download_and_extract;
 use super::manifest::{API_ID, valid_id};
 use super::pack::entry_for;
-use super::repository::normalize;
+use super::repository::{check_mod_repository, normalize};
 use super::resolve::resolve;
 use super::version::Requirement;
 use crate::diagnostics::format_system_time_utc;
@@ -210,6 +210,8 @@ fn read_new_entry(path: &Path) -> Result<Entry, Vec<String>> {
             "source {} must be https://github.com/<owner>/<repository>",
             entry.source
         ));
+    } else if let Err(problem) = check_mod_repository(&entry.source) {
+        problems.push(problem);
     }
     let url = format!(
         "{}/releases/download/v{}/{}-{}.zip",
@@ -336,8 +338,8 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "id": id, "name": id, "version": version, "author": "me",
             "description": "d", "api": "1.0", "uses": [],
-            "url": format!("https://github.com/me/m/releases/download/v{version}/{id}-{version}.zip"),
-            "size": 1, "sha256": "00", "source": "https://github.com/me/m"
+            "url": format!("https://github.com/me/DRH-Mod-M/releases/download/v{version}/{id}-{version}.zip"),
+            "size": 1, "sha256": "00", "source": "https://github.com/me/DRH-Mod-M"
         }))
         .unwrap()
     }
@@ -372,14 +374,16 @@ mod tests {
         let indexed = [api, entry("cool_hud", "0.1.0")];
 
         let mut moved = entry("cool_hud", "0.2.0");
-        moved.source = "https://github.com/other/m".to_string();
+        moved.source = "https://github.com/other/DRH-Mod-M".to_string();
         moved.author = "other".to_string();
         moved.api = Some("2.0".to_string());
 
         let mut report = EntryReport::default();
         let previous = check_against_index(&moved, &indexed, false, &mut report);
         assert_eq!(previous.map(|entry| entry.version.as_str()), Some("0.1.0"));
-        assert!(report.problems[0].starts_with("cool_hud belongs to https://github.com/me/m"));
+        assert!(
+            report.problems[0].starts_with("cool_hud belongs to https://github.com/me/DRH-Mod-M")
+        );
         assert_eq!(
             report.problems[1],
             "No indexed version of api fits: cool_hud needs 2.0.0."
@@ -414,7 +418,7 @@ mod tests {
         );
         write("LICENSE", "GPL\n");
         let checked = check_mod(dir.path()).unwrap();
-        let source = "https://github.com/me/m";
+        let source = "https://github.com/me/DRH-Mod-M";
         let packed = entry_for(&checked, source, 10, "ab".to_string());
         assert!(differences(&packed, &packed).is_empty());
 

@@ -35,6 +35,7 @@ pub fn pack_mod(dir: &Path, out: &Path) -> Result<Packed, String> {
     let manifest = &checked.manifest;
     check_release_tag(&manifest.version.to_string())?;
     let source = repository::source_of(dir)?;
+    repository::check_mod_repository(&source)?;
 
     let stem = format!("{}-{}", manifest.id, manifest.version);
     fs::create_dir_all(out)

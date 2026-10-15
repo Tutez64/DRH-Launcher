@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::manifest::Manifest;
 use super::readme;
 
-/// Values `DRH-Mod-Template` ships with, which a mod must replace.
+/// Values `DRH-Mods-Template` ships with, which a mod must replace.
 const TEMPLATE_ID: &str = "my_mod";
 const TEMPLATE_NAME: &str = "My Mod";
 const TEMPLATE_DESCRIPTION: &str = "What the mod does, in one line.";

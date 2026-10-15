@@ -21,6 +21,22 @@ pub fn source_of(dir: &Path) -> Result<String, String> {
     normalize(&remote).ok_or_else(|| format!("The origin remote {remote} is not on github.com"))
 }
 
+/// What an indexed mod's repository is named after: `DRH-Mod-<Name>`.
+const MOD_REPOSITORY_PREFIX: &str = "DRH-Mod-";
+
+/// An indexed mod's repository is named `DRH-Mod-<Name>`, so its name says
+/// it is a DRH mod.
+pub fn check_mod_repository(source: &str) -> Result<(), String> {
+    let name = source.rsplit('/').next().unwrap_or_default();
+    if name.len() > MOD_REPOSITORY_PREFIX.len() && name.starts_with(MOD_REPOSITORY_PREFIX) {
+        Ok(())
+    } else {
+        Err(format!(
+            "The repository {source} must be named {MOD_REPOSITORY_PREFIX}<Name> to be indexed"
+        ))
+    }
+}
+
 /// A github.com remote or page URL as `https://github.com/<owner>/<repo>`.
 pub fn normalize(url: &str) -> Option<String> {
     let path = url
@@ -98,5 +114,18 @@ mod tests {
             assert_eq!(normalize(remote), None, "{remote}");
         }
         assert_eq!(owner("https://github.com/me/m"), Some("me"));
+    }
+
+    #[test]
+    fn a_mod_repository_is_named_drh_mod_something() {
+        assert!(check_mod_repository("https://github.com/me/DRH-Mod-Cool-HUD").is_ok());
+        for source in [
+            "https://github.com/me/cool-hud",
+            "https://github.com/me/DRH-Mod-",
+            "https://github.com/me/drh-mod-cool",
+            "https://github.com/Tutez64/DRH-Mods-Index",
+        ] {
+            assert!(check_mod_repository(source).is_err(), "{source}");
+        }
     }
 }

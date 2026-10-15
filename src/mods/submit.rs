@@ -12,7 +12,7 @@ use super::index::{Entry, http_client};
 use super::manifest::Manifest;
 use super::repository::{self, git};
 
-const INDEX_REPOSITORY: &str = "Tutez64/DRH-Mod-Index";
+const INDEX_REPOSITORY: &str = "Tutez64/DRH-Mods-Index";
 
 /// `fork_owner` is the account holding the fork, the source's owner unless
 /// given.
@@ -41,7 +41,7 @@ pub fn submit_mod(dir: &Path, fork_owner: Option<&str>) -> Result<(), String> {
         ));
     }
 
-    let fork = format!("https://github.com/{owner}/DRH-Mod-Index");
+    let fork = format!("https://github.com/{owner}/DRH-Mods-Index");
     if !page_exists(&fork)? {
         let fork_page = format!("https://github.com/{INDEX_REPOSITORY}/fork");
         let _ = crate::open_url(&fork_page);
@@ -61,7 +61,7 @@ pub fn submit_mod(dir: &Path, fork_owner: Option<&str>) -> Result<(), String> {
     let (base, branch) = result?;
 
     let compare = format!(
-        "https://github.com/{INDEX_REPOSITORY}/compare/{base}...{owner}:DRH-Mod-Index:{branch}?expand=1"
+        "https://github.com/{INDEX_REPOSITORY}/compare/{base}...{owner}:DRH-Mods-Index:{branch}?expand=1"
     );
     println!("Pushed {branch} to {fork}. Open the pull request: {compare}");
     if let Err(error) = crate::open_url(&compare) {
