@@ -84,6 +84,7 @@ pub fn from_args(args: &[OsString]) -> Option<Result<Command, String>> {
 pub fn run_if_requested(args: &[OsString]) -> Option<i32> {
     let command = from_args(args)?;
     attach_console();
+    restore_working_directory();
     Some(match command {
         Ok(command) => match run(command) {
             Ok(()) => 0,
@@ -168,6 +169,23 @@ fn attach_console() {
 
 #[cfg(not(windows))]
 fn attach_console() {}
+
+/// The AppImage's `AppRun` starts the launcher in its own `usr/` folder; the
+/// paths a command names are relative to where it was run. The AppImage
+/// runtime passes that folder as `OWD`, except with
+/// `APPIMAGE_EXTRACT_AND_RUN` (as in CI): then the shell's `PWD` gives it.
+fn restore_working_directory() {
+    if std::env::var_os("APPIMAGE").is_none() {
+        return;
+    }
+    if let Some(dir) = ["OWD", "PWD"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .find(|dir| !dir.is_empty())
+    {
+        let _ = std::env::set_current_dir(dir);
+    }
+}
 
 #[cfg(test)]
 mod tests {
