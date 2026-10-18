@@ -34,6 +34,9 @@ struct Record {
     /// Installed because another mod needed it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     dependency: bool,
+    /// The index entry's `source`, so it is known without the index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -65,6 +68,8 @@ pub struct InstalledMod {
     /// None when it was copied there by hand.
     pub origin: Option<Origin>,
     pub dependency: bool,
+    /// Its repository, when the index gave one at install.
+    pub source: Option<String>,
 }
 
 pub struct Library {
@@ -112,6 +117,7 @@ impl Library {
             if let Some(record) = state.mods.get(&found.id) {
                 found.origin = Some(record.origin.clone());
                 found.dependency = record.dependency;
+                found.source = record.source.clone();
             }
             mods.insert(found.id.clone(), found);
         }
@@ -378,6 +384,7 @@ impl Library {
                 Record {
                     origin: Origin::Index,
                     dependency,
+                    source: Some(entry.source.clone()),
                 },
             );
             self.write_state(&state)?;
@@ -557,6 +564,7 @@ fn read_mod(folder: &Path) -> Option<InstalledMod> {
         problem,
         origin: None,
         dependency: false,
+        source: None,
         id,
         folder: folder.to_path_buf(),
     })
@@ -734,6 +742,10 @@ mod tests {
         let found = library.scan().unwrap();
         assert_eq!(ids(&found), ["api", "lib"]);
         assert_eq!(found[0].origin, Some(Origin::Index));
+        assert_eq!(
+            found[0].source.as_deref(),
+            Some("https://github.com/me/DRH-Mod-api")
+        );
         assert!(found[0].dependency);
         assert!(!found[1].dependency);
         assert_eq!(library.enabled(), ["api", "lib"]);

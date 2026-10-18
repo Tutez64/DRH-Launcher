@@ -1050,8 +1050,13 @@ fn source_of(page: &Page, id: &str) -> Option<String> {
     if let Some(Some(Origin::Repository { url })) = installed.map(|m| &m.origin) {
         return Some(url.clone());
     }
-    if installed.is_some_and(|m| m.origin != Some(Origin::Index)) {
-        return None;
+    if let Some(m) = installed {
+        if m.origin != Some(Origin::Index) {
+            return None;
+        }
+        if let Some(source) = &m.source {
+            return Some(source.clone());
+        }
     }
     page.index
         .as_ref()?
@@ -1174,6 +1179,7 @@ mod tests {
             problem: None,
             origin: Some(Origin::Index),
             dependency: false,
+            source: None,
         }
     }
 
