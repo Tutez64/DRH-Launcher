@@ -63,6 +63,21 @@ pub fn installed_metadata_file(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("installed.json")
 }
 
+/// The mods folder the launcher manages and passes to the game.
+pub fn mods_dir(install_dir: &std::path::Path) -> PathBuf {
+    install_dir.join("mods")
+}
+
+/// How each mod in `mods/` got there.
+pub fn mods_state_file(install_dir: &std::path::Path) -> PathBuf {
+    data_dir(install_dir).join("mods.json")
+}
+
+/// Mod versions downloaded before they replace the installed ones.
+pub fn mod_staging_dir(install_dir: &std::path::Path) -> PathBuf {
+    data_dir(install_dir).join("mod-staging")
+}
+
 /// Indexed mod versions `--run-mod` installs, one folder each.
 pub fn mod_cache_dir(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("mod-cache")

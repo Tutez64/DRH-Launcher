@@ -5,6 +5,7 @@ pub mod check;
 pub mod index;
 pub mod index_ci;
 pub mod install;
+pub mod library;
 pub mod manifest;
 pub mod new;
 pub mod pack;

@@ -5,6 +5,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 
 use crate::config::LauncherConfig;
 use crate::game_install::{game_executable_names, is_game_executable};
+use crate::mods::library;
 use crate::release_manifest::ManifestLaunchOptions;
 use crate::{game_logs, paths, platform::Platform};
 
@@ -203,7 +204,10 @@ pub fn launch_game_with_options(
 
     let pre_launch_command = parse_command_line(&config.pre_launch_command)
         .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
-    let game_args = config.effective_game_args(launch_options);
+    let game_args = game_args(config, launch_options, install_dir);
+    if !library::names_mods_dir(&config.effective_game_args(launch_options)) {
+        library::clear_last_run(install_dir);
+    }
 
     let mut command = if !pre_launch_command.is_empty() {
         let mut command = Command::new(&pre_launch_command[0]);
@@ -324,6 +328,18 @@ fn path_entries_without_parent(value: &OsStr, parent: &Path) -> Option<OsString>
     }
 }
 
+/// The configured arguments, then the launcher's `--mods-dir` unless they
+/// name one.
+fn game_args(
+    config: &LauncherConfig,
+    launch_options: Option<&ManifestLaunchOptions>,
+    install_dir: &Path,
+) -> Vec<String> {
+    let mut args = config.effective_game_args(launch_options);
+    library::add_mods_dir(install_dir, &mut args);
+    args
+}
+
 pub fn launch_command_summary_with_options(
     config: &LauncherConfig,
     launch_options: Option<&ManifestLaunchOptions>,
@@ -337,7 +353,7 @@ pub fn launch_command_summary_with_options(
     let launch_executable = resolve_launch_executable(&executable)?;
     let pre_launch_command = parse_command_line(&config.pre_launch_command)
         .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
-    let game_args = config.effective_game_args(launch_options);
+    let game_args = game_args(config, launch_options, install_dir);
 
     let mut parts = Vec::new();
     if !pre_launch_command.is_empty() {

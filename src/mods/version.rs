@@ -67,6 +67,17 @@ impl fmt::Display for Requirement {
     }
 }
 
+/// The number of an installed tag: `V14`, or a local build's
+/// `V14-something`.
+pub fn tag_number(version: &str) -> Option<u32> {
+    let digits: String = version
+        .trim_start_matches(['V', 'v'])
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
+}
+
 /// A `drh` value: `"20"`, `"20,21"` or `"20-22"` (closed, inclusive).
 pub fn parse_tags(text: &str) -> Option<Vec<u32>> {
     let mut tags = Vec::new();

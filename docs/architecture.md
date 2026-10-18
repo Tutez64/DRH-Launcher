@@ -95,6 +95,8 @@ The intended managed content layout is:
         <completed-session-timestamp>.log.zst
     downloads/
     staging/
+    mods.json         # how each mod in mods/ got there: index, zip or repository, and whether as a dependency
+    mod-staging/      # mod versions downloaded before they replace the installed ones
     mod-cache/        # --run-mod: indexed mod versions, one folder each
     run-mod/          # --run-mod: the mods folder it composes, rebuilt each run
     run-mod-zip/      # --run-mod on a zip: the zip extracted
@@ -801,8 +803,11 @@ store.
   branch, and is remembered to offer that repository's later releases
 - empty state that points at Discord / index docs
 - pass **`--mods-dir`** as a quoted absolute path to `<install-dir>/mods/`
-  (paths may contain spaces) and write `enabled.json` there. Same shape
-  as the game document (draft):
+  (paths may contain spaces) when a mod is enabled, and write
+  `enabled.json` there. Launch arguments that already name a
+  `--mods-dir` keep it: the launcher adds none and does not touch that
+  folder's files (a modder's own folder). Same shape as the game
+  document (draft):
 
   ```json
   {

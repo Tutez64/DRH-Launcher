@@ -1,6 +1,7 @@
 //! What the index CI runs: `--check-entry` on each entry a pull request
 //! adds, `--build-index` on the main branch.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -162,8 +163,9 @@ fn check_against_index<'a>(
     let index = Index {
         entries: indexed.to_vec(),
     };
-    if let Err(problem) = resolve(&index, &entry.id, &needs, None) {
-        report.problems.push(problem);
+    match resolve(&index, &[(entry.id.clone(), needs)], &BTreeMap::new(), None) {
+        Ok(resolution) => report.problems.extend(resolution.missing),
+        Err(problem) => report.problems.push(problem),
     }
 
     previous

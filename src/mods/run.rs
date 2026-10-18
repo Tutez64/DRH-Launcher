@@ -1,5 +1,6 @@
 //! `--run-mod`: the mod's own run, with its dependencies from the index.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -11,6 +12,7 @@ use super::index::Index;
 use super::install::cached_mod;
 use super::manifest::read_needs;
 use super::resolve::resolve;
+use super::version::tag_number;
 use crate::archive::extract_zip;
 use crate::config::LauncherConfig;
 use crate::game_install::inspect_install;
@@ -39,15 +41,7 @@ pub fn run_mod(path: &Path) -> Result<(), String> {
             install.status_text()
         ));
     }
-    // `V14`, or a local build's `V14-something`: the tag's number.
-    let installed_tag = install.installed_version.as_deref().and_then(|version| {
-        let digits: String = version
-            .trim_start_matches(['V', 'v'])
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect();
-        digits.parse().ok()
-    });
+    let installed_tag = install.installed_version.as_deref().and_then(tag_number);
 
     let source = if path.is_file() {
         let unpacked = paths::data_dir(&install_dir).join("run-mod-zip");
@@ -62,9 +56,17 @@ pub fn run_mod(path: &Path) -> Result<(), String> {
     let (id, needs) = read_needs(&manifest_text)?;
 
     let index = Index::fetch()?;
-    let resolution = resolve(&index, &id, &needs, installed_tag)?;
+    let resolution = resolve(
+        &index,
+        &[(id.clone(), needs)],
+        &BTreeMap::new(),
+        installed_tag,
+    )?;
     for warning in &resolution.warnings {
         println!("warning: {warning}");
+    }
+    if !resolution.missing.is_empty() {
+        return Err(resolution.missing.join("\n"));
     }
 
     let mods_dir = paths::run_mod_dir(&install_dir);
