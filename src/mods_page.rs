@@ -40,6 +40,8 @@ struct Page {
     search: String,
     confirming_uninstall: Option<String>,
     message: String,
+    /// The mod an operation is running on, and what it shows meanwhile.
+    working: Option<(String, &'static str)>,
 }
 
 type Shared = Arc<Mutex<Page>>;
@@ -60,6 +62,13 @@ pub(crate) fn register(
     ui.on_ensure_mods(move || {
         let view = on.view();
         view.rescan();
+        // Nothing installed yet: the Catalog is where to start.
+        if view.lock().mods.is_empty()
+            && let Some(ui) = view.ui.upgrade()
+        {
+            ui.set_mods_page(CATALOG as i32);
+            ui.set_mod_detail_open(false);
+        }
         let fetch = {
             let mut page = view.lock();
             if page.index.is_none() {
@@ -137,6 +146,7 @@ pub(crate) fn register(
             return;
         };
         on.in_background(
+            (entry.id.clone(), "Updating..."),
             format!("Updating {}...", entry.name),
             move |library, index, tag| {
                 let warnings = library.install(&index, &entry, tag)?;
@@ -259,8 +269,11 @@ impl Context {
 
     /// Runs `operation` on a thread with the index (an empty one when it is
     /// unavailable), then shows its outcome.
+    /// `working`: the mod it runs on, and what its card or row shows
+    /// meanwhile.
     fn in_background(
         &self,
+        working: (String, &'static str),
         progress: String,
         operation: impl FnOnce(&Library, Index, Option<u32>) -> Result<String, String> + Send + 'static,
     ) {
@@ -272,6 +285,7 @@ impl Context {
             let mut page = view.lock();
             page.message = progress;
             page.confirming_uninstall = None;
+            page.working = Some(working);
             Index {
                 entries: page
                     .index
@@ -292,7 +306,11 @@ impl Context {
                 log_for_config(&config, diagnostics::LogLevel::Error, &error);
                 error
             });
-            view.lock().message = message;
+            {
+                let mut page = view.lock();
+                page.message = message;
+                page.working = None;
+            }
             crate::invoke_on_event_loop(&config, &app_shutting_down, move || {
                 if let Some(ui) = view.ui.upgrade() {
                     ui.set_mods_busy(false);
@@ -326,6 +344,7 @@ impl Context {
                 return;
             };
             self.in_background(
+                (entry.id.clone(), "Installing..."),
                 format!("Installing {}...", entry.name),
                 move |library, index, tag| {
                     let warnings = library.install(&index, &entry, tag)?;
@@ -338,10 +357,14 @@ impl Context {
         } else if enabled {
             view.disable(&id);
         } else {
-            self.in_background(format!("Enabling {name}..."), move |library, index, tag| {
-                let warnings = library.enable(&index, &id, tag)?;
-                Ok(with_warnings(format!("Enabled {name}."), warnings))
-            });
+            self.in_background(
+                (id.clone(), "Enabling..."),
+                format!("Enabling {name}..."),
+                move |library, index, tag| {
+                    let warnings = library.enable(&index, &id, tag)?;
+                    Ok(with_warnings(format!("Enabled {name}."), warnings))
+                },
+            );
         }
     }
 }
@@ -559,6 +582,19 @@ impl View {
             rows.into_iter().map(|(_, view)| view).collect::<Vec<_>>(),
         )));
         ui.set_mods_status(page.message.clone().into());
+        let updates = page
+            .mods
+            .iter()
+            .filter(|m| update_for(&page, m).is_some())
+            .count();
+        ui.set_mods_installed_tab_text(
+            match updates {
+                0 => "Installed".to_string(),
+                1 => "Installed · 1 update".to_string(),
+                count => format!("Installed · {count} updates"),
+            }
+            .into(),
+        );
         ui.set_mods_index_status(index_status(&page).into());
 
         let detail = selected
@@ -850,10 +886,10 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
             let issues = issues(page, m, tag);
             let at = order.iter().position(|id| *id == m.id);
             let first_movable = order.iter().position(|id| !is_official(page, id));
-            let status = if update_for(page, m).is_some() {
-                "Update available"
-            } else {
-                ""
+            let status = match &page.working {
+                Some((id, doing)) if *id == m.id => doing,
+                _ if update_for(page, m).is_some() => "Update available",
+                _ => "",
             };
             (
                 m.id.clone(),
@@ -904,10 +940,11 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
         })
         .map(|entry| {
             let installed = page.mods.iter().find(|m| m.id == entry.id);
-            let status = match installed {
-                Some(m) if update_for(page, m).is_some() => "Update available",
-                Some(_) => "Installed",
-                None => "",
+            let status = match (&page.working, installed) {
+                (Some((id, doing)), _) if *id == entry.id => doing,
+                (_, Some(m)) if update_for(page, m).is_some() => "Update available",
+                (_, Some(_)) => "Installed",
+                (_, None) => "",
             };
             let issues: Vec<Issue> = drh_issue(entry.drh.as_deref(), &entry.uses, tag)
                 .into_iter()

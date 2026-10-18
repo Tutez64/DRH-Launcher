@@ -606,6 +606,7 @@ export component AppWindow inherits Window {
     in property <bool> refresh-logs-enabled: true;
     in property <[VersionEntryView]> drh-version-entries;
     in-out property <int> mods-page: 0;
+    in property <string> mods-installed-tab-text: "Installed";
     in property <[ModCardView]> mod-entries;
     in-out property <bool> mod-detail-open: false;
     in property <string> mod-list-empty-text;
@@ -1840,7 +1841,7 @@ export component AppWindow inherits Window {
                             spacing: 8px;
 
                             TabButton {
-                                text: "Installed";
+                                text: root.mods-installed-tab-text;
                                 active: root.mods-page == 0;
                                 clicked => {
                                     root.select-mods-page(0);
@@ -2032,9 +2033,8 @@ export component AppWindow inherits Window {
                                     horizontal-stretch: 1;
                                 }
 
-                                SecondaryButton {
+                                if root.selected-mod-repository-enabled : SecondaryButton {
                                     text: "Repository";
-                                    enabled: root.selected-mod-repository-enabled;
                                     clicked => {
                                         root.open-mod-repository();
                                     }
