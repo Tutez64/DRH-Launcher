@@ -17,6 +17,7 @@ import {
     LaunchTextField,
     LinkButton,
     MarkdownBlock,
+    ModAuthor,
     ModCard,
     ModRow,
     ModTag,
@@ -63,6 +64,7 @@ export struct ModCardView {
     version: string,
     summary: string,
     author: string,
+    owner: string,
     uses: ModTagView,
     tags: [ModTagView],
     status: string,
@@ -621,7 +623,11 @@ export component AppWindow inherits Window {
     in property <string> mods-index-status;
     in property <string> selected-mod-title: "No mod selected";
     in property <string> selected-mod-description;
-    in property <string> selected-mod-facts;
+    in property <string> selected-mod-author;
+    in property <string> selected-mod-owner;
+    in property <bool> selected-mod-folder-visible: false;
+    in-out property <length> mod-list-scroll: 0px;
+    in-out property <length> mod-detail-scroll: 0px;
     in property <[ModTagView]> selected-mod-tags;
     in property <[MarkdownBlockView]> selected-mod-blocks;
     in property <string> selected-mod-primary-text;
@@ -767,6 +773,7 @@ export component AppWindow inherits Window {
     callback mod-primary-action();
     callback mod-update();
     callback mod-uninstall();
+    callback open-mod-folder();
     callback mod-confirm-accepted();
     callback mod-confirm-cancelled();
     callback dismiss-mods-error();
@@ -1912,18 +1919,18 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        if !root.mod-detail-open && root.mods-page == 1 : HorizontalLayout {
+                        if !root.mod-detail-open : HorizontalLayout {
                             spacing: 12px;
 
                             AppLineEdit {
-                                placeholder: "Search name or author";
+                                placeholder: "Search name or GitHub account";
                                 value <=> root.mod-search;
                                 changed value => {
                                     root.mod-search-edited(self.value);
                                 }
                             }
 
-                            Text {
+                            if root.mods-page == 1 : Text {
                                 text: root.mods-index-status;
                                 color: Theme.text-support;
                                 font-size: 12px;
@@ -1940,6 +1947,7 @@ export component AppWindow inherits Window {
 
                         if !root.mod-detail-open && root.mods-page == 1 : ScrollView {
                             vertical-stretch: 1;
+                            viewport-y <=> root.mod-list-scroll;
                             content-width: self.width;
                             content-height: mod-grid.height;
 
@@ -1962,6 +1970,7 @@ export component AppWindow inherits Window {
                                     name: entry.name;
                                     summary: entry.summary;
                                     author: entry.author;
+                                    owner: entry.owner;
                                     uses: entry.uses;
                                     tags: entry.tags;
                                     status: entry.status;
@@ -1980,6 +1989,7 @@ export component AppWindow inherits Window {
 
                         if !root.mod-detail-open && root.mods-page == 0 : ScrollView {
                             vertical-stretch: 1;
+                            viewport-y <=> root.mod-list-scroll;
                             content-width: self.width;
                             content-height: mod-rows.preferred-height;
 
@@ -2039,16 +2049,28 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            if root.selected-mod-facts != "" : Text {
-                                text: root.selected-mod-facts;
-                                color: Theme.text-support;
-                                font-size: 12px;
-                                wrap: word-wrap;
+                            HorizontalLayout {
+                                alignment: start;
+                                spacing: 4px;
+
+                                Text {
+                                    text: "by";
+                                    color: Theme.text-support;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
+
+                                ModAuthor {
+                                    author: root.selected-mod-author;
+                                    owner: root.selected-mod-owner;
+                                    font-size: 12px;
+                                }
                             }
 
                             ScrollView {
                                 horizontal-stretch: 1;
                                 vertical-stretch: 1;
+                                viewport-y <=> root.mod-detail-scroll;
                                 content-width: self.width;
                                 content-height: mod-description-content.preferred-height;
 
@@ -2120,18 +2142,26 @@ export component AppWindow inherits Window {
 
                             SecondaryButton {
                                 horizontal-stretch: 1;
-                                text: "Refresh";
-                                enabled: !root.mods-busy;
+                                text: "Open mods folder";
                                 clicked => {
-                                    root.refresh-mods();
+                                    root.open-mods-folder();
+                                }
+                            }
+
+                            if root.mod-detail-open && root.selected-mod-folder-visible : SecondaryButton {
+                                horizontal-stretch: 1;
+                                text: "Open this mod's folder";
+                                clicked => {
+                                    root.open-mod-folder();
                                 }
                             }
 
                             SecondaryButton {
                                 horizontal-stretch: 1;
-                                text: "Open mods folder";
+                                text: "Refresh";
+                                enabled: !root.mods-busy;
                                 clicked => {
-                                    root.open-mods-folder();
+                                    root.refresh-mods();
                                 }
                             }
                         }

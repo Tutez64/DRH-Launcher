@@ -38,8 +38,13 @@ struct Page {
     enabled: Vec<String>,
     /// The ids the list shows, in order.
     rows: Vec<String>,
+    // Each tab as it was left: its search, whether a mod's page is open,
+    // and where the list and the page were scrolled.
     selected: [Option<String>; 2],
-    search: String,
+    search: [String; 2],
+    detail_open: [bool; 2],
+    list_scroll: [f32; 2],
+    detail_scroll: [f32; 2],
     /// The last action's failure, until dismissed or an action succeeds.
     error: Option<String>,
     /// An action waiting for the user to confirm it.
@@ -119,10 +124,25 @@ pub(crate) fn register(
     let on = context.clone();
     ui.on_select_mods_page(move |tab| {
         let view = on.view();
-        if let Some(ui) = view.ui.upgrade() {
-            ui.set_mods_page(tab);
-            ui.set_mod_detail_open(false);
+        let Some(ui) = view.ui.upgrade() else {
+            return;
+        };
+        let (Ok(new), old) = (usize::try_from(tab), view.tab()) else {
+            return;
+        };
+        {
+            let mut page = view.lock();
+            page.detail_open[old] = ui.get_mod_detail_open();
+            page.list_scroll[old] = ui.get_mod_list_scroll();
+            page.detail_scroll[old] = ui.get_mod_detail_scroll();
         }
+        ui.set_mods_page(tab);
+        let page = view.lock();
+        ui.set_mod_search(page.search[new].clone().into());
+        ui.set_mod_detail_open(page.detail_open[new]);
+        ui.set_mod_list_scroll(page.list_scroll[new]);
+        ui.set_mod_detail_scroll(page.detail_scroll[new]);
+        drop(page);
         view.render();
     });
 
@@ -132,6 +152,7 @@ pub(crate) fn register(
         if view.select_row(row) {
             if let Some(ui) = view.ui.upgrade() {
                 ui.set_mod_detail_open(true);
+                ui.set_mod_detail_scroll(0.0);
             }
             view.render();
         }
@@ -155,7 +176,8 @@ pub(crate) fn register(
     let on = context.clone();
     ui.on_mod_search_edited(move |text| {
         let view = on.view();
-        view.lock().search = text.to_string();
+        let tab = view.tab();
+        view.lock().search[tab] = text.to_string();
         view.render();
     });
 
@@ -200,6 +222,21 @@ pub(crate) fn register(
         let view = on.view();
         view.lock().error = None;
         view.render();
+    });
+
+    let on = context.clone();
+    ui.on_open_mod_folder(move || {
+        let view = on.view();
+        let folder = {
+            let page = view.lock();
+            view.selected_id(&page)
+                .and_then(|id| page.mods.iter().find(|m| m.id == id))
+                .map(|m| m.folder.clone())
+        };
+        if let Some(Err(error)) = folder.map(|folder| crate::open_folder(&folder)) {
+            view.fail(error);
+            view.render();
+        }
     });
 
     let on = context.clone();
@@ -601,8 +638,10 @@ impl View {
         }
 
         ui.set_mod_list_empty_text(
-            if tab != CATALOG {
+            if tab != CATALOG && page.mods.is_empty() {
                 "No mod installed: find some in Catalog."
+            } else if tab != CATALOG {
+                "No mod matches."
             } else if page.fetching && page.index.is_none() {
                 "Loading the index..."
             } else if page.index.is_none() {
@@ -649,7 +688,9 @@ impl View {
             .into(),
         );
         ui.set_selected_mod_description(detail.description.into());
-        ui.set_selected_mod_facts(detail.facts.into());
+        ui.set_selected_mod_author(detail.author.into());
+        ui.set_selected_mod_owner(detail.owner.into());
+        ui.set_selected_mod_folder_visible(detail.installed);
         ui.set_selected_mod_tags(ModelRc::new(VecModel::from(detail.tags)));
         ui.set_selected_mod_blocks(ModelRc::new(VecModel::from(markdown_document(
             &detail.long_description,
@@ -666,7 +707,8 @@ impl View {
 struct Detail {
     title: String,
     description: String,
-    facts: String,
+    author: String,
+    owner: String,
     tags: Vec<ModTagView>,
     long_description: String,
     primary: String,
@@ -711,7 +753,7 @@ fn detail(page: &Page, id: &str, tag: Option<u32>) -> Detail {
     detail.title = format!("{name}  {version}");
     detail.description = description;
 
-    detail.facts = format!("by {}", author_text(&author, source.as_deref()));
+    (detail.author, detail.owner) = byline(&author, source.as_deref());
 
     let issues = match installed {
         Some(m) => issues(page, m, tag),
@@ -848,7 +890,15 @@ fn load_order(page: &Page) -> Vec<String> {
 
 fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
     let order = load_order(page);
-    let mut mods: Vec<&InstalledMod> = page.mods.iter().collect();
+    let search = &page.search[0];
+    // Moving swaps with the neighbour in the whole order, which a search may
+    // hide.
+    let reorderable = search.trim().is_empty();
+    let mut mods: Vec<&InstalledMod> = page
+        .mods
+        .iter()
+        .filter(|m| matches(search, &m.name, &m.id, source_of(page, &m.id).as_deref()))
+        .collect();
     // Enabled first, in load order; then the others by name.
     mods.sort_by_key(|m| {
         let at = order.iter().position(|id| *id == m.id);
@@ -858,6 +908,7 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
         .map(|m| {
             let official = is_official(page, &m.id);
             let issues = issues(page, m, tag);
+            let (author, owner) = byline(&m.author, source_of(page, &m.id).as_deref());
             let at = order.iter().position(|id| *id == m.id);
             let first_movable = order.iter().position(|id| !is_official(page, id));
             let status = match &page.working {
@@ -871,7 +922,8 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                     name: m.name.clone().into(),
                     version: m.version.clone().into(),
                     summary: m.description.clone().into(),
-                    author: author_text(&m.author, source_of(page, &m.id).as_deref()).into(),
+                    author: author.into(),
+                    owner: owner.into(),
                     uses: uses_tag(page, &m.id, &m.uses).unwrap_or_default(),
                     tags: ModelRc::new(VecModel::from(
                         dependency_tags(page, m)
@@ -881,7 +933,7 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                     )),
                     status: status.into(),
                     enabled: at.is_some(),
-                    orderable: at.is_some() && !official,
+                    orderable: at.is_some() && !official && reorderable,
                     can_move_up: at.is_some() && at > first_movable,
                     can_move_down: at.is_some_and(|at| at + 1 < order.len()),
                 },
@@ -894,7 +946,6 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
     let Some(index) = &page.index else {
         return Vec::new();
     };
-    let search = page.search.trim().to_lowercase();
     let mut ids: Vec<&str> = index
         .entries
         .iter()
@@ -906,11 +957,12 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
         .into_iter()
         .filter_map(|id| offered_entry(page, id))
         .filter(|entry| {
-            let owner = repository::owner(&entry.source).unwrap_or_default();
-            search.is_empty()
-                || [&entry.name, &entry.id, &entry.author, &owner.to_string()]
-                    .iter()
-                    .any(|text| text.to_lowercase().contains(&search))
+            matches(
+                &page.search[CATALOG],
+                &entry.name,
+                &entry.id,
+                Some(&entry.source),
+            )
         })
         .map(|entry| {
             let installed = page.mods.iter().find(|m| m.id == entry.id);
@@ -920,6 +972,7 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                 (_, Some(_)) => "Installed",
                 (_, None) => "",
             };
+            let (author, owner) = byline(&entry.author, Some(&entry.source));
             let issues: Vec<Issue> = drh_issue(entry.drh.as_deref(), &entry.uses, tag)
                 .into_iter()
                 .collect();
@@ -929,7 +982,8 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                     name: entry.name.clone().into(),
                     version: entry.version.clone().into(),
                     summary: entry.description.clone().into(),
-                    author: author_text(&entry.author, Some(&entry.source)).into(),
+                    author: author.into(),
+                    owner: owner.into(),
                     uses: uses_tag(page, &entry.id, &entry.uses).unwrap_or_default(),
                     tags: ModelRc::new(VecModel::from(other_tags(None, &issues))),
                     status: status.into(),
@@ -1123,12 +1177,25 @@ fn repository_of(page: &Page, id: &str) -> Option<String> {
     source_of(page, id).filter(|url| url.starts_with("https://"))
 }
 
-/// `author`, then the repository's owner when it differs.
-fn author_text(author: &str, source: Option<&str>) -> String {
+/// The author to show, then the GitHub account of the mod's repository: the
+/// author alone without one, the account alone when they are the same.
+fn byline(author: &str, source: Option<&str>) -> (String, String) {
     match source.and_then(repository::owner) {
-        Some(owner) if !owner.eq_ignore_ascii_case(author) => format!("{author} ({owner})"),
-        _ => author.to_string(),
+        Some(owner) if owner.eq_ignore_ascii_case(author) => (String::new(), owner.to_string()),
+        Some(owner) => (author.to_string(), owner.to_string()),
+        None => (author.to_string(), String::new()),
     }
+}
+
+/// Whether `search` is in the mod's name, id or GitHub account; not its
+/// `author`, which anyone can write.
+fn matches(search: &str, name: &str, id: &str, source: Option<&str>) -> bool {
+    let search = search.trim().to_lowercase();
+    let owner = source.and_then(repository::owner).unwrap_or_default();
+    search.is_empty()
+        || [name, id, owner]
+            .iter()
+            .any(|text| text.to_lowercase().contains(&search))
 }
 
 /// The strongest of `uses`; stable only reads as `api`.
@@ -1417,9 +1484,32 @@ mod tests {
     #[test]
     fn shows_the_owner_next_to_a_different_author() {
         let source = Some("https://github.com/Tutez64/DRH-Mod-API");
-        assert_eq!(author_text("Tutez", source), "Tutez (Tutez64)");
-        assert_eq!(author_text("tutez64", source), "tutez64");
-        assert_eq!(author_text("Someone", None), "Someone");
+        let pair = |author: &str, owner: &str| (author.to_string(), owner.to_string());
+        assert_eq!(byline("Tutez", source), pair("Tutez", "Tutez64"));
+        assert_eq!(byline("tutez64", source), pair("", "Tutez64"));
+        assert_eq!(byline("Someone", None), pair("Someone", ""));
+    }
+
+    #[test]
+    fn searches_the_account_not_the_author() {
+        let source = Some("https://github.com/Tutez64/DRH-Mod-API");
+        assert!(matches("tutez6", "API", "api", source));
+        assert!(matches(" Party ", "Party Board", "party_board", None));
+        assert!(!matches("tutez", "Mine", "mine", None));
+    }
+
+    #[test]
+    fn hides_the_arrows_while_searching() {
+        let mut page = library_page();
+        let orderable = |page: &Page| {
+            installed_rows(page, None)
+                .iter()
+                .map(|(id, row)| (id.clone(), row.orderable))
+                .collect::<Vec<_>>()
+        };
+        assert!(orderable(&page).iter().all(|(_, orderable)| *orderable));
+        page.search[0] = "mine".to_string();
+        assert_eq!(orderable(&page), [("mine".to_string(), false)]);
     }
 
     fn library_page() -> Page {

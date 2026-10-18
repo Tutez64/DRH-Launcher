@@ -769,7 +769,7 @@ store.
   Play. `author` is never shown alone: next to it, the
   GitHub owner of the mod's repository (the index entry's `source`, or
   the repository link it was installed from), once when they are the
-  same. Search and sort by author use that owner. A mod installed from a
+  same. Search covers the name, the `id` and that owner, not `author`, which anyone can write; each tab keeps its own search, open page and scroll position. A mod installed from a
   local zip has no owner to show; it keeps its not-reviewed label. A
   sideloaded mod's `name`, `author` or
   `description` past its length limit (game document) is cut after its

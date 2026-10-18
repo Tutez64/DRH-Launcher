@@ -1285,11 +1285,58 @@ export component ModTag inherits Rectangle {
     touch := TouchArea {}
 }
 
+// Who made a mod: the author it names, then the GitHub account it is
+// published from, which anyone can check.
+export component ModAuthor inherits Rectangle {
+    in property <string> author;
+    in property <string> owner;
+    in property <length> font-size: 11px;
+
+    HorizontalLayout {
+        alignment: start;
+        spacing: 4px;
+
+        if root.author != "" : Text {
+            text: root.author;
+            color: Theme.text-support;
+            font-size: root.font-size;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+
+        if root.owner != "" : HorizontalLayout {
+            spacing: 3px;
+            padding-left: root.author != "" ? 4px : 0px;
+
+            VerticalLayout {
+                alignment: center;
+
+                Image {
+                    width: root.font-size;
+                    height: root.font-size;
+                    source: @image-url("icons/github.svg");
+                    image-fit: contain;
+                    colorize: Theme.text-support;
+                }
+            }
+
+            Text {
+                text: root.owner;
+                color: Theme.text-support;
+                font-size: root.font-size;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
 // A mod in the Catalog's grid.
 export component ModCard inherits Rectangle {
     in property <string> name;
     in property <string> summary;
     in property <string> author;
+    in property <string> owner;
     in property <ModTagView> uses;
     in property <[ModTagView]> tags;
     in property <string> status;
@@ -1346,16 +1393,15 @@ export component ModCard inherits Rectangle {
             overflow: elide;
         }
 
+        // As high with labels as without, so every card lines up.
         HorizontalLayout {
+            height: 20px;
             spacing: 6px;
 
-            Text {
+            ModAuthor {
                 horizontal-stretch: 1;
-                text: root.author;
-                color: Theme.text-support;
-                font-size: 11px;
-                overflow: elide;
-                vertical-alignment: center;
+                author: root.author;
+                owner: root.owner;
             }
 
             for tag in root.tags: ModTag {
