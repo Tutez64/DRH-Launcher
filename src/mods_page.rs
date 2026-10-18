@@ -18,7 +18,7 @@ use crate::mods::library::{InstalledMod, Library, Origin, needed_by, unneeded};
 use crate::mods::readme;
 use crate::mods::repository;
 use crate::mods::version::{Version, parse_tags, tag_number};
-use crate::{AppWindow, ModCardView, diagnostics, log_for_config, paths};
+use crate::{AppWindow, ModCardView, ModTagView, diagnostics, log_for_config, paths};
 
 /// The `api` the launcher builds on: shown without a `uses` label or warning.
 const OFFICIAL_API_SOURCE: &str = "https://github.com/Tutez64/DRH-Mod-API";
@@ -419,6 +419,12 @@ impl View {
                     .into_iter()
                     .filter(|other| !before.contains(other))
                     .collect();
+                let now: Vec<String> = {
+                    let page = self.lock();
+                    now.into_iter()
+                        .filter(|other| !is_official(&page, other))
+                        .collect()
+                };
                 let now = names_in(&mods, &now);
                 let mut message = with_warnings(format!("Disabled {name}."), warnings);
                 if !now.is_empty() {
@@ -462,7 +468,14 @@ impl View {
             let name = names(&page, std::slice::from_ref(&id));
             (id, name, page.mods.clone())
         };
-        let message = match Library::new(dir).uninstall(&id) {
+        let unneeded = Library::new(dir).uninstall(&id).map(|unneeded| {
+            let page = self.lock();
+            unneeded
+                .into_iter()
+                .filter(|other| !is_official(&page, other))
+                .collect::<Vec<_>>()
+        });
+        let message = match unneeded {
             Ok(unneeded) if unneeded.is_empty() => format!("Uninstalled {name}."),
             Ok(unneeded) => format!(
                 "Uninstalled {name}. Installed as a dependency, {} needed by no mod now: uninstall it from its page.",
@@ -487,13 +500,13 @@ impl View {
             let Some(id) = self.selected_id(&page) else {
                 return;
             };
-            let mut order = page.enabled.clone();
+            let mut order = load_order(&page);
             let Some(at) = order.iter().position(|known| *known == id) else {
                 return;
             };
             let Some(to) = at
                 .checked_add_signed(delta as isize)
-                .filter(|to| *to < order.len())
+                .filter(|to| *to < order.len() && !is_official(&page, &order[*to]))
             else {
                 return;
             };
@@ -516,9 +529,9 @@ impl View {
         let mut page = self.lock();
 
         let rows: Vec<(String, ModCardView)> = if tab == CATALOG {
-            catalog_rows(&page)
+            catalog_rows(&page, installed_tag)
         } else {
-            installed_rows(&page)
+            installed_rows(&page, installed_tag)
         };
         page.rows = rows.iter().map(|(id, _)| id.clone()).collect();
         // A mod uninstalled from its page, or filtered out, closes it.
@@ -562,6 +575,7 @@ impl View {
         );
         ui.set_selected_mod_description(detail.description.into());
         ui.set_selected_mod_facts(detail.facts.into());
+        ui.set_selected_mod_tags(ModelRc::new(VecModel::from(detail.tags)));
         ui.set_selected_mod_notes(detail.notes.join("\n").into());
         ui.set_selected_mod_blocks(ModelRc::new(VecModel::from(markdown_document(
             &detail.long_description,
@@ -593,6 +607,7 @@ struct Detail {
     description: String,
     facts: String,
     notes: Vec<String>,
+    tags: Vec<ModTagView>,
     long_description: String,
     primary: String,
     primary_enabled: bool,
@@ -615,7 +630,6 @@ fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
     };
 
     let source = source_of(page, id);
-    let official = source.as_deref() == Some(OFFICIAL_API_SOURCE);
     // The Installed tab shows the installed version, the Catalog the indexed
     // one when there is one.
     let shown = installed.filter(|_| !catalog || indexed.is_none());
@@ -642,52 +656,31 @@ fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
     detail.description = description;
 
     let mut facts = vec![format!("by {}", author_text(&author, source.as_deref()))];
-    if !official {
-        facts.push(uses_label(&uses).to_string());
-    }
     if let Some(m) = installed {
         facts.push(origin_text(m.origin.as_ref()).to_string());
     }
     detail.facts = facts.join(" · ");
 
-    if !official {
-        if uses.iter().any(|kind| kind == "replace") {
-            detail.notes.push(
-                "replace: it may clash with other mods that rewrite the same code.".to_string(),
-            );
-        } else if uses.iter().any(|kind| kind == "extends") {
-            detail
-                .notes
-                .push("extends: it may break when DRH updates.".to_string());
-        }
-    }
-    if let (Some(drh), Some(tag)) = (&drh, tag)
-        && !uses.is_empty()
-        && !parse_tags(drh).is_some_and(|tags| tags.contains(&tag))
-    {
-        detail.notes.push(format!(
-            "Built for DRH {drh}, and DRH {tag} is installed: it may not work."
-        ));
-    }
+    let issues = match shown {
+        Some(m) => issues(page, m, tag),
+        None => drh_issue(drh.as_deref(), &uses, tag).into_iter().collect(),
+    };
+    detail.notes = issues.iter().map(|issue| issue.message.clone()).collect();
+    detail.tags = tags(
+        page,
+        id,
+        &uses,
+        installed.map(|m| m.origin.as_ref()),
+        &issues,
+    );
 
-    if let Some(m) = installed {
-        if let Some(problem) = &m.problem {
-            detail.notes.push(problem.clone());
-        }
-        if let Some(reason) = yanked_reason(page, m) {
-            detail.notes.push(format!(
-                "This version was withdrawn from the index: {reason}"
-            ));
-        }
+    if let Some(m) = installed.filter(|_| !is_official(page, id)) {
         let needers: Vec<String> = needed_by(&page.mods, id)
             .into_iter()
             .filter(|other| page.enabled.contains(other))
             .collect();
         if m.dependency {
-            if unneeded(&page.mods, &page.enabled)
-                .iter()
-                .any(|free| free == id)
-            {
+            if free_dependencies(page).iter().any(|free| free == id) {
                 detail.notes.push(
                     "Installed as a dependency, no enabled mod needs it any more.".to_string(),
                 );
@@ -743,30 +736,120 @@ fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
     detail
 }
 
-fn installed_rows(page: &Page) -> Vec<(String, ModCardView)> {
+/// Something that may keep a mod from working: a short label for its tag,
+/// and the full message.
+struct Issue {
+    label: String,
+    message: String,
+}
+
+/// What may keep an installed mod from working. Its dependencies only
+/// matter while it is enabled: enabling it installs them.
+fn issues(page: &Page, m: &InstalledMod, tag: Option<u32>) -> Vec<Issue> {
+    let mut issues = Vec::new();
+    if let Some(problem) = &m.problem {
+        issues.push(Issue {
+            label: "mod.json".to_string(),
+            message: format!("{problem}: the game may fail it."),
+        });
+    }
+    if let Some(reason) = yanked_reason(page, m) {
+        issues.push(Issue {
+            label: "withdrawn".to_string(),
+            message: format!("This version was withdrawn from the index: {reason}"),
+        });
+    }
+    issues.extend(drh_issue(m.drh.as_deref(), &m.uses, tag));
+    if !page.enabled.contains(&m.id) {
+        return issues;
+    }
+    for (need, requirement) in &m.needs {
+        let name = names(page, std::slice::from_ref(need));
+        let issue = match page.mods.iter().find(|other| other.id == *need) {
+            None => Issue {
+                label: format!("needs {name}"),
+                message: format!(
+                    "Needs {name} {requirement}, which is not installed: the game fails it."
+                ),
+            },
+            Some(_) if !page.enabled.contains(need) => Issue {
+                label: format!("needs {name}"),
+                message: format!("Needs {name}, which is disabled: the game fails it."),
+            },
+            Some(other)
+                if !Version::parse(&other.version)
+                    .is_some_and(|version| requirement.matches(version)) =>
+            {
+                Issue {
+                    label: format!("{name} {}", other.version),
+                    message: format!(
+                        "Needs {name} {requirement}, and {name} {} is installed: it may not work.",
+                        other.version
+                    ),
+                }
+            }
+            Some(_) => continue,
+        };
+        issues.push(issue);
+    }
+    issues
+}
+
+/// An `extends` / `replace` mod built for other DRH tags than the installed
+/// one.
+fn drh_issue(drh: Option<&str>, uses: &[String], tag: Option<u32>) -> Option<Issue> {
+    let tag = tag?;
+    if uses.is_empty() {
+        return None;
+    }
+    let built_for = drh.and_then(parse_tags);
+    if built_for.is_some_and(|tags| tags.contains(&tag)) {
+        return None;
+    }
+    let drh = drh.unwrap_or("no tag");
+    Some(Issue {
+        label: format!("DRH {drh}"),
+        message: format!("Built for DRH {drh}, and DRH {tag} is installed: it may not work."),
+    })
+}
+
+/// The enabled mods in load order, the official `api` first: the game starts
+/// a mod after what it needs anyway, and every mod needs it.
+fn load_order(page: &Page) -> Vec<String> {
+    let (mut order, rest): (Vec<String>, Vec<String>) = page
+        .enabled
+        .iter()
+        .cloned()
+        .partition(|id| is_official(page, id));
+    order.extend(rest);
+    order
+}
+
+fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
+    let order = load_order(page);
     let mut mods: Vec<&InstalledMod> = page.mods.iter().collect();
     // Enabled first, in load order; then the others by name.
     mods.sort_by_key(|m| {
-        let order = page.enabled.iter().position(|id| *id == m.id);
-        (order.is_none(), order, m.name.to_lowercase())
+        let at = order.iter().position(|id| *id == m.id);
+        (at.is_none(), at, m.name.to_lowercase())
     });
-    let free = unneeded(&page.mods, &page.enabled);
+    let free = free_dependencies(page);
     mods.into_iter()
         .map(|m| {
-            let summary = if free.contains(&m.id) {
+            let official = is_official(page, &m.id);
+            let summary = if official || !m.dependency {
+                m.description.clone()
+            } else if free.contains(&m.id) {
                 "Installed as a dependency, no longer needed".to_string()
-            } else if m.dependency {
+            } else {
                 format!(
                     "Installed as a dependency of {}",
                     names(page, &needed_by(&page.mods, &m.id))
                 )
-            } else {
-                m.description.clone()
             };
-            let mut tags = tags(page, &m.id, &m.uses);
-            if m.origin != Some(Origin::Index) {
-                tags.push("not reviewed".into());
-            }
+            let issues = issues(page, m, tag);
+            let at = order.iter().position(|id| *id == m.id);
+            let first_movable = order.iter().position(|id| !is_official(page, id));
             let status = if update_for(page, m).is_some() {
                 "Update available"
             } else {
@@ -779,16 +862,25 @@ fn installed_rows(page: &Page) -> Vec<(String, ModCardView)> {
                     version: m.version.clone().into(),
                     summary: summary.into(),
                     author: author_text(&m.author, source_of(page, &m.id).as_deref()).into(),
-                    tags: ModelRc::new(VecModel::from(tags)),
+                    tags: ModelRc::new(VecModel::from(tags(
+                        page,
+                        &m.id,
+                        &m.uses,
+                        Some(m.origin.as_ref()),
+                        &issues,
+                    ))),
                     status: status.into(),
-                    enabled: page.enabled.contains(&m.id),
+                    enabled: at.is_some(),
+                    orderable: at.is_some() && !official,
+                    can_move_up: at.is_some() && at > first_movable,
+                    can_move_down: at.is_some_and(|at| at + 1 < order.len()),
                 },
             )
         })
         .collect()
 }
 
-fn catalog_rows(page: &Page) -> Vec<(String, ModCardView)> {
+fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
     let Some(index) = &page.index else {
         return Vec::new();
     };
@@ -817,6 +909,9 @@ fn catalog_rows(page: &Page) -> Vec<(String, ModCardView)> {
                 Some(_) => "Installed",
                 None => "",
             };
+            let issues: Vec<Issue> = drh_issue(entry.drh.as_deref(), &entry.uses, tag)
+                .into_iter()
+                .collect();
             (
                 entry.id.clone(),
                 ModCardView {
@@ -824,9 +919,18 @@ fn catalog_rows(page: &Page) -> Vec<(String, ModCardView)> {
                     version: entry.version.clone().into(),
                     summary: entry.description.clone().into(),
                     author: author_text(&entry.author, Some(&entry.source)).into(),
-                    tags: ModelRc::new(VecModel::from(tags(page, &entry.id, &entry.uses))),
+                    tags: ModelRc::new(VecModel::from(tags(
+                        page,
+                        &entry.id,
+                        &entry.uses,
+                        None,
+                        &issues,
+                    ))),
                     status: status.into(),
                     enabled: installed.is_some_and(|m| page.enabled.contains(&m.id)),
+                    orderable: false,
+                    can_move_up: false,
+                    can_move_down: false,
                 },
             )
         })
@@ -835,13 +939,69 @@ fn catalog_rows(page: &Page) -> Vec<(String, ModCardView)> {
     rows
 }
 
-/// The `uses` label, which the official `api` goes without.
-fn tags(page: &Page, id: &str, uses: &[String]) -> Vec<slint::SharedString> {
-    if source_of(page, id).as_deref() == Some(OFFICIAL_API_SOURCE) {
-        Vec::new()
-    } else {
-        vec![uses_label(uses).into()]
+/// The `uses` tag (not on the official `api`), "not reviewed" for an
+/// installed mod that is not from the index, then the issues.
+fn tags(
+    page: &Page,
+    id: &str,
+    uses: &[String],
+    installed_from: Option<Option<&Origin>>,
+    issues: &[Issue],
+) -> Vec<ModTagView> {
+    let mut tags = Vec::new();
+    if !is_official(page, id) {
+        let (text, tooltip) = match uses_label(uses) {
+            "replace" => (
+                "replace",
+                "Rewrites parts of DRH's code: it may break when DRH updates, and clash with other mods that rewrite the same parts.",
+            ),
+            "extends" => (
+                "extends",
+                "Builds on DRH's own code: it may break when DRH updates.",
+            ),
+            _ => (
+                "api",
+                "Only uses the api: it should keep working across DRH updates.",
+            ),
+        };
+        tags.push(tag_view(text, tooltip, false));
     }
+    if let Some(origin) = installed_from
+        && origin != Some(&Origin::Index)
+    {
+        tags.push(tag_view(
+            "not reviewed",
+            &format!("{}: no one reviewed it.", origin_text(origin)),
+            false,
+        ));
+    }
+    tags.extend(
+        issues
+            .iter()
+            .map(|issue| tag_view(&format!("⚠ {}", issue.label), &issue.message, true)),
+    );
+    tags
+}
+
+fn tag_view(text: &str, tooltip: &str, warning: bool) -> ModTagView {
+    ModTagView {
+        text: text.into(),
+        tooltip: tooltip.into(),
+        warning,
+    }
+}
+
+fn is_official(page: &Page, id: &str) -> bool {
+    source_of(page, id).as_deref() == Some(OFFICIAL_API_SOURCE)
+}
+
+/// The mods installed as a dependency that nothing enabled needs, but the
+/// official `api`, which needs no explaining.
+fn free_dependencies(page: &Page) -> Vec<String> {
+    unneeded(&page.mods, &page.enabled)
+        .into_iter()
+        .filter(|id| !is_official(page, id))
+        .collect()
 }
 
 /// The highest indexed version every enabled mod needing it accepts, when it

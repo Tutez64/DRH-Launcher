@@ -19,6 +19,8 @@ import {
     MarkdownBlock,
     ModCard,
     ModRow,
+    ModTag,
+    ModTagView,
     NavButton,
     NumericTextField,
     PrimaryButton,
@@ -61,9 +63,12 @@ export struct ModCardView {
     version: string,
     summary: string,
     author: string,
-    tags: [string],
+    tags: [ModTagView],
     status: string,
     enabled: bool,
+    orderable: bool,
+    can-move-up: bool,
+    can-move-down: bool,
 }
 
 export struct MarkdownBlockView {
@@ -611,6 +616,7 @@ export component AppWindow inherits Window {
     in property <string> selected-mod-title: "No mod selected";
     in property <string> selected-mod-description;
     in property <string> selected-mod-facts;
+    in property <[ModTagView]> selected-mod-tags;
     in property <string> selected-mod-notes;
     in property <[MarkdownBlockView]> selected-mod-blocks;
     in property <string> selected-mod-primary-text;
@@ -758,6 +764,16 @@ export component AppWindow inherits Window {
     callback mod-update();
     callback mod-uninstall();
     callback toggle-mod(int);
+
+    function show-mod-tooltip(text: string, x: length, y: length) {
+        root.info-tooltip-text = text;
+        root.info-tooltip-width = 380px;
+        root.info-tooltip-anchor-x = x;
+        root.info-tooltip-anchor-y = y;
+        root.info-tooltip-place-left = false;
+        root.info-tooltip-place-above = true;
+        root.info-tooltip-visible = true;
+    }
     callback move-mod(int, int);
     callback open-mod-repository();
     callback refresh-mods();
@@ -1869,16 +1885,24 @@ export component AppWindow inherits Window {
                         if !root.mod-detail-open && root.mods-page == 1 : ScrollView {
                             vertical-stretch: 1;
                             content-width: self.width;
-                            content-height: mod-grid.preferred-height;
+                            content-height: mod-grid.height;
 
-                            mod-grid := EqualColumnFlow {
+                            // Placed by hand: a FlexboxLayout sizes its rows
+                            // from the cards' wrapped text, and they overlap.
+                            mod-grid := Rectangle {
+                                property <length> gap: 12px;
+                                property <length> card-height: 124px;
+                                property <int> columns: max(1, min(3, floor((self.width + self.gap) / (300px + self.gap))));
+                                property <length> cell-width: (self.width - (self.columns - 1) * self.gap) / self.columns;
+
                                 width: parent.width;
-                                cell-min-width: 300px;
-                                max-columns: 3;
-                                spacing: 12px;
+                                height: ceil(root.mod-entries.length / self.columns) * (self.card-height + self.gap);
 
                                 for entry[index] in root.mod-entries: ModCard {
+                                    x: Math.mod(index, mod-grid.columns) * (mod-grid.cell-width + mod-grid.gap);
+                                    y: floor(index / mod-grid.columns) * (mod-grid.card-height + mod-grid.gap);
                                     width: mod-grid.cell-width;
+                                    height: mod-grid.card-height;
                                     name: entry.name;
                                     version: entry.version;
                                     summary: entry.summary;
@@ -1887,6 +1911,12 @@ export component AppWindow inherits Window {
                                     status: entry.status;
                                     clicked => {
                                         root.select-mod(index);
+                                    }
+                                    show-tooltip(text, x, y) => {
+                                        root.show-mod-tooltip(text, x, y);
+                                    }
+                                    hide-tooltip => {
+                                        root.info-tooltip-visible = false;
                                     }
                                 }
                             }
@@ -1909,7 +1939,16 @@ export component AppWindow inherits Window {
                                     tags: entry.tags;
                                     status: entry.status;
                                     enabled: entry.enabled;
+                                    orderable: entry.orderable;
+                                    can-move-up: entry.can-move-up;
+                                    can-move-down: entry.can-move-down;
                                     busy: root.mods-busy;
+                                    show-tooltip(text, x, y) => {
+                                        root.show-mod-tooltip(text, x, y);
+                                    }
+                                    hide-tooltip => {
+                                        root.info-tooltip-visible = false;
+                                    }
                                     clicked => {
                                         root.select-mod(index);
                                     }
@@ -1927,6 +1966,21 @@ export component AppWindow inherits Window {
                             title: root.selected-mod-title;
                             description: root.selected-mod-description;
                             vertical-stretch: 1;
+
+                            if root.selected-mod-tags.length > 0 : HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+
+                                for tag in root.selected-mod-tags: ModTag {
+                                    tag: tag;
+                                    show-tooltip(text, x, y) => {
+                                        root.show-mod-tooltip(text, x, y);
+                                    }
+                                    hide-tooltip => {
+                                        root.info-tooltip-visible = false;
+                                    }
+                                }
+                            }
 
                             if root.selected-mod-facts != "" : Text {
                                 text: root.selected-mod-facts;
