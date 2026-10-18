@@ -76,5 +76,9 @@ DRHL_RELEASE_SOURCE=drh cargo run
 DRHL_RELEASE_SOURCE=fixtures cargo run
 ```
 
+On Linux, `python3 scripts/mods-demo.py` starts the launcher on a made-up
+install and mod index that show every case of the Mods page, in
+`target/mods-demo/`; `--keep` reopens the last one as it was left.
+
 - Packaging and release workflows: [docs/packaging.md](docs/packaging.md)
 - Architecture: [docs/architecture.md](docs/architecture.md)
