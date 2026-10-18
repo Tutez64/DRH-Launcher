@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 use super::index::{Entry, Index};
 use super::install::download_and_extract;
 use super::manifest::{
-    MAX_AUTHOR_CHARS, MAX_DESCRIPTION_CHARS, MAX_NAME_CHARS, read_needs, valid_id,
+    MAX_AUTHOR_CHARS, MAX_DESCRIPTION_CHARS, MAX_NAME_CHARS, read_needs, shortened, valid_id,
 };
 use super::resolve::{Installed, Needs, entry_needs, resolve};
 use super::version::Version;
@@ -531,7 +531,7 @@ fn read_mod(folder: &Path) -> Option<InstalledMod> {
         fields
             .get(key)
             .and_then(Value::as_str)
-            .map(|text| text.chars().take(max).collect())
+            .map(|text| shortened(text, max))
             .unwrap_or_default()
     };
     let (needs, problem) = match read_needs(&text) {

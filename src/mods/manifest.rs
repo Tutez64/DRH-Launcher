@@ -267,6 +267,20 @@ fn bounded_text(
     text
 }
 
+/// `text` within `max` characters, for a mod no one checked: cut after the
+/// last whole word that fits, then "…".
+pub fn shortened(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(max.saturating_sub(1)).collect();
+    let words = match kept.rfind(char::is_whitespace) {
+        Some(end) if end > 0 => &kept[..end],
+        _ => &kept,
+    };
+    format!("{}…", words.trim_end())
+}
+
 fn optional_text(
     fields: &Map<String, Value>,
     key: &str,
@@ -438,6 +452,17 @@ mod tests {
             fields.insert("drh".into(), "20-22".into());
         });
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn shortens_after_a_whole_word() {
+        assert_eq!(shortened("Fits as is.", 11), "Fits as is.");
+        assert_eq!(
+            shortened("Cut after this word, here", 22),
+            "Cut after this word,…"
+        );
+        assert_eq!(shortened("Unbroken", 5), "Unbr…");
+        assert_eq!(shortened("éééé", 3), "éé…");
     }
 
     #[test]

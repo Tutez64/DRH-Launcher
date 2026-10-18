@@ -763,15 +763,17 @@ store.
   verify the size and SHA-256 of the saved bytes. Redirects:
   [Trust and Security](#trust-and-security)
 - list available mods (name, version, author, `description`, DRH
-  compat, `uses`). Version and `drh` warnings follow the game document
-  and never block Play. `author` is never shown alone: next to it, the
+  compat, `uses`). For each mod, the page shows, installs and offers as
+  an update the version the dependency rule above would pick for it.
+  Version and `drh` warnings follow the game document and never block
+  Play. `author` is never shown alone: next to it, the
   GitHub owner of the mod's repository (the index entry's `source`, or
   the repository link it was installed from), once when they are the
   same. Search and sort by author use that owner. A mod installed from a
   local zip has no owner to show; it keeps its not-reviewed label. A
   sideloaded mod's `name`, `author` or
-  `description` past its length limit (game document) is cut, not
-  refused. A mod's page shows its `description`, then renders its long
+  `description` past its length limit (game document) is cut after its
+  last whole word, with "…", not refused. A mod's page shows its `description`, then renders its long
   description like a changelog: the index entry's `longDescription`, or,
   when the mod is not in the index, the part of its `README.md` the game
   document's markers show (all of it when they are malformed; nothing

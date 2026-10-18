@@ -1241,10 +1241,14 @@ export component LaunchTextField inherits Rectangle {
     }
 }
 
+// What a label tells: what the mod builds on, a risk in running it, or a
+// problem that may keep it from working.
+export enum ModTagKind { info, risk, problem }
+
 export struct ModTagView {
     text: string,
     tooltip: string,
-    warning: bool,
+    kind: ModTagKind,
 }
 
 // A label on a mod; hovering it shows what it means.
@@ -1258,12 +1262,12 @@ export component ModTag inherits Rectangle {
     width: label.preferred-width + 14px;
     border-radius: 4px;
     border-width: 1px;
-    border-color: root.tag.warning ? Theme.accent-warm : Theme.border-accent-muted;
-    background: root.tag.warning ? Theme.surface-selected : Theme.surface-accent;
+    border-color: root.tag.kind == ModTagKind.problem ? Theme.accent-warm : root.tag.kind == ModTagKind.risk ? Theme.accent-primary : Theme.border-neutral;
+    background: root.tag.kind == ModTagKind.problem ? Theme.surface-selected : root.tag.kind == ModTagKind.risk ? Theme.surface-accent : transparent;
 
     label := Text {
         text: root.tag.text;
-        color: root.tag.warning ? Theme.text-primary : Theme.text-secondary;
+        color: root.tag.kind == ModTagKind.problem ? Theme.text-primary : root.tag.kind == ModTagKind.risk ? Theme.accent-primary-hover : Theme.text-support;
         font-size: 11px;
         font-weight: 700;
         horizontal-alignment: center;
@@ -1284,9 +1288,9 @@ export component ModTag inherits Rectangle {
 // A mod in the Catalog's grid.
 export component ModCard inherits Rectangle {
     in property <string> name;
-    in property <string> version;
     in property <string> summary;
     in property <string> author;
+    in property <ModTagView> uses;
     in property <[ModTagView]> tags;
     in property <string> status;
     callback clicked();
@@ -1319,13 +1323,17 @@ export component ModCard inherits Rectangle {
                 font-size: 14px;
                 font-weight: 800;
                 overflow: elide;
+                vertical-alignment: center;
             }
 
-            Text {
-                text: root.version;
-                color: Theme.text-support;
-                font-size: 12px;
-                vertical-alignment: center;
+            if root.uses.text != "" : ModTag {
+                tag: root.uses;
+                show-tooltip(text, x, y) => {
+                    root.show-tooltip(text, x, y);
+                }
+                hide-tooltip => {
+                    root.hide-tooltip();
+                }
             }
         }
 
@@ -1377,6 +1385,7 @@ export component ModRow inherits Rectangle {
     in property <string> name;
     in property <string> version;
     in property <string> summary;
+    in property <ModTagView> uses;
     in property <[ModTagView]> tags;
     in property <string> status;
     in property <bool> enabled;
@@ -1428,6 +1437,16 @@ export component ModRow inherits Rectangle {
                     color: Theme.text-support;
                     font-size: 12px;
                     vertical-alignment: center;
+                }
+
+                if root.uses.text != "" : ModTag {
+                    tag: root.uses;
+                    show-tooltip(text, x, y) => {
+                        root.show-tooltip(text, x, y);
+                    }
+                    hide-tooltip => {
+                        root.hide-tooltip();
+                    }
                 }
 
                 for tag in root.tags: ModTag {

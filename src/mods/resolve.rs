@@ -174,6 +174,20 @@ fn misfit(id: &str, version: Version, needed_by: &[(String, Requirement)]) -> Op
     })
 }
 
+/// The version of `id` to install for mods needing it as `needed_by` says
+/// (none for a mod installed for itself): the highest that fits, one built
+/// for the installed DRH tag first.
+pub fn offered<'a>(
+    index: &'a Index,
+    id: &str,
+    needed_by: &[(String, Requirement)],
+    installed_tag: Option<u32>,
+) -> Option<&'a Entry> {
+    pick(index, id, needed_by, installed_tag)
+        .ok()
+        .map(|(entry, _)| entry)
+}
+
 fn pick<'a>(
     index: &'a Index,
     id: &str,

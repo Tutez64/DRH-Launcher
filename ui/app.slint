@@ -63,6 +63,7 @@ export struct ModCardView {
     version: string,
     summary: string,
     author: string,
+    uses: ModTagView,
     tags: [ModTagView],
     status: string,
     enabled: bool,
@@ -1892,8 +1893,8 @@ export component AppWindow inherits Window {
                             // from the cards' wrapped text, and they overlap.
                             mod-grid := Rectangle {
                                 property <length> gap: 12px;
-                                property <length> card-height: 124px;
-                                property <int> columns: max(1, min(3, floor((self.width + self.gap) / (300px + self.gap))));
+                                property <length> card-height: 112px;
+                                property <int> columns: max(1, floor((self.width + self.gap) / (440px + self.gap)));
                                 property <length> cell-width: (self.width - (self.columns - 1) * self.gap) / self.columns;
 
                                 width: parent.width;
@@ -1905,9 +1906,9 @@ export component AppWindow inherits Window {
                                     width: mod-grid.cell-width;
                                     height: mod-grid.card-height;
                                     name: entry.name;
-                                    version: entry.version;
                                     summary: entry.summary;
                                     author: entry.author;
+                                    uses: entry.uses;
                                     tags: entry.tags;
                                     status: entry.status;
                                     clicked => {
@@ -1937,6 +1938,7 @@ export component AppWindow inherits Window {
                                     name: entry.name;
                                     version: entry.version;
                                     summary: entry.summary;
+                                    uses: entry.uses;
                                     tags: entry.tags;
                                     status: entry.status;
                                     enabled: entry.enabled;

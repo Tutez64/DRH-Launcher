@@ -17,8 +17,9 @@ use crate::mods::index::{Entry, Index};
 use crate::mods::library::{InstalledMod, Library, Origin, needed_by, unneeded};
 use crate::mods::readme;
 use crate::mods::repository;
+use crate::mods::resolve::offered;
 use crate::mods::version::{Version, parse_tags, tag_number};
-use crate::{AppWindow, ModCardView, ModTagView, diagnostics, log_for_config, paths};
+use crate::{AppWindow, ModCardView, ModTagKind, ModTagView, diagnostics, log_for_config, paths};
 
 /// The `api` the launcher builds on: shown without a `uses` label or warning.
 const OFFICIAL_API_SOURCE: &str = "https://github.com/Tutez64/DRH-Mod-API";
@@ -42,6 +43,8 @@ struct Page {
     message: String,
     /// The mod an operation is running on, and what it shows meanwhile.
     working: Option<(String, &'static str)>,
+    /// The installed DRH tag's number.
+    tag: Option<u32>,
 }
 
 type Shared = Arc<Mutex<Page>>;
@@ -329,10 +332,7 @@ impl Context {
             let Some(id) = view.selected_id(&page) else {
                 return;
             };
-            let entry = page
-                .index
-                .as_ref()
-                .and_then(|index| index.versions(&id).first().map(|entry| (*entry).clone()));
+            let entry = offered_entry(&page, &id).cloned();
             let enabled = page.enabled.contains(&id);
             let installed = page.mods.iter().any(|m| m.id == id);
             let name = names(&page, std::slice::from_ref(&id));
@@ -421,6 +421,7 @@ impl View {
             (Err(error), _) | (_, Err(error)) => page.message = error,
         }
         page.enabled = library.enabled();
+        page.tag = installed_tag(dir);
     }
 
     fn disable(&self, id: &str) {
@@ -547,9 +548,9 @@ impl View {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        let installed_tag = self.install_dir.as_deref().and_then(installed_tag);
         let tab = self.tab();
         let mut page = self.lock();
+        let installed_tag = page.tag;
 
         let rows: Vec<(String, ModCardView)> = if tab == CATALOG {
             catalog_rows(&page, installed_tag)
@@ -654,10 +655,7 @@ struct Detail {
 
 fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
     let installed = page.mods.iter().find(|m| m.id == id);
-    let indexed = page
-        .index
-        .as_ref()
-        .and_then(|index| index.versions(id).first().copied());
+    let indexed = offered_entry(page, id);
     let enabled = page.enabled.iter().any(|known| known == id);
     let mut detail = Detail {
         installed: installed.is_some() && !catalog,
@@ -691,11 +689,7 @@ fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
     detail.title = format!("{name}  {version}");
     detail.description = description;
 
-    let mut facts = vec![format!("by {}", author_text(&author, source.as_deref()))];
-    if let Some(m) = installed {
-        facts.push(origin_text(m.origin.as_ref()).to_string());
-    }
-    detail.facts = facts.join(" · ");
+    detail.facts = format!("by {}", author_text(&author, source.as_deref()));
 
     let issues = match shown {
         Some(m) => issues(page, m, tag),
@@ -898,10 +892,8 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                     version: m.version.clone().into(),
                     summary: summary.into(),
                     author: author_text(&m.author, source_of(page, &m.id).as_deref()).into(),
-                    tags: ModelRc::new(VecModel::from(tags(
-                        page,
-                        &m.id,
-                        &m.uses,
+                    uses: uses_tag(page, &m.id, &m.uses).unwrap_or_default(),
+                    tags: ModelRc::new(VecModel::from(other_tags(
                         Some(m.origin.as_ref()),
                         &issues,
                     ))),
@@ -930,7 +922,7 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
     ids.dedup();
     let mut rows: Vec<(String, ModCardView)> = ids
         .into_iter()
-        .filter_map(|id| index.versions(id).first().copied())
+        .filter_map(|id| offered_entry(page, id))
         .filter(|entry| {
             let owner = repository::owner(&entry.source).unwrap_or_default();
             search.is_empty()
@@ -956,13 +948,8 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                     version: entry.version.clone().into(),
                     summary: entry.description.clone().into(),
                     author: author_text(&entry.author, Some(&entry.source)).into(),
-                    tags: ModelRc::new(VecModel::from(tags(
-                        page,
-                        &entry.id,
-                        &entry.uses,
-                        None,
-                        &issues,
-                    ))),
+                    uses: uses_tag(page, &entry.id, &entry.uses).unwrap_or_default(),
+                    tags: ModelRc::new(VecModel::from(other_tags(None, &issues))),
                     status: status.into(),
                     enabled: installed.is_some_and(|m| page.enabled.contains(&m.id)),
                     orderable: false,
@@ -976,8 +963,7 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
     rows
 }
 
-/// The `uses` tag (not on the official `api`), "not reviewed" for an
-/// installed mod that is not from the index, then the issues.
+/// The `uses` tag, then the others.
 fn tags(
     page: &Page,
     id: &str,
@@ -985,46 +971,65 @@ fn tags(
     installed_from: Option<Option<&Origin>>,
     issues: &[Issue],
 ) -> Vec<ModTagView> {
-    let mut tags = Vec::new();
-    if !is_official(page, id) {
-        let (text, tooltip) = match uses_label(uses) {
-            "replace" => (
-                "replace",
-                "Rewrites parts of DRH's code: it may break when DRH updates, and clash with other mods that rewrite the same parts.",
-            ),
-            "extends" => (
-                "extends",
-                "Builds on DRH's own code: it may break when DRH updates.",
-            ),
-            _ => (
-                "api",
-                "Only uses the api: it should keep working across DRH updates.",
-            ),
-        };
-        tags.push(tag_view(text, tooltip, false));
+    uses_tag(page, id, uses)
+        .into_iter()
+        .chain(other_tags(installed_from, issues))
+        .collect()
+}
+
+/// What the mod builds on; none on the official `api`.
+fn uses_tag(page: &Page, id: &str, uses: &[String]) -> Option<ModTagView> {
+    if is_official(page, id) {
+        return None;
     }
+    let (text, tooltip) = match uses_label(uses) {
+        "replace" => (
+            "replace",
+            "Rewrites parts of DRH's code: it may break when DRH updates, and clash with other mods that rewrite the same parts.",
+        ),
+        "extends" => (
+            "extends",
+            "Builds on DRH's own code: it may break when DRH updates.",
+        ),
+        _ => (
+            "api",
+            "Only uses the api: it should keep working across DRH updates.",
+        ),
+    };
+    Some(tag_view(text, tooltip, ModTagKind::Info))
+}
+
+/// "not reviewed" for an installed mod that is not from the index, then the
+/// issues.
+fn other_tags(installed_from: Option<Option<&Origin>>, issues: &[Issue]) -> Vec<ModTagView> {
+    let mut tags = Vec::new();
     if let Some(origin) = installed_from
         && origin != Some(&Origin::Index)
     {
         tags.push(tag_view(
             "not reviewed",
-            &format!("{}: no one reviewed it.", origin_text(origin)),
-            false,
+            &format!(
+                "{}: no one has reviewed its code, and the launcher does not update it. Only keep it if you trust where it comes from.",
+                origin_text(origin)
+            ),
+            ModTagKind::Risk,
         ));
     }
-    tags.extend(
-        issues
-            .iter()
-            .map(|issue| tag_view(&format!("⚠ {}", issue.label), &issue.message, true)),
-    );
+    tags.extend(issues.iter().map(|issue| {
+        tag_view(
+            &format!("⚠ {}", issue.label),
+            &issue.message,
+            ModTagKind::Problem,
+        )
+    }));
     tags
 }
 
-fn tag_view(text: &str, tooltip: &str, warning: bool) -> ModTagView {
+fn tag_view(text: &str, tooltip: &str, kind: ModTagKind) -> ModTagView {
     ModTagView {
         text: text.into(),
         tooltip: tooltip.into(),
-        warning,
+        kind,
     }
 }
 
@@ -1041,32 +1046,32 @@ fn free_dependencies(page: &Page) -> Vec<String> {
         .collect()
 }
 
-/// The highest indexed version every enabled mod needing it accepts, when it
-/// is newer than the installed one. Only for a mod from the index.
+/// The version Install picks: the highest, one built for the installed DRH
+/// tag first.
+fn offered_entry<'a>(page: &'a Page, id: &str) -> Option<&'a Entry> {
+    offered(page.index.as_ref()?, id, &[], page.tag)
+}
+
+/// The version the index offers with what every enabled mod needing it
+/// accepts, when it is newer than the installed one. Only for a mod from the
+/// index.
 fn update_for<'a>(page: &'a Page, installed: &InstalledMod) -> Option<&'a Entry> {
     if installed.origin != Some(Origin::Index) {
         return None;
     }
     let current = Version::parse(&installed.version)?;
-    let requirements: Vec<_> = page
+    let needed_by: Vec<_> = page
         .mods
         .iter()
         .filter(|m| page.enabled.contains(&m.id))
-        .flat_map(|m| m.needs.iter())
-        .filter(|(id, _)| *id == installed.id)
-        .map(|(_, requirement)| *requirement)
-        .collect();
-    page.index
-        .as_ref()?
-        .versions(&installed.id)
-        .into_iter()
-        .find(|entry| {
-            entry.parsed_version().is_some_and(|version| {
-                requirements
-                    .iter()
-                    .all(|requirement| requirement.matches(version))
-            })
+        .flat_map(|m| {
+            m.needs
+                .iter()
+                .filter(|(id, _)| *id == installed.id)
+                .map(|(_, requirement)| (m.id.clone(), *requirement))
         })
+        .collect();
+    offered(page.index.as_ref()?, &installed.id, &needed_by, page.tag)
         .filter(|entry| entry.parsed_version() > Some(current))
 }
 
@@ -1128,10 +1133,10 @@ fn uses_label(uses: &[String]) -> &'static str {
 
 fn origin_text(origin: Option<&Origin>) -> &'static str {
     match origin {
-        Some(Origin::Index) => "From the index",
-        Some(Origin::Zip) => "From a zip, not index-reviewed",
-        Some(Origin::Repository { .. }) => "From its repository, not index-reviewed",
-        None => "Copied into the mods folder, not index-reviewed",
+        Some(Origin::Index) => "Installed from the index",
+        Some(Origin::Zip) => "Installed from a zip",
+        Some(Origin::Repository { .. }) => "Installed from its repository",
+        None => "Copied into the mods folder",
     }
 }
 
@@ -1252,6 +1257,30 @@ mod tests {
         let mut hand_copied = page.mods[0].clone();
         hand_copied.origin = None;
         assert!(update_for(&page, &hand_copied).is_none());
+    }
+
+    #[test]
+    fn offers_a_version_built_for_the_installed_tag() {
+        let built_for = |version: &str, drh: &str| Entry {
+            uses: vec!["extends".to_string()],
+            drh: Some(drh.to_string()),
+            ..entry("meter", version)
+        };
+        let mut page = Page {
+            index: Some(Index {
+                entries: vec![built_for("2.0.0", "13"), built_for("2.1.0", "14")],
+            }),
+            mods: vec![installed("meter", "2.0.0", &[])],
+            enabled: vec!["meter".to_string()],
+            tag: Some(13),
+            ..Page::default()
+        };
+        assert_eq!(offered_entry(&page, "meter").unwrap().version, "2.0.0");
+        assert!(update_for(&page, &page.mods[0]).is_none());
+
+        page.tag = Some(14);
+        assert_eq!(offered_entry(&page, "meter").unwrap().version, "2.1.0");
+        assert!(update_for(&page, &page.mods[0]).is_some());
     }
 
     #[test]

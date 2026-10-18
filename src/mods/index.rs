@@ -9,6 +9,7 @@ use reqwest::blocking::Client;
 use reqwest::header::USER_AGENT;
 use serde::{Deserialize, Serialize};
 
+use super::manifest::{MAX_AUTHOR_CHARS, MAX_DESCRIPTION_CHARS, MAX_NAME_CHARS, shortened};
 use super::version::Version;
 
 const DEFAULT_INDEX_URL: &str = "https://tutez64.github.io/DRH-Mods-Index/index.json";
@@ -94,8 +95,14 @@ impl Index {
                     .to_string(),
             );
         }
-        let file: IndexFile = serde_json::from_str(text)
+        let mut file: IndexFile = serde_json::from_str(text)
             .map_err(|error| format!("Could not read the mod index: {error}"))?;
+        // The index CI holds entries to these; a hand-made index may not.
+        for entry in &mut file.entries {
+            entry.name = shortened(&entry.name, MAX_NAME_CHARS);
+            entry.author = shortened(&entry.author, MAX_AUTHOR_CHARS);
+            entry.description = shortened(&entry.description, MAX_DESCRIPTION_CHARS);
+        }
         Ok(Self {
             entries: file.entries,
         })

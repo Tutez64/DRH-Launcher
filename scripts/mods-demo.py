@@ -97,7 +97,7 @@ INDEXED = [
      "0.1", None, [], {}, None, "The fixed version."),
     ("very_long_named_mod", "A Mod With A Very Long Name That Does Not Fit On A Card", "10.20.30",
      "An Author With A Long Name", "another-owner",
-     "A description long enough to need its two lines on the card and then some more, so it gets cut with an ellipsis at the end of the second line.",
+     "A description as long as the index allows, to see how a card and a row show it: one hundred and twenty characters, tops.",
      "0.1", None, [], {}, None, LONG),
     ("loot_filter", "Loot Filter", "0.4.0", "Mira", "mira-mods",
      "Hides the loot you never pick up.",
@@ -105,6 +105,9 @@ INDEXED = [
     ("damage_meter", "Damage Meter", "2.0.1", "Kael", "kael-dev",
      "Shows the party's damage per second.",
      "0.1", "13-14", ["extends"], {}, None, "DPS meter."),
+    ("damage_meter", "Damage Meter", "2.1.0", "Kael", "kael-dev",
+     "Shows the party's damage per second.",
+     "0.1", "14", ["extends"], {}, None, "Only for DRH 14: the Catalog offers 2.0.1 on DRH 13."),
 ]
 
 
@@ -228,7 +231,9 @@ def write_install():
           deps={"text_lib": "0.2"})
     local("wants_new_api", "Wants New API", "Needs api 1.0; 0.1.1 is the newest.",
           api="1.0")
-    local("from_zip", "From A Zip", "Installed from a zip file.")
+    local("from_zip", "From A Zip",
+          "Installed from a zip, which no one checked: its description runs past the 120"
+          " characters the index allows, so the launcher cuts it.")
     local("from_repo", "From A Repository", "Installed from a GitHub repository link.")
     local("broken_json", "Broken Json", "", raw=json.dumps(
         {"id": "broken_json", "name": "Broken Json", "version": "1.0.0", "api": 1}))
