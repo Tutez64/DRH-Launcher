@@ -59,9 +59,9 @@ pub fn new_mod(dir: &Path, input: &mut impl BufRead) -> Result<(), String> {
     }
 
     let repository = repository_name(&answers.name);
+    // A description until the author writes the mod's own.
     let url = format!(
-        "https://github.com/new?name={}&visibility=public",
-        repository
+        "https://github.com/new?name={repository}&description=Dungeon%20Rampage%20Haxe%20mod&visibility=public"
     );
     println!("{} is ready in {}.", answers.id, dir.display());
     println!("Create its repository, named DRH-Mod-<Name> to be indexed");
