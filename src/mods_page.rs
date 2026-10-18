@@ -417,13 +417,12 @@ impl Context {
 
     fn primary_action(&self) {
         let view = self.view();
-        let tab = view.tab();
         let action = {
             let page = view.lock();
             let Some(id) = view.selected_id(&page) else {
                 return;
             };
-            if tab == CATALOG && !page.mods.iter().any(|m| m.id == id) {
+            if !page.mods.iter().any(|m| m.id == id) {
                 let Some(entry) = offered_entry(&page, &id) else {
                     return;
                 };
@@ -639,7 +638,7 @@ impl View {
 
         let detail = selected
             .as_deref()
-            .map(|id| detail(&page, id, tab == CATALOG, installed_tag))
+            .map(|id| detail(&page, id, installed_tag))
             .unwrap_or_default();
         ui.set_selected_mod_title(
             if detail.title.is_empty() {
@@ -677,21 +676,20 @@ struct Detail {
     repository: bool,
 }
 
-fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
+/// A mod's page, the same from either tab: the installed version, which is
+/// what runs, else the one the index offers.
+fn detail(page: &Page, id: &str, tag: Option<u32>) -> Detail {
     let installed = page.mods.iter().find(|m| m.id == id);
     let indexed = offered_entry(page, id);
     let enabled = page.enabled.iter().any(|known| known == id);
     let mut detail = Detail {
-        installed: installed.is_some() && !catalog,
+        installed: installed.is_some(),
         repository: repository_of(page, id).is_some(),
         ..Detail::default()
     };
 
     let source = source_of(page, id);
-    // The Installed tab shows the installed version, the Catalog the indexed
-    // one when there is one.
-    let shown = installed.filter(|_| !catalog || indexed.is_none());
-    let (name, version, author, description, drh, uses) = match (shown, indexed) {
+    let (name, version, author, description, drh, uses) = match (installed, indexed) {
         (Some(m), _) => (
             m.name.clone(),
             m.version.clone(),
@@ -715,7 +713,7 @@ fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
 
     detail.facts = format!("by {}", author_text(&author, source.as_deref()));
 
-    let issues = match shown {
+    let issues = match installed {
         Some(m) => issues(page, m, tag),
         None => drh_issue(drh.as_deref(), &uses, tag).into_iter().collect(),
     };
@@ -726,31 +724,24 @@ fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
         .collect();
 
     detail.long_description = match (installed, indexed) {
-        (Some(m), _) if !catalog => indexed
-            .filter(|entry| entry.version == m.version && m.origin == Some(Origin::Index))
+        // The index's text when the installed version came from it.
+        (Some(m), _) => installed_entry(page, m)
+            .filter(|_| m.origin == Some(Origin::Index))
             .map(|entry| entry.long_description.clone())
             .unwrap_or_else(|| readme_text(&m.folder)),
-        (_, Some(entry)) => entry.long_description.clone(),
-        (Some(m), None) => readme_text(&m.folder),
+        (None, Some(entry)) => entry.long_description.clone(),
         (None, None) => String::new(),
     };
 
-    let update = installed.and_then(|m| update_for(page, m));
-    match (catalog, installed) {
-        (true, None) => {
+    match installed {
+        None => {
             detail.primary = "Install".to_string();
             detail.primary_enabled = indexed.is_some();
         }
-        (true, Some(_)) => {
-            detail.primary = "Installed".to_string();
-            detail.update = update
-                .map(|entry| format!("Update to {}", entry.version))
-                .unwrap_or_default();
-        }
-        _ => {
+        Some(m) => {
             detail.primary = if enabled { "Disable" } else { "Enable" }.to_string();
             detail.primary_enabled = true;
-            detail.update = update
+            detail.update = update_for(page, m)
                 .map(|entry| format!("Update to {}", entry.version))
                 .unwrap_or_default();
         }
@@ -1092,14 +1083,17 @@ fn update_for<'a>(page: &'a Page, installed: &InstalledMod) -> Option<&'a Entry>
         .filter(|entry| entry.parsed_version() > Some(current))
 }
 
-fn yanked_reason(page: &Page, installed: &InstalledMod) -> Option<String> {
+/// The index entry with the installed version's id and version.
+fn installed_entry<'a>(page: &'a Page, installed: &InstalledMod) -> Option<&'a Entry> {
     page.index
         .as_ref()?
         .entries
         .iter()
-        .find(|entry| entry.id == installed.id && entry.version == installed.version)?
-        .yanked
-        .clone()
+        .find(|entry| entry.id == installed.id && entry.version == installed.version)
+}
+
+fn yanked_reason(page: &Page, installed: &InstalledMod) -> Option<String> {
+    installed_entry(page, installed)?.yanked.clone()
 }
 
 /// The repository a mod comes from: its index entry's `source`, or the link
@@ -1480,6 +1474,23 @@ mod tests {
             problems,
             ["meter: Built for DRH 14, and DRH 13 is installed: it may not work."]
         );
+    }
+
+    #[test]
+    fn shows_an_installed_mod_as_installed() {
+        let page = Page {
+            index: Some(Index {
+                entries: vec![entry("mine", "1.0.0"), entry("mine", "1.1.0")],
+            }),
+            mods: vec![installed("mine", "1.0.0", &[])],
+            enabled: vec!["mine".to_string()],
+            ..Page::default()
+        };
+        let shown = detail(&page, "mine", None);
+        assert_eq!(shown.title, "mine  1.0.0");
+        assert_eq!(shown.primary, "Disable");
+        assert_eq!(shown.update, "Update to 1.1.0");
+        assert!(shown.installed);
     }
 
     #[test]
