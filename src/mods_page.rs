@@ -18,7 +18,7 @@ use crate::mods::library::{InstalledMod, Library, Origin, needed_by, unneeded};
 use crate::mods::readme;
 use crate::mods::repository;
 use crate::mods::version::{Version, parse_tags, tag_number};
-use crate::{AppWindow, VersionEntryView, diagnostics, log_for_config, paths};
+use crate::{AppWindow, ModCardView, diagnostics, log_for_config, paths};
 
 /// The `api` the launcher builds on: shown without a `uses` label or warning.
 const OFFICIAL_API_SOURCE: &str = "https://github.com/Tutez64/DRH-Mod-API";
@@ -89,6 +89,7 @@ pub(crate) fn register(
         let view = on.view();
         if let Some(ui) = view.ui.upgrade() {
             ui.set_mods_page(tab);
+            ui.set_mod_detail_open(false);
         }
         view.lock().confirming_uninstall = None;
         view.render();
@@ -97,16 +98,27 @@ pub(crate) fn register(
     let on = context.clone();
     ui.on_select_mod(move |row| {
         let view = on.view();
-        let tab = view.tab();
-        {
-            let mut page = view.lock();
-            let id = usize::try_from(row)
-                .ok()
-                .and_then(|row| page.rows.get(row).cloned());
-            page.selected[tab] = id;
-            page.confirming_uninstall = None;
+        if view.select_row(row) {
+            if let Some(ui) = view.ui.upgrade() {
+                ui.set_mod_detail_open(true);
+            }
+            view.render();
         }
-        view.render();
+    });
+
+    let on = context.clone();
+    ui.on_toggle_mod(move |row| {
+        if on.view().select_row(row) {
+            on.primary_action();
+        }
+    });
+
+    let on = context.clone();
+    ui.on_move_mod(move |row, delta| {
+        let view = on.view();
+        if view.select_row(row) {
+            view.move_selected(delta);
+        }
     });
 
     let on = context.clone();
@@ -138,9 +150,6 @@ pub(crate) fn register(
 
     let on = context.clone();
     ui.on_mod_uninstall(move || on.view().uninstall());
-
-    let on = context.clone();
-    ui.on_mod_move(move |delta| on.view().move_selected(delta));
 
     let on = context.clone();
     ui.on_open_mod_repository(move || {
@@ -357,6 +366,19 @@ impl View {
             .map_or(0, |ui| usize::from(ui.get_mods_page() == CATALOG as i32))
     }
 
+    /// Selects the list's `row`; false when there is none.
+    fn select_row(&self, row: i32) -> bool {
+        let tab = self.tab();
+        let mut page = self.lock();
+        let id = usize::try_from(row)
+            .ok()
+            .and_then(|row| page.rows.get(row).cloned());
+        let found = id.is_some();
+        page.selected[tab] = id;
+        page.confirming_uninstall = None;
+        found
+    }
+
     fn selected_id(&self, page: &Page) -> Option<String> {
         page.selected[self.tab()].clone()
     }
@@ -493,29 +515,21 @@ impl View {
         let tab = self.tab();
         let mut page = self.lock();
 
-        let rows: Vec<(String, VersionEntryView)> = if tab == CATALOG {
+        let rows: Vec<(String, ModCardView)> = if tab == CATALOG {
             catalog_rows(&page)
         } else {
             installed_rows(&page)
         };
         page.rows = rows.iter().map(|(id, _)| id.clone()).collect();
+        // A mod uninstalled from its page, or filtered out, closes it.
         let selected = page.selected[tab]
             .clone()
-            .filter(|id| page.rows.contains(id))
-            .or_else(|| page.rows.first().cloned());
+            .filter(|id| page.rows.contains(id));
         page.selected[tab] = selected.clone();
-        let selected_row = selected
-            .as_ref()
-            .and_then(|id| page.rows.iter().position(|row| row == id));
+        if selected.is_none() {
+            ui.set_mod_detail_open(false);
+        }
 
-        ui.set_mod_list_label(
-            if tab == CATALOG {
-                format!("Catalog ({})", rows.len())
-            } else {
-                format!("Installed ({})", rows.len())
-            }
-            .into(),
-        );
         ui.set_mod_list_empty_text(
             if tab != CATALOG {
                 "No mod installed: find some in Catalog."
@@ -531,7 +545,6 @@ impl View {
         ui.set_mod_entries(ModelRc::new(VecModel::from(
             rows.into_iter().map(|(_, view)| view).collect::<Vec<_>>(),
         )));
-        ui.set_selected_mod_index(selected_row.map_or(-1, |row| row as i32));
         ui.set_mods_status(page.message.clone().into());
         ui.set_mods_index_status(index_status(&page).into());
 
@@ -560,7 +573,6 @@ impl View {
         ui.set_selected_mod_uninstall_confirming(
             selected.is_some() && page.confirming_uninstall == selected,
         );
-        ui.set_selected_mod_order_visible(detail.enabled);
         ui.set_selected_mod_repository_enabled(detail.repository);
     }
 }
@@ -586,7 +598,6 @@ struct Detail {
     primary_enabled: bool,
     update: String,
     installed: bool,
-    enabled: bool,
     repository: bool,
 }
 
@@ -599,7 +610,6 @@ fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
     let enabled = page.enabled.iter().any(|known| known == id);
     let mut detail = Detail {
         installed: installed.is_some() && !catalog,
-        enabled: enabled && !catalog,
         repository: repository_of(page, id).is_some(),
         ..Detail::default()
     };
@@ -733,7 +743,7 @@ fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
     detail
 }
 
-fn installed_rows(page: &Page) -> Vec<(String, VersionEntryView)> {
+fn installed_rows(page: &Page) -> Vec<(String, ModCardView)> {
     let mut mods: Vec<&InstalledMod> = page.mods.iter().collect();
     // Enabled first, in load order; then the others by name.
     mods.sort_by_key(|m| {
@@ -743,37 +753,42 @@ fn installed_rows(page: &Page) -> Vec<(String, VersionEntryView)> {
     let free = unneeded(&page.mods, &page.enabled);
     mods.into_iter()
         .map(|m| {
-            let enabled = page.enabled.contains(&m.id);
-            let detail = if free.contains(&m.id) {
-                "Dependency, no longer needed".to_string()
+            let summary = if free.contains(&m.id) {
+                "Installed as a dependency, no longer needed".to_string()
             } else if m.dependency {
                 format!(
-                    "Dependency of {}",
+                    "Installed as a dependency of {}",
                     names(page, &needed_by(&page.mods, &m.id))
                 )
             } else {
-                author_text(&m.author, source_of(page, &m.id).as_deref())
+                m.description.clone()
             };
+            let mut tags = tags(page, &m.id, &m.uses);
+            if m.origin != Some(Origin::Index) {
+                tags.push("not reviewed".into());
+            }
             let status = if update_for(page, m).is_some() {
-                "Update"
-            } else if enabled {
-                "Enabled"
+                "Update available"
             } else {
-                "Disabled"
+                ""
             };
             (
                 m.id.clone(),
-                VersionEntryView {
-                    title: format!("{} {}", m.name, m.version).into(),
-                    detail: detail.into(),
+                ModCardView {
+                    name: m.name.clone().into(),
+                    version: m.version.clone().into(),
+                    summary: summary.into(),
+                    author: author_text(&m.author, source_of(page, &m.id).as_deref()).into(),
+                    tags: ModelRc::new(VecModel::from(tags)),
                     status: status.into(),
+                    enabled: page.enabled.contains(&m.id),
                 },
             )
         })
         .collect()
 }
 
-fn catalog_rows(page: &Page) -> Vec<(String, VersionEntryView)> {
+fn catalog_rows(page: &Page) -> Vec<(String, ModCardView)> {
     let Some(index) = &page.index else {
         return Vec::new();
     };
@@ -785,7 +800,7 @@ fn catalog_rows(page: &Page) -> Vec<(String, VersionEntryView)> {
         .collect();
     ids.sort_unstable();
     ids.dedup();
-    let mut rows: Vec<(String, VersionEntryView)> = ids
+    let mut rows: Vec<(String, ModCardView)> = ids
         .into_iter()
         .filter_map(|id| index.versions(id).first().copied())
         .filter(|entry| {
@@ -798,22 +813,35 @@ fn catalog_rows(page: &Page) -> Vec<(String, VersionEntryView)> {
         .map(|entry| {
             let installed = page.mods.iter().find(|m| m.id == entry.id);
             let status = match installed {
-                Some(m) if update_for(page, m).is_some() => "Update",
+                Some(m) if update_for(page, m).is_some() => "Update available",
                 Some(_) => "Installed",
                 None => "",
             };
             (
                 entry.id.clone(),
-                VersionEntryView {
-                    title: format!("{} {}", entry.name, entry.version).into(),
-                    detail: author_text(&entry.author, Some(&entry.source)).into(),
+                ModCardView {
+                    name: entry.name.clone().into(),
+                    version: entry.version.clone().into(),
+                    summary: entry.description.clone().into(),
+                    author: author_text(&entry.author, Some(&entry.source)).into(),
+                    tags: ModelRc::new(VecModel::from(tags(page, &entry.id, &entry.uses))),
                     status: status.into(),
+                    enabled: installed.is_some_and(|m| page.enabled.contains(&m.id)),
                 },
             )
         })
         .collect();
-    rows.sort_by_key(|(_, view)| view.title.to_lowercase());
+    rows.sort_by_key(|(_, view)| view.name.to_lowercase());
     rows
+}
+
+/// The `uses` label, which the official `api` goes without.
+fn tags(page: &Page, id: &str, uses: &[String]) -> Vec<slint::SharedString> {
+    if source_of(page, id).as_deref() == Some(OFFICIAL_API_SOURCE) {
+        Vec::new()
+    } else {
+        vec![uses_label(uses).into()]
+    }
 }
 
 /// The highest indexed version every enabled mod needing it accepts, when it

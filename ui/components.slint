@@ -1238,3 +1238,225 @@ export component LaunchTextField inherits Rectangle {
         }
     }
 }
+
+export component ModTag inherits Rectangle {
+    in property <string> text;
+
+    height: 20px;
+    width: label.preferred-width + 14px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.border-accent-muted;
+    background: Theme.surface-accent;
+
+    label := Text {
+        text: root.text;
+        color: Theme.text-secondary;
+        font-size: 11px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// A mod in the Catalog's grid.
+export component ModCard inherits Rectangle {
+    in property <string> name;
+    in property <string> version;
+    in property <string> summary;
+    in property <string> author;
+    in property <[string]> tags;
+    in property <string> status;
+    callback clicked();
+
+    height: 124px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.border-accent : Theme.border-muted;
+    background: touch.has-hover ? Theme.surface-hover : Theme.panel-background;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            Text {
+                horizontal-stretch: 1;
+                text: root.name;
+                color: Theme.text-primary;
+                font-size: 14px;
+                font-weight: 800;
+                overflow: elide;
+            }
+
+            Text {
+                text: root.version;
+                color: Theme.text-support;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            vertical-stretch: 1;
+            text: root.summary;
+            color: Theme.text-muted;
+            font-size: 12px;
+            wrap: word-wrap;
+            overflow: elide;
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+
+            Text {
+                horizontal-stretch: 1;
+                text: root.author;
+                color: Theme.text-support;
+                font-size: 11px;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+
+            for tag in root.tags: ModTag {
+                text: tag;
+            }
+
+            Text {
+                text: root.status;
+                color: Theme.accent-warm;
+                font-size: 11px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// An installed mod: enabled or not and its place in the load order, without
+// opening its page.
+export component ModRow inherits Rectangle {
+    in property <string> name;
+    in property <string> version;
+    in property <string> summary;
+    in property <[string]> tags;
+    in property <string> status;
+    in property <bool> enabled;
+    in property <bool> busy;
+    callback clicked();
+    callback toggled();
+    callback moved(int);
+
+    height: 64px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.border-accent : Theme.border-muted;
+    background: touch.has-hover ? Theme.surface-hover : Theme.panel-background;
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 10px;
+        alignment: stretch;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 4px;
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: root.name;
+                    color: Theme.text-primary;
+                    font-size: 14px;
+                    font-weight: 800;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: root.version;
+                    color: Theme.text-support;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+
+                for tag in root.tags: ModTag {
+                    text: tag;
+                }
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.status;
+                    color: Theme.accent-warm;
+                    font-size: 11px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+
+            Text {
+                text: root.summary;
+                color: Theme.text-muted;
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+
+        if root.enabled : VerticalLayout {
+            alignment: center;
+
+            StepperButton {
+                text: "▲";
+                clicked => {
+                    if !root.busy {
+                        root.moved(-1);
+                    }
+                }
+            }
+        }
+
+        if root.enabled : VerticalLayout {
+            alignment: center;
+
+            StepperButton {
+                text: "▼";
+                clicked => {
+                    if !root.busy {
+                        root.moved(1);
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+
+            LaunchOptionToggle {
+                width: 112px;
+                text: root.enabled ? "Enabled" : "Disabled";
+                checked: root.enabled;
+                toggled => {
+                    if !root.busy {
+                        root.toggled();
+                    }
+                }
+            }
+        }
+    }
+}
