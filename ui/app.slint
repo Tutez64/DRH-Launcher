@@ -588,6 +588,27 @@ export component AppWindow inherits Window {
     in property <string> game-log-migration-status;
     in property <bool> refresh-logs-enabled: true;
     in property <[VersionEntryView]> drh-version-entries;
+    in-out property <int> mods-page: 0;
+    in property <[VersionEntryView]> mod-entries;
+    in property <int> selected-mod-index: -1;
+    in property <string> mod-list-label: "Installed";
+    in property <string> mod-list-empty-text;
+    in-out property <string> mod-search;
+    in property <bool> mods-busy: false;
+    in property <string> mods-status;
+    in property <string> mods-index-status;
+    in property <string> selected-mod-title: "No mod selected";
+    in property <string> selected-mod-description;
+    in property <string> selected-mod-facts;
+    in property <string> selected-mod-notes;
+    in property <[MarkdownBlockView]> selected-mod-blocks;
+    in property <string> selected-mod-primary-text;
+    in property <bool> selected-mod-primary-enabled: false;
+    in property <string> selected-mod-update-text;
+    in property <bool> selected-mod-uninstall-visible: false;
+    in property <bool> selected-mod-uninstall-confirming: false;
+    in property <bool> selected-mod-order-visible: false;
+    in property <bool> selected-mod-repository-enabled: false;
     in property <[VersionEntryView]> launcher-version-entries;
     in property <[MarkdownBlockView]> selected-version-changelog-blocks;
     in property <string> drh-version-list-label: "DRH releases";
@@ -719,6 +740,17 @@ export component AppWindow inherits Window {
     callback refresh-logs();
     callback ensure-logs();
     callback ensure-version-history();
+    callback ensure-mods();
+    callback select-mods-page(int);
+    callback select-mod(int);
+    callback mod-search-edited(string);
+    callback mod-primary-action();
+    callback mod-update();
+    callback mod-uninstall();
+    callback mod-move(int);
+    callback open-mod-repository();
+    callback refresh-mods();
+    callback open-mods-folder();
     callback refresh-version-history();
     callback select-version-history-source(int);
     callback select-drh-version(int);
@@ -849,6 +881,7 @@ export component AppWindow inherits Window {
                     clicked => {
                         root.help-menu-open = false;
                         root.active-page = 3;
+                        root.ensure-mods();
                     }
                 }
 
@@ -1776,13 +1809,207 @@ export component AppWindow inherits Window {
                     VerticalLayout {
                         spacing: 16px;
 
-                        SettingsCard {
-                            title: "Not available yet";
-                            description: "Launcher-side mod support is planned for a later phase.";
+                        HorizontalLayout {
+                            spacing: 8px;
+
+                            TabButton {
+                                text: "Installed";
+                                active: root.mods-page == 0;
+                                clicked => {
+                                    root.select-mods-page(0);
+                                }
+                            }
+
+                            TabButton {
+                                text: "Catalog";
+                                active: root.mods-page == 1;
+                                clicked => {
+                                    root.select-mods-page(1);
+                                }
+                            }
                         }
 
-                        Rectangle {
+                        HorizontalLayout {
+                            spacing: 12px;
                             vertical-stretch: 1;
+
+                            Rectangle {
+                                width: 240px;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: Theme.border-muted;
+                                background: Theme.panel-background;
+
+                                VerticalLayout {
+                                    padding: 10px;
+                                    spacing: 8px;
+
+                                    SmallLabel {
+                                        label: root.mod-list-label;
+                                    }
+
+                                    if root.mods-page == 1 : AppLineEdit {
+                                        placeholder: "Search name or author";
+                                        value <=> root.mod-search;
+                                        changed value => {
+                                            root.mod-search-edited(self.value);
+                                        }
+                                    }
+
+                                    if root.mod-entries.length == 0 : Text {
+                                        text: root.mod-list-empty-text;
+                                        color: Theme.text-secondary;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                    }
+
+                                    ListView {
+                                        horizontal-stretch: 1;
+                                        vertical-stretch: 1;
+
+                                        for entry[index] in root.mod-entries: VersionEntryButton {
+                                            title: entry.title;
+                                            detail: entry.detail;
+                                            status: entry.status;
+                                            active: root.selected-mod-index == index;
+                                            clicked => {
+                                                root.select-mod(index);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            SettingsCard {
+                                title: root.selected-mod-title;
+                                description: root.selected-mod-description;
+                                horizontal-stretch: 1;
+                                vertical-stretch: 1;
+
+                                if root.selected-mod-facts != "" : Text {
+                                    text: root.selected-mod-facts;
+                                    color: Theme.text-support;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+
+                                if root.selected-mod-notes != "" : Text {
+                                    text: root.selected-mod-notes;
+                                    color: Theme.accent-warm;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+
+                                ScrollView {
+                                    horizontal-stretch: 1;
+                                    vertical-stretch: 1;
+                                    content-width: self.width;
+                                    content-height: mod-description-content.preferred-height;
+
+                                    mod-description-content := VerticalLayout {
+                                        width: parent.width;
+                                        spacing: 4px;
+
+                                        for block in root.selected-mod-blocks: MarkdownBlock {
+                                            text: block.text;
+                                            kind: block.kind;
+                                            target: block.target;
+                                            open-target(url) => {
+                                                root.open-markdown-link(url);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    alignment: end;
+                                    vertical-stretch: 0;
+
+                                    SecondaryButton {
+                                        text: "Repository";
+                                        enabled: root.selected-mod-repository-enabled;
+                                        clicked => {
+                                            root.open-mod-repository();
+                                        }
+                                    }
+
+                                    if root.selected-mod-uninstall-visible : SecondaryButton {
+                                        text: root.selected-mod-uninstall-confirming ? "Confirm uninstall" : "Uninstall";
+                                        enabled: !root.mods-busy;
+                                        active: root.selected-mod-uninstall-confirming;
+                                        clicked => {
+                                            root.mod-uninstall();
+                                        }
+                                    }
+
+                                    if root.selected-mod-order-visible : StepperButton {
+                                        text: "▲";
+                                        clicked => {
+                                            root.mod-move(-1);
+                                        }
+                                    }
+
+                                    if root.selected-mod-order-visible : StepperButton {
+                                        text: "▼";
+                                        clicked => {
+                                            root.mod-move(1);
+                                        }
+                                    }
+
+                                    if root.selected-mod-update-text != "" : SecondaryButton {
+                                        text: root.selected-mod-update-text;
+                                        enabled: !root.mods-busy;
+                                        clicked => {
+                                            root.mod-update();
+                                        }
+                                    }
+
+                                    SecondaryButton {
+                                        text: root.selected-mod-primary-text;
+                                        enabled: root.selected-mod-primary-enabled && !root.mods-busy;
+                                        clicked => {
+                                            root.mod-primary-action();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+
+                            SecondaryButton {
+                                text: "Refresh";
+                                enabled: !root.mods-busy;
+                                clicked => {
+                                    root.refresh-mods();
+                                }
+                            }
+
+                            SecondaryButton {
+                                text: "Open mods folder";
+                                clicked => {
+                                    root.open-mods-folder();
+                                }
+                            }
+
+                            Text {
+                                horizontal-stretch: 1;
+                                text: root.mods-status;
+                                color: Theme.text-muted;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: root.mods-index-status;
+                                color: Theme.text-support;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                                horizontal-alignment: right;
+                            }
                         }
                     }
                 }

@@ -25,6 +25,7 @@ mod linux_appimage;
 mod log_view;
 mod mod_commands;
 mod mods;
+mod mods_page;
 mod paths;
 mod platform;
 mod play_mode;
@@ -1190,6 +1191,8 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             );
         });
     }
+
+    mods_page::register(&ui, &config, &app_shutting_down);
 
     {
         let ui = ui.as_weak();

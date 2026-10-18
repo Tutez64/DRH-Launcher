@@ -2,9 +2,6 @@
 //! it, which are enabled and in what order (`enabled.json`, read by the
 //! game), and how each got there (`data/mods.json`, the launcher's own).
 
-// Until the Mods page uses it, Play and the tests do.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -43,6 +40,9 @@ struct Record {
 struct State {
     #[serde(default)]
     mods: BTreeMap<String, Record>,
+    /// The DRH tag the dependencies were last resolved for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tag: Option<u32>,
 }
 
 /// A mod in the folder, read from its `mod.json` without refusing it: texts
@@ -158,6 +158,12 @@ impl Library {
         installed_tag: Option<u32>,
     ) -> Result<Vec<String>, String> {
         self.settle(index, Some(Added::Installed(id)), installed_tag)
+    }
+
+    /// Whether the dependencies were resolved for another DRH tag than
+    /// `installed_tag`, with a mod enabled: then `refresh` is due.
+    pub fn needs_refresh(&self, installed_tag: Option<u32>) -> bool {
+        !self.enabled().is_empty() && self.read_state().tag != installed_tag
     }
 
     /// The enabled mods' dependencies again, for a new DRH tag: after an
@@ -301,6 +307,9 @@ impl Library {
             to_install.push((entry, false));
         }
         self.put(&mods, &to_install)?;
+        let mut state = self.read_state();
+        state.tag = installed_tag;
+        self.write_state(&state)?;
 
         let mut wanted: Vec<&str> = resolution
             .entries
@@ -358,10 +367,11 @@ impl Library {
                 .find(|m| m.id == entry.id)
                 .map(|m| m.folder.as_path());
             self.swap(folder, old, &self.dir.join(&entry.id))?;
+            // An update keeps how the mod first came; a new one is a
+            // dependency when another mod brought it.
             let dependency = match state.mods.get(&entry.id) {
-                Some(record) if *as_dependency => record.dependency,
-                None if *as_dependency && old.is_none() => true,
-                _ => false,
+                Some(record) => record.dependency,
+                None => *as_dependency && old.is_none(),
             };
             state.mods.insert(
                 entry.id.clone(),
@@ -438,6 +448,33 @@ impl Added<'_> {
             Added::Installed(id) => id,
         }
     }
+}
+
+/// The mods installed as a dependency that no enabled mod needs, directly or
+/// through another.
+pub fn unneeded(mods: &[InstalledMod], enabled: &[String]) -> Vec<String> {
+    let mut needed: Vec<&str> = mods
+        .iter()
+        .filter(|m| enabled.contains(&m.id) && !m.dependency)
+        .map(|m| m.id.as_str())
+        .collect();
+    let mut next = 0;
+    while next < needed.len() {
+        let id = needed[next];
+        next += 1;
+        let Some(found) = mods.iter().find(|m| m.id == id) else {
+            continue;
+        };
+        for (need, _) in &found.needs {
+            if !needed.contains(&need.as_str()) {
+                needed.push(need);
+            }
+        }
+    }
+    mods.iter()
+        .filter(|m| m.dependency && !needed.contains(&m.id.as_str()))
+        .map(|m| m.id.clone())
+        .collect()
 }
 
 /// The installed mods that need `id`.
@@ -706,6 +743,8 @@ mod tests {
                 .next()
                 .is_none()
         );
+        assert!(!library.needs_refresh(Some(14)));
+        assert!(library.needs_refresh(Some(15)));
     }
 
     #[test]
@@ -757,6 +796,9 @@ mod tests {
             ["lib needs api: the game fails it while api is disabled."]
         );
         assert_eq!(library.enabled(), ["lib"]);
+        let mods = library.scan().unwrap();
+        assert!(unneeded(&mods, &library.enabled()).is_empty());
+        assert_eq!(unneeded(&mods, &[]), ["api"]);
         assert_eq!(library.uninstall("lib").unwrap(), ["api"]);
         assert_eq!(ids(&library.scan().unwrap()), ["api"]);
         assert!(library.enabled().is_empty());

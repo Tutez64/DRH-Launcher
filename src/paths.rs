@@ -73,6 +73,11 @@ pub fn mods_state_file(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("mods.json")
 }
 
+/// The last mod index fetched, for the Mods page offline.
+pub fn mod_index_cache_file(install_dir: &std::path::Path) -> PathBuf {
+    data_dir(install_dir).join("mod-index.json")
+}
+
 /// Mod versions downloaded before they replace the installed ones.
 pub fn mod_staging_dir(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("mod-staging")

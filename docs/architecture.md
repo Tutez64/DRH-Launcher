@@ -97,6 +97,7 @@ The intended managed content layout is:
     staging/
     mods.json         # how each mod in mods/ got there: index, zip or repository, and whether as a dependency
     mod-staging/      # mod versions downloaded before they replace the installed ones
+    mod-index.json    # the last mod index fetched, for the Mods page offline
     mod-cache/        # --run-mod: indexed mod versions, one folder each
     run-mod/          # --run-mod: the mods folder it composes, rebuilt each run
     run-mod-zip/      # --run-mod on a zip: the zip extracted
@@ -686,7 +687,7 @@ The UI should make this explicit and avoid treating Steam shortcut editing as gu
 
 ## Mods
 
-The modder commands ([Launch Modes](#launch-modes)) exist; the Mods page is a later phase. The runtime design lives in the game
+The modder commands ([Launch Modes](#launch-modes)) and the Mods page exist; the Mods page does not yet show `last-run.json`, the first-run disclosure, nor installs from a zip or a link. The runtime design lives in the game
 repository: [docs/modding.md](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/modding.md).
 That document is the source of truth for how mods load, compile (hxScript /
 cppia in the game process), how they are published, and how they talk to DRH.
@@ -745,7 +746,7 @@ installed tag comes first; when none does, install the highest
 satisfying version anyway, with the `drh` warning. One version per id; when none satisfies everyone, keep
 the installed one and warn. No backtracking. An `api` version listing a
 new DRH tag is indexed before that release is published (see the game
-document). After a DRH install, update or rollback, resolve again. The game does not check
+document). After a DRH install, update or rollback, resolve again: the Mods page does it when it next fetches the index. The game does not check
 versions, only that dependencies loaded.
 
 A dependency cycle is not an error: the game compiles all enabled mods

@@ -3,13 +3,21 @@ use slint::StyledText;
 
 use crate::MarkdownBlockView;
 
+const NO_CHANGELOG: &str = "No changelog was provided for this release.";
+
 pub fn markdown_blocks(body: &str) -> Vec<MarkdownBlockView> {
+    let blocks = markdown_document(body);
+    if blocks.is_empty() {
+        return vec![markdown_block(NO_CHANGELOG, MarkdownBlockKind::Paragraph)];
+    }
+    blocks
+}
+
+/// The blocks of `body`; none when it renders to nothing.
+pub fn markdown_document(body: &str) -> Vec<MarkdownBlockView> {
     let body = body.trim().replace("\r\n", "\n");
     if body.is_empty() {
-        return vec![markdown_block(
-            "No changelog was provided for this release.",
-            MarkdownBlockKind::Paragraph,
-        )];
+        return Vec::new();
     }
 
     let mut renderer = MarkdownRenderer::default();
@@ -218,7 +226,8 @@ impl MarkdownRenderer {
             .as_ref()
             .is_some_and(|current| current.kind == MarkdownBlockKind::Code)
         {
-            text.to_string()
+            // The UI font has no tab glyph.
+            text.replace('\t', "    ")
         } else {
             escape_markdown_text(text)
         };
@@ -289,12 +298,6 @@ impl MarkdownRenderer {
 
     fn finish(mut self) -> Vec<MarkdownBlockView> {
         self.flush_current();
-        if self.blocks.is_empty() {
-            self.blocks.push(markdown_block(
-                "No changelog was provided for this release.",
-                MarkdownBlockKind::Paragraph,
-            ));
-        }
         self.blocks
     }
 }

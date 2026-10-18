@@ -1,6 +1,8 @@
 //! The mod index: one entry per mod version, read from a static file.
 
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 use reqwest::blocking::Client;
@@ -100,15 +102,24 @@ impl Index {
     }
 
     pub fn fetch() -> Result<Self, String> {
-        let url = index_url();
-        let text = http_client()?
-            .get(&url)
-            .header(USER_AGENT, "DRH-Launcher")
-            .send()
-            .and_then(|response| response.error_for_status())
-            .and_then(|response| response.text())
-            .map_err(|error| format!("Could not fetch the mod index {url}: {error}"))?;
-        Self::parse(&text)
+        Self::parse(&fetch_text()?)
+    }
+
+    /// Fetches the index and keeps a copy in `cache`, for when it cannot be
+    /// fetched.
+    pub fn fetch_and_cache(cache: &Path) -> Result<Self, String> {
+        let text = fetch_text()?;
+        let index = Self::parse(&text)?;
+        if let Some(parent) = cache.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(cache, &text);
+        Ok(index)
+    }
+
+    /// The copy `fetch_and_cache` kept, if it still reads.
+    pub fn cached(cache: &Path) -> Option<Self> {
+        Self::parse(&fs::read_to_string(cache).ok()?).ok()
     }
 
     /// Versions of `id` that are not yanked, highest first.
@@ -122,6 +133,17 @@ impl Index {
         versions.sort_by_key(|entry| std::cmp::Reverse(entry.parsed_version()));
         versions
     }
+}
+
+fn fetch_text() -> Result<String, String> {
+    let url = index_url();
+    http_client()?
+        .get(&url)
+        .header(USER_AGENT, "DRH-Launcher")
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.text())
+        .map_err(|error| format!("Could not fetch the mod index {url}: {error}"))
 }
 
 pub fn http_client() -> Result<Client, String> {
