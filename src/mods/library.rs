@@ -72,6 +72,41 @@ pub struct InstalledMod {
     pub source: Option<String>,
 }
 
+impl InstalledMod {
+    /// `entry` as it reads once installed.
+    pub fn planned(entry: &Entry, dependency: bool) -> Self {
+        let (needs, problem) = match entry_needs(entry) {
+            Ok(needs) => (needs, None),
+            Err(problem) => (Vec::new(), Some(problem)),
+        };
+        Self {
+            id: entry.id.clone(),
+            folder: PathBuf::new(),
+            name: entry.name.clone(),
+            version: entry.version.clone(),
+            author: entry.author.clone(),
+            description: entry.description.clone(),
+            drh: entry.drh.clone(),
+            uses: entry.uses.clone(),
+            needs,
+            problem,
+            origin: Some(Origin::Index),
+            dependency,
+            source: Some(entry.source.clone()),
+        }
+    }
+}
+
+/// What installing or enabling a mod would change.
+pub struct Plan {
+    /// The index entries to install; `true`: as a dependency, unless it is
+    /// already there.
+    pub entries: Vec<(Entry, bool)>,
+    /// The enabled ids after, in order.
+    pub enabled: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
 pub struct Library {
     dir: PathBuf,
     state_file: PathBuf,
@@ -207,9 +242,8 @@ impl Library {
         self.write_enabled(&ordered)
     }
 
-    /// Removes a mod. Returns the mods installed as a dependency that no
-    /// installed mod needs any more, to offer removing them too.
-    pub fn uninstall(&self, id: &str) -> Result<Vec<String>, String> {
+    /// Removes a mod.
+    pub fn uninstall(&self, id: &str) -> Result<(), String> {
         let mods = self.scan()?;
         let Some(found) = mods.iter().find(|m| m.id == id) else {
             return Err(format!("{id} is not installed."));
@@ -221,23 +255,7 @@ impl Library {
         self.write_enabled(&enabled)?;
         let mut state = self.read_state();
         state.mods.remove(id);
-        self.write_state(&state)?;
-
-        let mut remaining: Vec<&InstalledMod> = mods.iter().filter(|m| m.id != id).collect();
-        let mut unneeded = Vec::new();
-        loop {
-            let free = remaining.iter().position(|candidate| {
-                candidate.dependency
-                    && !remaining
-                        .iter()
-                        .any(|other| other.needs.iter().any(|(need, _)| *need == candidate.id))
-            });
-            let Some(free) = free else {
-                break;
-            };
-            unneeded.push(remaining.remove(free).id.clone());
-        }
-        Ok(unneeded)
+        self.write_state(&state)
     }
 
     /// Drops the enabled ids whose folder is gone; the Mods page's scan
@@ -254,12 +272,52 @@ impl Library {
         Ok(dropped)
     }
 
+    /// What `install` would do, without doing it.
+    pub fn plan_install(
+        &self,
+        index: &Index,
+        entry: &Entry,
+        installed_tag: Option<u32>,
+    ) -> Result<Plan, String> {
+        self.plan(index, Some(Added::Entry(entry)), installed_tag)
+    }
+
+    /// What `enable` would do, without doing it.
+    pub fn plan_enable(
+        &self,
+        index: &Index,
+        id: &str,
+        installed_tag: Option<u32>,
+    ) -> Result<Plan, String> {
+        self.plan(index, Some(Added::Installed(id)), installed_tag)
+    }
+
     fn settle(
         &self,
         index: &Index,
         added: Option<Added>,
         installed_tag: Option<u32>,
     ) -> Result<Vec<String>, String> {
+        let plan = self.plan(index, added, installed_tag)?;
+        let to_install: Vec<(&Entry, bool)> = plan
+            .entries
+            .iter()
+            .map(|(entry, as_dependency)| (entry, *as_dependency))
+            .collect();
+        self.put(&self.scan()?, &to_install)?;
+        let mut state = self.read_state();
+        state.tag = installed_tag;
+        self.write_state(&state)?;
+        self.write_enabled(&plan.enabled)?;
+        Ok(plan.warnings)
+    }
+
+    fn plan(
+        &self,
+        index: &Index,
+        added: Option<Added>,
+        installed_tag: Option<u32>,
+    ) -> Result<Plan, String> {
         let mods = self.scan()?;
         let mut enabled = self.enabled();
         let added_id = added.as_ref().map(Added::id);
@@ -299,7 +357,7 @@ impl Library {
             .collect();
         let resolution = resolve(index, &roots, &installed, installed_tag)?;
 
-        let mut to_install: Vec<(&Entry, bool)> = resolution
+        let mut entries: Vec<(Entry, bool)> = resolution
             .entries
             .iter()
             .filter(|entry| {
@@ -307,15 +365,11 @@ impl Library {
                     .get(&entry.id)
                     .is_none_or(|local| Some(local.version) != entry.parsed_version())
             })
-            .map(|entry| (entry, true))
+            .map(|entry| (entry.clone(), true))
             .collect();
         if let Some(Added::Entry(entry)) = &added {
-            to_install.push((entry, false));
+            entries.push(((*entry).clone(), false));
         }
-        self.put(&mods, &to_install)?;
-        let mut state = self.read_state();
-        state.tag = installed_tag;
-        self.write_state(&state)?;
 
         let mut wanted: Vec<&str> = resolution
             .entries
@@ -329,11 +383,14 @@ impl Library {
                 enabled.push(id.to_string());
             }
         }
-        self.write_enabled(&enabled)?;
 
         let mut warnings = resolution.warnings;
         warnings.extend(resolution.missing);
-        Ok(warnings)
+        Ok(Plan {
+            entries,
+            enabled,
+            warnings,
+        })
     }
 
     /// Downloads every entry first, then swaps each into the folder, so a
@@ -811,7 +868,7 @@ mod tests {
         let mods = library.scan().unwrap();
         assert!(unneeded(&mods, &library.enabled()).is_empty());
         assert_eq!(unneeded(&mods, &[]), ["api"]);
-        assert_eq!(library.uninstall("lib").unwrap(), ["api"]);
+        library.uninstall("lib").unwrap();
         assert_eq!(ids(&library.scan().unwrap()), ["api"]);
         assert!(library.enabled().is_empty());
     }

@@ -613,19 +613,21 @@ export component AppWindow inherits Window {
     in property <string> mod-list-empty-text;
     in-out property <string> mod-search;
     in property <bool> mods-busy: false;
-    in property <string> mods-status;
+    in property <string> mods-error;
+    in property <bool> mod-confirm-visible: false;
+    in property <string> mod-confirm-title;
+    in property <string> mod-confirm-text;
+    in property <string> mod-confirm-button;
     in property <string> mods-index-status;
     in property <string> selected-mod-title: "No mod selected";
     in property <string> selected-mod-description;
     in property <string> selected-mod-facts;
     in property <[ModTagView]> selected-mod-tags;
-    in property <string> selected-mod-notes;
     in property <[MarkdownBlockView]> selected-mod-blocks;
     in property <string> selected-mod-primary-text;
     in property <bool> selected-mod-primary-enabled: false;
     in property <string> selected-mod-update-text;
     in property <bool> selected-mod-uninstall-visible: false;
-    in property <bool> selected-mod-uninstall-confirming: false;
     in property <bool> selected-mod-repository-enabled: false;
     in property <[VersionEntryView]> launcher-version-entries;
     in property <[MarkdownBlockView]> selected-version-changelog-blocks;
@@ -765,6 +767,9 @@ export component AppWindow inherits Window {
     callback mod-primary-action();
     callback mod-update();
     callback mod-uninstall();
+    callback mod-confirm-accepted();
+    callback mod-confirm-cancelled();
+    callback dismiss-mods-error();
     callback toggle-mod(int);
 
     function show-mod-tooltip(text: string, x: length, y: length) {
@@ -1858,6 +1863,55 @@ export component AppWindow inherits Window {
                             }
                         }
 
+                        // The last action's failure; the log has all of it.
+                        if root.mods-error != "" : Rectangle {
+                            height: 50px;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: Theme.accent-warm;
+                            background: Theme.surface-selected;
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 8px;
+                                spacing: 8px;
+                                alignment: stretch;
+
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: "⚠ " + root.mods-error;
+                                    color: Theme.text-primary;
+                                    font-size: 13px;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+
+                                    SecondaryButton {
+                                        text: "Open logs";
+                                        clicked => {
+                                            root.log-source = 0;
+                                            root.settings-page = 1;
+                                            root.active-page = 4;
+                                        }
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+
+                                    StepperButton {
+                                        text: "✕";
+                                        clicked => {
+                                            root.dismiss-mods-error();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         if !root.mod-detail-open && root.mods-page == 1 : HorizontalLayout {
                             spacing: 12px;
 
@@ -1992,13 +2046,6 @@ export component AppWindow inherits Window {
                                 wrap: word-wrap;
                             }
 
-                            if root.selected-mod-notes != "" : Text {
-                                text: root.selected-mod-notes;
-                                color: Theme.accent-warm;
-                                font-size: 12px;
-                                wrap: word-wrap;
-                            }
-
                             ScrollView {
                                 horizontal-stretch: 1;
                                 vertical-stretch: 1;
@@ -2043,9 +2090,8 @@ export component AppWindow inherits Window {
                                 }
 
                                 if root.selected-mod-uninstall-visible : SecondaryButton {
-                                    text: root.selected-mod-uninstall-confirming ? "Confirm uninstall" : "Uninstall";
+                                    text: "Uninstall";
                                     enabled: !root.mods-busy;
-                                    active: root.selected-mod-uninstall-confirming;
                                     clicked => {
                                         root.mod-uninstall();
                                     }
@@ -2073,6 +2119,7 @@ export component AppWindow inherits Window {
                             spacing: 10px;
 
                             SecondaryButton {
+                                horizontal-stretch: 1;
                                 text: "Refresh";
                                 enabled: !root.mods-busy;
                                 clicked => {
@@ -2081,19 +2128,11 @@ export component AppWindow inherits Window {
                             }
 
                             SecondaryButton {
+                                horizontal-stretch: 1;
                                 text: "Open mods folder";
                                 clicked => {
                                     root.open-mods-folder();
                                 }
-                            }
-
-                            Text {
-                                horizontal-stretch: 1;
-                                text: root.mods-status;
-                                color: Theme.text-muted;
-                                font-size: 12px;
-                                wrap: word-wrap;
-                                vertical-alignment: center;
                             }
                         }
                     }
@@ -2763,6 +2802,70 @@ export component AppWindow inherits Window {
                     enabled: root.selected-version-action-enabled;
                     clicked => {
                         root.install-selected-drh-version();
+                    }
+                }
+            }
+        }
+    }
+
+    if root.mod-confirm-visible : Rectangle {
+        z: 2000;
+        background: Theme.modal-scrim;
+
+        TouchArea {}
+
+        Rectangle {
+            width: min(560px, parent.width - 32px);
+            height: mod-confirm-content.preferred-height + 48px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border-accent-muted;
+            background: Theme.surface-raised;
+            drop-shadow-blur: 18px;
+            drop-shadow-offset-y: 6px;
+            drop-shadow-color: Theme.shadow-strong;
+
+            mod-confirm-content := VerticalLayout {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                height: parent.height - 48px;
+                spacing: 16px;
+
+                Text {
+                    text: root.mod-confirm-title;
+                    color: Theme.text-title;
+                    font-size: 19px;
+                    font-weight: 800;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: root.mod-confirm-text;
+                    color: Theme.text-body;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    min-height: 42px;
+                    spacing: 10px;
+                    alignment: end;
+
+                    SecondaryButton {
+                        text: "Cancel";
+                        clicked => {
+                            root.mod-confirm-cancelled();
+                        }
+                    }
+
+                    PrimaryButton {
+                        text: root.mod-confirm-button;
+                        clicked => {
+                            root.mod-confirm-accepted();
+                        }
                     }
                 }
             }

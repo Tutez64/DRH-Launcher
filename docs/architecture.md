@@ -794,11 +794,19 @@ store.
   Mods page scan (not during `--play`), drop `enabled.json` ids whose
   folder is gone and rewrite the file. The game skips those ids, logs, and
   records `skipped` in `last-run.json`.
-- remember which mods were installed as a dependency (recommended).
-  Their page and list entry name the installed mods that need them; when
-  the last of those is uninstalled, offer to remove them too. A mod's
-  README never has to say it is installed with others. `api` is no
-  exception: installed with the first mod that needs it.
+- remember which mods were installed as a dependency (recommended). A
+  `dependency` label names the enabled mods that need a mod; once none
+  does, one installed as a dependency gets a `not needed` label to
+  disable or uninstall it; disabled while needed, a `⚠ needed` one. A
+  mod's README never has to say it is installed with others. `api` is no
+  exception: installed with the first mod that needs it, it gets none of
+  these labels.
+- an action that would add problems (a needed mod disabled or
+  uninstalled, a mod or dependency not built for the installed DRH, a
+  dependency missing or not fitting) lists them and asks first;
+  uninstalling always asks. Actions and their warnings go to the launcher
+  log; a failed one shows in a line above the list, until dismissed or an
+  action succeeds.
 - offer updates when the index has a newer artifact for the same `id`
 - open the mods folder; install from a local zip or from a GitHub
   repository link (unlisted, labeled as not index-reviewed). A link

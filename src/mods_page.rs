@@ -12,14 +12,15 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::changelog_markdown::markdown_document;
 use crate::config::LauncherConfig;
+use crate::diagnostics::{self, LogLevel};
 use crate::game_install::inspect_install;
 use crate::mods::index::{Entry, Index};
-use crate::mods::library::{InstalledMod, Library, Origin, needed_by, unneeded};
+use crate::mods::library::{InstalledMod, Library, Origin, Plan, needed_by, unneeded};
 use crate::mods::readme;
 use crate::mods::repository;
 use crate::mods::resolve::offered;
 use crate::mods::version::{Version, parse_tags, tag_number};
-use crate::{AppWindow, ModCardView, ModTagKind, ModTagView, diagnostics, log_for_config, paths};
+use crate::{AppWindow, ModCardView, ModTagKind, ModTagView, paths};
 
 /// The `api` the launcher builds on: shown without a `uses` label or warning.
 const OFFICIAL_API_SOURCE: &str = "https://github.com/Tutez64/DRH-Mod-API";
@@ -39,8 +40,10 @@ struct Page {
     rows: Vec<String>,
     selected: [Option<String>; 2],
     search: String,
-    confirming_uninstall: Option<String>,
-    message: String,
+    /// The last action's failure, until dismissed or an action succeeds.
+    error: Option<String>,
+    /// An action waiting for the user to confirm it.
+    confirm: Option<Confirm>,
     /// The mod an operation is running on, and what it shows meanwhile.
     working: Option<(String, &'static str)>,
     /// The installed DRH tag's number.
@@ -48,6 +51,23 @@ struct Page {
 }
 
 type Shared = Arc<Mutex<Page>>;
+
+/// What the user asked for on a mod.
+#[derive(Clone)]
+enum Action {
+    Install(Entry),
+    Update(Entry),
+    Enable(String),
+    Disable(String),
+    Uninstall(String),
+}
+
+struct Confirm {
+    action: Action,
+    title: String,
+    text: String,
+    button: String,
+}
 
 pub(crate) fn register(
     ui: &AppWindow,
@@ -103,7 +123,6 @@ pub(crate) fn register(
             ui.set_mods_page(tab);
             ui.set_mod_detail_open(false);
         }
-        view.lock().confirming_uninstall = None;
         view.render();
     });
 
@@ -145,24 +164,43 @@ pub(crate) fn register(
 
     let on = context.clone();
     ui.on_mod_update(move || {
-        let Some(entry) = on.view().selected_update() else {
-            return;
-        };
-        on.in_background(
-            (entry.id.clone(), "Updating..."),
-            format!("Updating {}...", entry.name),
-            move |library, index, tag| {
-                let warnings = library.install(&index, &entry, tag)?;
-                Ok(with_warnings(
-                    format!("Updated {} to {}.", entry.name, entry.version),
-                    warnings,
-                ))
-            },
-        );
+        if let Some(entry) = on.view().selected_update() {
+            on.ask(Action::Update(entry));
+        }
     });
 
     let on = context.clone();
-    ui.on_mod_uninstall(move || on.view().uninstall());
+    ui.on_mod_uninstall(move || {
+        let view = on.view();
+        let id = view.selected_id(&view.lock());
+        if let Some(id) = id {
+            on.ask(Action::Uninstall(id));
+        }
+    });
+
+    let on = context.clone();
+    ui.on_mod_confirm_accepted(move || {
+        let view = on.view();
+        let confirm = view.lock().confirm.take();
+        view.render();
+        if let Some(confirm) = confirm {
+            on.run(confirm.action);
+        }
+    });
+
+    let on = context.clone();
+    ui.on_mod_confirm_cancelled(move || {
+        let view = on.view();
+        view.lock().confirm = None;
+        view.render();
+    });
+
+    let on = context.clone();
+    ui.on_dismiss_mods_error(move || {
+        let view = on.view();
+        view.lock().error = None;
+        view.render();
+    });
 
     let on = context.clone();
     ui.on_open_mod_repository(move || {
@@ -188,7 +226,7 @@ pub(crate) fn register(
             .map_err(|error| format!("Could not create {}: {error}", folder.display()))
             .and_then(|()| crate::open_folder(&folder));
         if let Err(error) = result {
-            view.lock().message = error;
+            view.fail(error);
             view.render();
         }
     });
@@ -230,24 +268,26 @@ impl Context {
         thread::spawn(move || {
             let index = Index::fetch_and_cache(&paths::mod_index_cache_file(&dir));
             if let Err(error) = &index {
-                log_for_config(&config, diagnostics::LogLevel::Warn, error);
+                log(&dir, LogLevel::Warn, error);
             }
             // A DRH install, update or rollback since the last resolution:
             // the dependencies again, for the new tag.
             let tag = installed_tag(&dir);
             let library = Library::new(&dir);
             let refreshed = match &index {
-                Ok(index) if library.needs_refresh(tag) => {
-                    Some(match library.refresh(index, tag) {
-                        Ok(warnings) => with_warnings(
-                            "Checked the mods' dependencies for the installed DRH.".to_string(),
-                            warnings,
-                        ),
-                        Err(error) => error,
-                    })
-                }
+                Ok(index) if library.needs_refresh(tag) => Some(library.refresh(index, tag)),
                 _ => None,
             };
+            if let Some(Ok(warnings)) = &refreshed {
+                log(
+                    &dir,
+                    LogLevel::Info,
+                    "Mods: resolved the dependencies again for the installed DRH.",
+                );
+                for warning in warnings {
+                    log(&dir, LogLevel::Warn, &format!("Mods: {warning}"));
+                }
+            }
             {
                 let mut page = view.lock();
                 page.fetching = false;
@@ -259,9 +299,9 @@ impl Context {
                     }
                     Err(error) => page.index_error = Some(error),
                 }
-                if let Some(message) = refreshed {
-                    page.message = message;
-                }
+            }
+            if let Some(Err(error)) = refreshed {
+                view.fail(error);
             }
             crate::invoke_on_event_loop(&config, &app_shutting_down, move || {
                 view.rescan();
@@ -270,15 +310,76 @@ impl Context {
         });
     }
 
+    /// Runs `action` once the user has seen what it would break, and has
+    /// confirmed an uninstall.
+    fn ask(&self, action: Action) {
+        let view = self.view();
+        let Some(dir) = view.install_dir.clone() else {
+            return;
+        };
+        let asked = {
+            let page = view.lock();
+            consequences(&page, &Library::new(&dir), &action)
+                .map(|problems| confirmation(&page, &action, &problems))
+        };
+        match asked {
+            Ok(None) => self.run(action),
+            Ok(Some(confirm)) => {
+                view.lock().confirm = Some(confirm);
+                view.render();
+            }
+            Err(error) => {
+                view.fail(error);
+                view.render();
+            }
+        }
+    }
+
+    fn run(&self, action: Action) {
+        let view = self.view();
+        match action {
+            Action::Install(entry) => self.in_background(
+                (entry.id.clone(), "Installing..."),
+                move |library, index, tag| {
+                    let warnings = library.install(&index, &entry, tag)?;
+                    Ok((
+                        format!("Installed {} {}.", entry.name, entry.version),
+                        warnings,
+                    ))
+                },
+            ),
+            Action::Update(entry) => self.in_background(
+                (entry.id.clone(), "Updating..."),
+                move |library, index, tag| {
+                    let warnings = library.install(&index, &entry, tag)?;
+                    Ok((
+                        format!("Updated {} to {}.", entry.name, entry.version),
+                        warnings,
+                    ))
+                },
+            ),
+            Action::Enable(id) => {
+                let name = names(&view.lock(), std::slice::from_ref(&id));
+                self.in_background((id.clone(), "Enabling..."), move |library, index, tag| {
+                    let warnings = library.enable(&index, &id, tag)?;
+                    Ok((format!("Enabled {name}."), warnings))
+                });
+            }
+            Action::Disable(id) => view.disable(&id),
+            Action::Uninstall(id) => view.uninstall(&id),
+        }
+    }
+
     /// Runs `operation` on a thread with the index (an empty one when it is
-    /// unavailable), then shows its outcome.
-    /// `working`: the mod it runs on, and what its card or row shows
+    /// unavailable), then logs what it did and its warnings, or its error.
+    /// `working`: the mod it runs on, and what its card, row or button shows
     /// meanwhile.
     fn in_background(
         &self,
         working: (String, &'static str),
-        progress: String,
-        operation: impl FnOnce(&Library, Index, Option<u32>) -> Result<String, String> + Send + 'static,
+        operation: impl FnOnce(&Library, Index, Option<u32>) -> Result<(String, Vec<String>), String>
+        + Send
+        + 'static,
     ) {
         let view = self.view();
         let Some(dir) = view.install_dir.clone() else {
@@ -286,16 +387,10 @@ impl Context {
         };
         let index = {
             let mut page = view.lock();
-            page.message = progress;
-            page.confirming_uninstall = None;
             page.working = Some(working);
-            Index {
-                entries: page
-                    .index
-                    .as_ref()
-                    .map(|index| index.entries.clone())
-                    .unwrap_or_default(),
-            }
+            page.index.clone().unwrap_or(Index {
+                entries: Vec::new(),
+            })
         };
         if let Some(ui) = view.ui.upgrade() {
             ui.set_mods_busy(true);
@@ -305,15 +400,11 @@ impl Context {
         let app_shutting_down = Arc::clone(&self.app_shutting_down);
         thread::spawn(move || {
             let tag = installed_tag(&dir);
-            let message = operation(&Library::new(&dir), index, tag).unwrap_or_else(|error| {
-                log_for_config(&config, diagnostics::LogLevel::Error, &error);
-                error
-            });
-            {
-                let mut page = view.lock();
-                page.message = message;
-                page.working = None;
+            match operation(&Library::new(&dir), index, tag) {
+                Ok((done, warnings)) => view.succeed(&done, &warnings),
+                Err(error) => view.fail(error),
             }
+            view.lock().working = None;
             crate::invoke_on_event_loop(&config, &app_shutting_down, move || {
                 if let Some(ui) = view.ui.upgrade() {
                     ui.set_mods_busy(false);
@@ -327,45 +418,23 @@ impl Context {
     fn primary_action(&self) {
         let view = self.view();
         let tab = view.tab();
-        let (id, name, entry, enabled, installed) = {
+        let action = {
             let page = view.lock();
             let Some(id) = view.selected_id(&page) else {
                 return;
             };
-            let entry = offered_entry(&page, &id).cloned();
-            let enabled = page.enabled.contains(&id);
-            let installed = page.mods.iter().any(|m| m.id == id);
-            let name = names(&page, std::slice::from_ref(&id));
-            (id, name, entry, enabled, installed)
+            if tab == CATALOG && !page.mods.iter().any(|m| m.id == id) {
+                let Some(entry) = offered_entry(&page, &id) else {
+                    return;
+                };
+                Action::Install(entry.clone())
+            } else if page.enabled.contains(&id) {
+                Action::Disable(id)
+            } else {
+                Action::Enable(id)
+            }
         };
-
-        if tab == CATALOG && !installed {
-            let Some(entry) = entry else {
-                return;
-            };
-            self.in_background(
-                (entry.id.clone(), "Installing..."),
-                format!("Installing {}...", entry.name),
-                move |library, index, tag| {
-                    let warnings = library.install(&index, &entry, tag)?;
-                    Ok(with_warnings(
-                        format!("Installed {}.", entry.name),
-                        warnings,
-                    ))
-                },
-            );
-        } else if enabled {
-            view.disable(&id);
-        } else {
-            self.in_background(
-                (id.clone(), "Enabling..."),
-                format!("Enabling {name}..."),
-                move |library, index, tag| {
-                    let warnings = library.enable(&index, &id, tag)?;
-                    Ok(with_warnings(format!("Enabled {name}."), warnings))
-                },
-            );
-        }
+        self.ask(action);
     }
 }
 
@@ -398,7 +467,6 @@ impl View {
             .and_then(|row| page.rows.get(row).cloned());
         let found = id.is_some();
         page.selected[tab] = id;
-        page.confirming_uninstall = None;
         found
     }
 
@@ -415,53 +483,44 @@ impl View {
         let library = Library::new(dir);
         let pruned = library.prune_enabled();
         let scanned = library.scan();
-        let mut page = self.lock();
         match (pruned, scanned) {
-            (Ok(_), Ok(mods)) => page.mods = mods,
-            (Err(error), _) | (_, Err(error)) => page.message = error,
+            (Ok(_), Ok(mods)) => self.lock().mods = mods,
+            (Err(error), _) | (_, Err(error)) => self.fail(error),
         }
+        let mut page = self.lock();
         page.enabled = library.enabled();
         page.tag = installed_tag(dir);
+    }
+
+    /// Logs what an action did and its warnings, and clears the last
+    /// failure.
+    fn succeed(&self, done: &str, warnings: &[String]) {
+        if let Some(dir) = &self.install_dir {
+            log(dir, LogLevel::Info, &format!("Mods: {done}"));
+            for warning in warnings {
+                log(dir, LogLevel::Warn, &format!("Mods: {warning}"));
+            }
+        }
+        self.lock().error = None;
+    }
+
+    /// Logs an action's failure and shows it above the list.
+    fn fail(&self, error: String) {
+        if let Some(dir) = &self.install_dir {
+            log(dir, LogLevel::Error, &format!("Mods: {error}"));
+        }
+        self.lock().error = Some(error);
     }
 
     fn disable(&self, id: &str) {
         let Some(dir) = &self.install_dir else {
             return;
         };
-        let library = Library::new(dir);
-        let (before, name) = {
-            let page = self.lock();
-            (
-                unneeded(&page.mods, &page.enabled),
-                names(&page, &[id.to_string()]),
-            )
-        };
-        let message = match library.disable(id) {
-            Ok(warnings) => {
-                let mods = library.scan().unwrap_or_default();
-                let now: Vec<String> = unneeded(&mods, &library.enabled())
-                    .into_iter()
-                    .filter(|other| !before.contains(other))
-                    .collect();
-                let now: Vec<String> = {
-                    let page = self.lock();
-                    now.into_iter()
-                        .filter(|other| !is_official(&page, other))
-                        .collect()
-                };
-                let now = names_in(&mods, &now);
-                let mut message = with_warnings(format!("Disabled {name}."), warnings);
-                if !now.is_empty() {
-                    message.push_str(&format!(
-                        " Installed as a dependency, {} no longer needed: disable or uninstall it from its page.",
-                        listed(&now)
-                    ));
-                }
-                message
-            }
-            Err(error) => error,
-        };
-        self.lock().message = message;
+        let name = names(&self.lock(), &[id.to_string()]);
+        match Library::new(dir).disable(id) {
+            Ok(warnings) => self.succeed(&format!("Disabled {name}."), &warnings),
+            Err(error) => self.fail(error),
+        }
         self.rescan();
         self.render();
     }
@@ -473,41 +532,15 @@ impl View {
         update_for(&page, found).cloned()
     }
 
-    fn uninstall(&self) {
+    fn uninstall(&self, id: &str) {
         let Some(dir) = &self.install_dir else {
             return;
         };
-        let (id, name, mods) = {
-            let mut page = self.lock();
-            let Some(id) = self.selected_id(&page) else {
-                return;
-            };
-            if page.confirming_uninstall.as_deref() != Some(id.as_str()) {
-                page.confirming_uninstall = Some(id);
-                drop(page);
-                self.render();
-                return;
-            }
-            page.confirming_uninstall = None;
-            let name = names(&page, std::slice::from_ref(&id));
-            (id, name, page.mods.clone())
-        };
-        let unneeded = Library::new(dir).uninstall(&id).map(|unneeded| {
-            let page = self.lock();
-            unneeded
-                .into_iter()
-                .filter(|other| !is_official(&page, other))
-                .collect::<Vec<_>>()
-        });
-        let message = match unneeded {
-            Ok(unneeded) if unneeded.is_empty() => format!("Uninstalled {name}."),
-            Ok(unneeded) => format!(
-                "Uninstalled {name}. Installed as a dependency, {} needed by no mod now: uninstall it from its page.",
-                listed(&names_in(&mods, &unneeded))
-            ),
-            Err(error) => error,
-        };
-        self.lock().message = message;
+        let name = names(&self.lock(), &[id.to_string()]);
+        match Library::new(dir).uninstall(id) {
+            Ok(()) => self.succeed(&format!("Uninstalled {name}."), &[]),
+            Err(error) => self.fail(error),
+        }
         self.rescan();
         self.render();
     }
@@ -537,8 +570,9 @@ impl View {
             order.swap(at, to);
             order
         };
-        if let Err(error) = Library::new(dir).set_order(&order) {
-            self.lock().message = error;
+        match Library::new(dir).set_order(&order) {
+            Ok(()) => self.succeed(&format!("Load order: {}.", order.join(", ")), &[]),
+            Err(error) => self.fail(error),
         }
         self.rescan();
         self.render();
@@ -582,7 +616,12 @@ impl View {
         ui.set_mod_entries(ModelRc::new(VecModel::from(
             rows.into_iter().map(|(_, view)| view).collect::<Vec<_>>(),
         )));
-        ui.set_mods_status(page.message.clone().into());
+        ui.set_mods_error(page.error.clone().unwrap_or_default().into());
+        let confirm = page.confirm.as_ref();
+        ui.set_mod_confirm_visible(confirm.is_some());
+        ui.set_mod_confirm_title(confirm.map(|c| c.title.clone()).unwrap_or_default().into());
+        ui.set_mod_confirm_text(confirm.map(|c| c.text.clone()).unwrap_or_default().into());
+        ui.set_mod_confirm_button(confirm.map(|c| c.button.clone()).unwrap_or_default().into());
         let updates = page
             .mods
             .iter()
@@ -613,7 +652,6 @@ impl View {
         ui.set_selected_mod_description(detail.description.into());
         ui.set_selected_mod_facts(detail.facts.into());
         ui.set_selected_mod_tags(ModelRc::new(VecModel::from(detail.tags)));
-        ui.set_selected_mod_notes(detail.notes.join("\n").into());
         ui.set_selected_mod_blocks(ModelRc::new(VecModel::from(markdown_document(
             &detail.long_description,
         ))));
@@ -621,20 +659,7 @@ impl View {
         ui.set_selected_mod_primary_enabled(detail.primary_enabled);
         ui.set_selected_mod_update_text(detail.update.into());
         ui.set_selected_mod_uninstall_visible(detail.installed);
-        ui.set_selected_mod_uninstall_confirming(
-            selected.is_some() && page.confirming_uninstall == selected,
-        );
         ui.set_selected_mod_repository_enabled(detail.repository);
-    }
-}
-
-/// `a`, `a and b`, `a, b and c`, then `is` or `are`.
-fn listed(ids: &[String]) -> String {
-    let verb = if ids.len() == 1 { "is" } else { "are" };
-    match ids {
-        [] => String::new(),
-        [one] => format!("{one} {verb}"),
-        [rest @ .., last] => format!("{} and {last} {verb}", rest.join(", ")),
     }
 }
 
@@ -643,7 +668,6 @@ struct Detail {
     title: String,
     description: String,
     facts: String,
-    notes: Vec<String>,
     tags: Vec<ModTagView>,
     long_description: String,
     primary: String,
@@ -695,43 +719,11 @@ fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
         Some(m) => issues(page, m, tag),
         None => drh_issue(drh.as_deref(), &uses, tag).into_iter().collect(),
     };
-    detail.notes = issues.iter().map(|issue| issue.message.clone()).collect();
-    detail.tags = tags(
-        page,
-        id,
-        &uses,
-        installed.map(|m| m.origin.as_ref()),
-        &issues,
-    );
-
-    if let Some(m) = installed.filter(|_| !is_official(page, id)) {
-        let needers: Vec<String> = needed_by(&page.mods, id)
-            .into_iter()
-            .filter(|other| page.enabled.contains(other))
-            .collect();
-        if m.dependency {
-            if free_dependencies(page).iter().any(|free| free == id) {
-                detail.notes.push(
-                    "Installed as a dependency, no enabled mod needs it any more.".to_string(),
-                );
-            } else {
-                detail.notes.push(format!(
-                    "Installed as a dependency of {}.",
-                    names(page, &needed_by(&page.mods, id))
-                ));
-            }
-        } else if !needers.is_empty() {
-            detail
-                .notes
-                .push(format!("Needed by {}.", names(page, &needers)));
-        }
-        if !enabled && !needers.is_empty() {
-            detail.notes.push(format!(
-                "Disabled: the game fails {} until it is enabled.",
-                names(page, &needers)
-            ));
-        }
-    }
+    detail.tags = uses_tag(page, id, &uses)
+        .into_iter()
+        .chain(installed.map_or_else(Vec::new, |m| dependency_tags(page, m)))
+        .chain(other_tags(installed.map(|m| m.origin.as_ref()), &issues))
+        .collect();
 
     detail.long_description = match (installed, indexed) {
         (Some(m), _) if !catalog => indexed
@@ -761,6 +753,14 @@ fn detail(page: &Page, id: &str, catalog: bool, tag: Option<u32>) -> Detail {
             detail.update = update
                 .map(|entry| format!("Update to {}", entry.version))
                 .unwrap_or_default();
+        }
+    }
+    // What runs on it shows on the button that started it.
+    if let Some((_, doing)) = page.working.as_ref().filter(|(working, _)| working == id) {
+        if *doing == "Updating..." {
+            detail.update = doing.to_string();
+        } else {
+            detail.primary = doing.to_string();
         }
     }
     detail
@@ -863,20 +863,9 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
         let at = order.iter().position(|id| *id == m.id);
         (at.is_none(), at, m.name.to_lowercase())
     });
-    let free = free_dependencies(page);
     mods.into_iter()
         .map(|m| {
             let official = is_official(page, &m.id);
-            let summary = if official || !m.dependency {
-                m.description.clone()
-            } else if free.contains(&m.id) {
-                "Installed as a dependency, no longer needed".to_string()
-            } else {
-                format!(
-                    "Installed as a dependency of {}",
-                    names(page, &needed_by(&page.mods, &m.id))
-                )
-            };
             let issues = issues(page, m, tag);
             let at = order.iter().position(|id| *id == m.id);
             let first_movable = order.iter().position(|id| !is_official(page, id));
@@ -890,13 +879,15 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                 ModCardView {
                     name: m.name.clone().into(),
                     version: m.version.clone().into(),
-                    summary: summary.into(),
+                    summary: m.description.clone().into(),
                     author: author_text(&m.author, source_of(page, &m.id).as_deref()).into(),
                     uses: uses_tag(page, &m.id, &m.uses).unwrap_or_default(),
-                    tags: ModelRc::new(VecModel::from(other_tags(
-                        Some(m.origin.as_ref()),
-                        &issues,
-                    ))),
+                    tags: ModelRc::new(VecModel::from(
+                        dependency_tags(page, m)
+                            .into_iter()
+                            .chain(other_tags(Some(m.origin.as_ref()), &issues))
+                            .collect::<Vec<_>>(),
+                    )),
                     status: status.into(),
                     enabled: at.is_some(),
                     orderable: at.is_some() && !official,
@@ -963,18 +954,44 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
     rows
 }
 
-/// The `uses` tag, then the others.
-fn tags(
-    page: &Page,
-    id: &str,
-    uses: &[String],
-    installed_from: Option<Option<&Origin>>,
-    issues: &[Issue],
-) -> Vec<ModTagView> {
-    uses_tag(page, id, uses)
+/// What the mod is to the others: needed by an enabled mod, or installed as
+/// a dependency and needed no more. None on the official `api`.
+fn dependency_tags(page: &Page, m: &InstalledMod) -> Vec<ModTagView> {
+    if is_official(page, &m.id) {
+        return Vec::new();
+    }
+    let needers: Vec<String> = needed_by(&page.mods, &m.id)
         .into_iter()
-        .chain(other_tags(installed_from, issues))
-        .collect()
+        .filter(|other| page.enabled.contains(other))
+        .collect();
+    let enabled = page.enabled.contains(&m.id);
+    let tag = if !needers.is_empty() && !enabled {
+        tag_view(
+            "⚠ needed",
+            &format!(
+                "Disabled: the game fails {} until it is enabled.",
+                names(page, &needers)
+            ),
+            ModTagKind::Problem,
+        )
+    } else if !needers.is_empty() {
+        let tooltip = if m.dependency {
+            format!("Installed as a dependency of {}.", names(page, &needers))
+        } else {
+            format!("Needed by {}.", names(page, &needers))
+        };
+        tag_view("dependency", &tooltip, ModTagKind::Info)
+    } else if free_dependencies(page).contains(&m.id) {
+        let tooltip = if enabled {
+            "Installed as a dependency, and no enabled mod needs it any more: disable or uninstall it."
+        } else {
+            "Installed as a dependency, and no enabled mod needs it any more: uninstall it."
+        };
+        tag_view("not needed", tooltip, ModTagKind::Info)
+    } else {
+        return Vec::new();
+    };
+    vec![tag]
 }
 
 /// What the mod builds on; none on the official `api`.
@@ -1140,20 +1157,24 @@ fn origin_text(origin: Option<&Origin>) -> &'static str {
     }
 }
 
-/// The mods' names, joined.
+/// The mods' names, joined: the installed one's, else the index's, else
+/// the id.
 fn names(page: &Page, ids: &[String]) -> String {
-    names_in(&page.mods, ids).join(", ")
-}
-
-/// Each id's name, the id when it is not installed.
-fn names_in(mods: &[InstalledMod], ids: &[String]) -> Vec<String> {
     ids.iter()
         .map(|id| {
-            mods.iter()
-                .find(|m| m.id == *id)
-                .map_or_else(|| id.clone(), |m| m.name.clone())
+            let installed = page.mods.iter().find(|m| m.id == *id).map(|m| &m.name);
+            let indexed = || {
+                page.index
+                    .as_ref()?
+                    .entries
+                    .iter()
+                    .find(|entry| entry.id == *id)
+                    .map(|entry| &entry.name)
+            };
+            installed.or_else(indexed).unwrap_or(id).clone()
         })
-        .collect()
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// What its README shows: all of it when its markers are malformed.
@@ -1184,12 +1205,128 @@ fn index_status(page: &Page) -> String {
     }
 }
 
-fn with_warnings(message: String, warnings: Vec<String>) -> String {
-    if warnings.is_empty() {
-        message
-    } else {
-        format!("{message} {}", warnings.join(" "))
+/// The problems `action` would add: each mod's issues it does not have yet,
+/// by label.
+fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Vec<String>, String> {
+    let empty = Index {
+        entries: Vec::new(),
+    };
+    let index = page.index.as_ref().unwrap_or(&empty);
+    let without = |id: &str| -> Vec<String> {
+        page.enabled
+            .iter()
+            .filter(|known| *known != id)
+            .cloned()
+            .collect()
+    };
+    let (mods, enabled) = match action {
+        Action::Install(entry) | Action::Update(entry) => {
+            planned(page, library.plan_install(index, entry, page.tag)?)
+        }
+        Action::Enable(id) => planned(page, library.plan_enable(index, id, page.tag)?),
+        Action::Disable(id) => (page.mods.clone(), without(id)),
+        Action::Uninstall(id) => (
+            page.mods.iter().filter(|m| m.id != *id).cloned().collect(),
+            without(id),
+        ),
+    };
+    let after = Page {
+        index: page.index.clone(),
+        mods,
+        enabled,
+        tag: page.tag,
+        ..Page::default()
+    };
+    Ok(after
+        .mods
+        .iter()
+        .flat_map(|m| {
+            let known: Vec<String> = page
+                .mods
+                .iter()
+                .find(|before| before.id == m.id)
+                .map(|before| {
+                    issues(page, before, page.tag)
+                        .into_iter()
+                        .map(|issue| issue.label)
+                        .collect()
+                })
+                .unwrap_or_default();
+            issues(&after, m, after.tag)
+                .into_iter()
+                .filter(move |issue| !known.contains(&issue.label))
+                .map(move |issue| format!("{}: {}", m.name, issue.message))
+        })
+        .collect())
+}
+
+/// The installed mods and enabled ids once `plan` is carried out.
+fn planned(page: &Page, plan: Plan) -> (Vec<InstalledMod>, Vec<String>) {
+    let mut mods = page.mods.clone();
+    for (entry, as_dependency) in &plan.entries {
+        match mods.iter_mut().find(|m| m.id == entry.id) {
+            // An update keeps how the mod first came.
+            Some(m) => *m = InstalledMod::planned(entry, m.dependency),
+            None => mods.push(InstalledMod::planned(entry, *as_dependency)),
+        }
     }
+    (mods, plan.enabled)
+}
+
+/// What to ask before `action`: always before an uninstall, else only when it
+/// adds `problems`.
+fn confirmation(page: &Page, action: &Action, problems: &[String]) -> Option<Confirm> {
+    let uninstall = matches!(action, Action::Uninstall(_));
+    if problems.is_empty() && !uninstall {
+        return None;
+    }
+    let (title, verb) = match action {
+        Action::Install(entry) => (format!("Install {}?", entry.name), "Install"),
+        Action::Update(entry) => (
+            format!("Update {} to {}?", entry.name, entry.version),
+            "Update",
+        ),
+        Action::Enable(id) => (
+            format!("Enable {}?", names(page, std::slice::from_ref(id))),
+            "Enable",
+        ),
+        Action::Disable(id) => (
+            format!("Disable {}?", names(page, std::slice::from_ref(id))),
+            "Disable",
+        ),
+        Action::Uninstall(id) => (
+            format!("Uninstall {}?", names(page, std::slice::from_ref(id))),
+            "Uninstall",
+        ),
+    };
+    let mut text = if uninstall {
+        "Its folder is deleted from the mods folder.".to_string()
+    } else {
+        String::new()
+    };
+    if !problems.is_empty() {
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        text.push_str("This leaves these problems:");
+        for problem in problems {
+            text.push_str(&format!("\n• {problem}"));
+        }
+    }
+    Some(Confirm {
+        action: action.clone(),
+        title,
+        text,
+        button: if problems.is_empty() {
+            verb.to_string()
+        } else {
+            format!("{verb} anyway")
+        },
+    })
+}
+
+fn log(install_dir: &Path, level: LogLevel, message: &str) {
+    let _ = diagnostics::write(install_dir, level, message);
 }
 
 fn installed_tag(install_dir: &Path) -> Option<u32> {
@@ -1291,10 +1428,77 @@ mod tests {
         assert_eq!(author_text("Someone", None), "Someone");
     }
 
+    fn library_page() -> Page {
+        let mut lib = installed("lib", "0.1.0", &[]);
+        lib.dependency = true;
+        Page {
+            mods: vec![
+                lib,
+                installed("mine", "1.0.0", &[("lib", "0.1")]),
+                installed("other", "1.0.0", &[]),
+            ],
+            enabled: ["lib", "mine", "other"].map(String::from).to_vec(),
+            ..Page::default()
+        }
+    }
+
     #[test]
-    fn lists_names_in_a_sentence() {
-        let ids = |list: &[&str]| list.iter().map(|id| id.to_string()).collect::<Vec<_>>();
-        assert_eq!(listed(&ids(&["API"])), "API is");
-        assert_eq!(listed(&ids(&["A", "B", "C"])), "A, B and C are");
+    fn asks_before_what_breaks_another_mod() {
+        let page = library_page();
+        let library = Library::new(Path::new("unused"));
+        let problems = consequences(&page, &library, &Action::Disable("lib".to_string())).unwrap();
+        assert_eq!(
+            problems,
+            ["mine: Needs lib, which is disabled: the game fails it."]
+        );
+        assert!(confirmation(&page, &Action::Disable("lib".to_string()), &problems).is_some());
+
+        let none = consequences(&page, &library, &Action::Disable("other".to_string())).unwrap();
+        assert!(none.is_empty());
+        assert!(confirmation(&page, &Action::Disable("other".to_string()), &none).is_none());
+        assert!(confirmation(&page, &Action::Uninstall("other".to_string()), &none).is_some());
+    }
+
+    #[test]
+    fn asks_before_installing_what_does_not_fit() {
+        let meter = Entry {
+            uses: vec!["extends".to_string()],
+            drh: Some("14".to_string()),
+            ..entry("meter", "1.0.0")
+        };
+        let page = Page {
+            index: Some(Index {
+                entries: vec![meter.clone()],
+            }),
+            tag: Some(13),
+            ..Page::default()
+        };
+        // Nothing installed: the plan only reads the folder.
+        let library = Library::new(Path::new("no-such-install"));
+        let problems = consequences(&page, &library, &Action::Install(meter)).unwrap();
+        assert_eq!(
+            problems,
+            ["meter: Built for DRH 14, and DRH 13 is installed: it may not work."]
+        );
+    }
+
+    #[test]
+    fn labels_what_a_mod_is_to_the_others() {
+        let text = |page: &Page, id: &str| {
+            let m = page.mods.iter().find(|m| m.id == id).unwrap();
+            dependency_tags(page, m)
+                .iter()
+                .map(|tag| tag.text.to_string())
+                .collect::<Vec<_>>()
+        };
+        let mut page = library_page();
+        assert_eq!(text(&page, "lib"), ["dependency"]);
+        assert!(text(&page, "other").is_empty());
+
+        page.enabled.retain(|id| id != "lib");
+        assert_eq!(text(&page, "lib"), ["⚠ needed"]);
+
+        page.enabled.retain(|id| id != "mine");
+        assert_eq!(text(&page, "lib"), ["not needed"]);
     }
 }

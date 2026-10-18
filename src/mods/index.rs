@@ -78,7 +78,7 @@ struct IndexFile {
     entries: Vec<Entry>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Index {
     pub entries: Vec<Entry>,
 }
