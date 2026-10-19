@@ -1361,12 +1361,13 @@ fn id_of(action: &Action) -> &str {
     }
 }
 
-/// The mods `plan` installs, updates or enables besides `id`.
+/// The mods `plan` installs, updates or enables besides `id`, but the
+/// official `api`, which every mod needs.
 fn others_changed(page: &Page, id: &str, plan: &Plan) -> Vec<String> {
     let mut also: Vec<String> = plan
         .entries
         .iter()
-        .filter(|(entry, _)| entry.id != id)
+        .filter(|(entry, _)| entry.id != id && entry.source != OFFICIAL_API_SOURCE)
         .map(
             |(entry, _)| match page.mods.iter().find(|m| m.id == entry.id) {
                 Some(m) => format!("updates {} to {}", m.name, entry.version),
@@ -1377,7 +1378,9 @@ fn others_changed(page: &Page, id: &str, plan: &Plan) -> Vec<String> {
     also.extend(
         plan.enabled
             .iter()
-            .filter(|other| *other != id && !page.enabled.contains(other))
+            .filter(|other| {
+                *other != id && !page.enabled.contains(other) && !is_official(page, other)
+            })
             .filter_map(|other| page.mods.iter().find(|m| m.id == *other))
             .map(|m| format!("enables {}", m.name)),
     );
@@ -1619,12 +1622,20 @@ mod tests {
         let meter = Entry {
             uses: vec!["extends".to_string()],
             drh: Some("14".to_string()),
+            api: Some("0.1".to_string()),
             dependencies: [("lib".to_string(), "1.0".to_string())].into(),
             ..entry("meter", "1.0.0")
         };
         let page = Page {
             index: Some(Index {
-                entries: vec![meter.clone(), entry("lib", "1.0.2")],
+                entries: vec![
+                    meter.clone(),
+                    entry("lib", "1.0.2"),
+                    Entry {
+                        source: OFFICIAL_API_SOURCE.to_string(),
+                        ..entry("api", "0.1.1")
+                    },
+                ],
             }),
             tag: Some(13),
             ..Page::default()

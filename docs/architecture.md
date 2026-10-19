@@ -805,7 +805,8 @@ store.
   mod's README never has to say it is installed with others. `api` is no
   exception: installed with the first mod that needs it, it gets none of
   these labels.
-- an action that installs, updates or enables other mods, or would add
+- an action that installs, updates or enables other mods (the `api`
+  aside), or would add
   problems (a needed mod disabled or
   uninstalled, a mod or dependency not built for the installed DRH, a
   dependency missing or not fitting), lists them and asks first;
