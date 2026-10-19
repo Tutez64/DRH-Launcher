@@ -24,7 +24,7 @@ use crate::mods::readme;
 use crate::mods::repository;
 use crate::mods::resolve::offered;
 use crate::mods::version::{Version, parse_tags, tag_number};
-use crate::{AppWindow, ModCardView, ModTagKind, ModTagView, paths};
+use crate::{AppWindow, ModCardView, ModTagKind, ModTagView, log_for_config, paths};
 
 /// The `api` the launcher builds on: shown without a `uses` label or warning.
 const OFFICIAL_API_SOURCE: &str = "https://github.com/Tutez64/DRH-Mod-API";
@@ -80,6 +80,9 @@ enum Game {
 
 type Shared = Arc<Mutex<Page>>;
 
+/// What waits for the user to go past the notice on playing with mods.
+type Deferred = Box<dyn FnOnce()>;
+
 /// What the user asked for on a mod.
 #[derive(Clone)]
 enum Action {
@@ -101,6 +104,12 @@ struct Confirm {
 pub(crate) struct ModsPage(Context);
 
 impl ModsPage {
+    /// Runs `then` once the user went past the notice on playing with mods,
+    /// showing it first if they never did.
+    pub(crate) fn disclose_then(&self, then: impl FnOnce() + 'static) {
+        self.0.disclose_then(then);
+    }
+
     /// A game was just started: with the launcher's mods folder, the page
     /// follows it until it exits, reading its report.
     pub(crate) fn game_launched(&self, with_mods: bool) {
@@ -138,6 +147,7 @@ pub(crate) fn register(
         page: Arc::default(),
         game_process: Rc::clone(game_process),
         game_poll: Rc::default(),
+        after_disclosure: Rc::default(),
     };
 
     let on = context.clone();
@@ -272,6 +282,32 @@ pub(crate) fn register(
     });
 
     let on = context.clone();
+    ui.on_mods_disclosure_continue(move || {
+        {
+            let mut config = on.config.borrow_mut();
+            config.mods_disclosure_confirmed = true;
+            if let Err(error) = config.save() {
+                log_for_config(&config, diagnostics::LogLevel::Error, &error.to_string());
+            }
+        }
+        if let Some(ui) = on.ui.upgrade() {
+            ui.set_mods_disclosure_visible(false);
+        }
+        let then = on.after_disclosure.borrow_mut().take();
+        if let Some(then) = then {
+            then();
+        }
+    });
+
+    let on = context.clone();
+    ui.on_mods_disclosure_close(move || {
+        on.after_disclosure.borrow_mut().take();
+        if let Some(ui) = on.ui.upgrade() {
+            ui.set_mods_disclosure_visible(false);
+        }
+    });
+
+    let on = context.clone();
     ui.on_dismiss_mods_error(move || {
         let view = on.view();
         view.lock().error = None;
@@ -335,9 +371,24 @@ struct Context {
     game_process: Rc<RefCell<Option<RunningGame>>>,
     /// Runs while a game started with the mods folder does.
     game_poll: Rc<Timer>,
+    /// What the notice on playing with mods holds back until it is
+    /// confirmed.
+    after_disclosure: Rc<RefCell<Option<Deferred>>>,
 }
 
 impl Context {
+    fn disclose_then(&self, then: impl FnOnce() + 'static) {
+        if self.config.borrow().mods_disclosure_confirmed {
+            then();
+            return;
+        }
+        *self.after_disclosure.borrow_mut() = Some(Box::new(then));
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_mods_disclosure_asking(true);
+            ui.set_mods_disclosure_visible(true);
+        }
+    }
+
     /// Reads the report again while the page is shown, and once the game
     /// has exited.
     fn follow_game(&self) {
@@ -428,6 +479,14 @@ impl Context {
     /// Runs `action` once the user has seen what it would break, and has
     /// confirmed an uninstall.
     fn ask(&self, action: Action) {
+        // Installing or enabling is playing with mods from then on.
+        if matches!(action, Action::Install(_) | Action::Enable(_))
+            && !self.config.borrow().mods_disclosure_confirmed
+        {
+            let on = self.clone();
+            self.disclose_then(move || on.ask(action));
+            return;
+        }
         let view = self.view();
         let Some(dir) = view.install_dir.clone() else {
             return;

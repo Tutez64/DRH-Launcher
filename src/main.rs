@@ -125,11 +125,16 @@ fn main() {
         std::process::exit(code);
     }
 
+    let mut confirm_mods = false;
     let startup_notice = match play_mode::startup_mode_from_args(std::env::args_os().skip(1)) {
         Ok(play_mode::StartupMode::Gui) => None,
         Ok(play_mode::StartupMode::Play) => match play_mode::run() {
             play_mode::Outcome::Exit(code) => std::process::exit(code),
             play_mode::Outcome::OpenGui(message) => Some(message),
+            play_mode::Outcome::ConfirmMods => {
+                confirm_mods = true;
+                None
+            }
         },
         Err(error) => {
             let message = format!("DRH Launcher failed to start: {error}");
@@ -138,7 +143,7 @@ fn main() {
         }
     };
 
-    if let Err(error) = run(startup_notice) {
+    if let Err(error) = run(startup_notice, confirm_mods) {
         let message = format!("DRH Launcher failed to start: {error}");
         if retry_with_software_renderer_if_needed(&message) {
             return;
@@ -148,7 +153,9 @@ fn main() {
     }
 }
 
-fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
+/// `confirm_mods`: `--play` stopped at the notice on playing with mods; once
+/// it is confirmed, the game starts.
+fn run(startup_notice: Option<String>, confirm_mods: bool) -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     slint::set_xdg_app_id(XDG_APP_ID)?;
 
@@ -221,6 +228,14 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         &app_shutting_down,
         &game_process,
     ));
+    if confirm_mods {
+        let weak = ui.as_weak();
+        mods_page.disclose_then(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.invoke_install_or_play();
+            }
+        });
+    }
 
     {
         let ui = ui.as_weak();
@@ -316,6 +331,25 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             {
                 let config = config.clone();
                 let installed_launch_options = load_installed_launch_options(&config);
+                if !config.mods_disclosure_confirmed
+                    && mods::library::passes_mods(
+                        &install_dir,
+                        &config.effective_game_args(installed_launch_options.as_ref()),
+                    )
+                {
+                    // Shown once the configuration is no longer borrowed;
+                    // confirming it plays.
+                    let mods_page = Rc::clone(&mods_page);
+                    let weak = ui.as_weak();
+                    Timer::single_shot(Duration::ZERO, move || {
+                        mods_page.disclose_then(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.invoke_install_or_play();
+                            }
+                        });
+                    });
+                    return;
+                }
                 match game_launch::launch_game_with_options(
                     &config,
                     installed_launch_options.as_ref(),

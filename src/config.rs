@@ -23,6 +23,9 @@ pub struct LauncherConfig {
     pub hide_official_ownership_notice: bool,
     #[serde(default = "default_hide_haxe_iteratee_log_lines")]
     pub hide_haxe_iteratee_log_lines: bool,
+    /// The user went past the notice shown before playing with mods.
+    #[serde(default)]
+    pub mods_disclosure_confirmed: bool,
 }
 
 impl Default for LauncherConfig {
@@ -37,6 +40,7 @@ impl Default for LauncherConfig {
             game_args: Vec::new(),
             hide_official_ownership_notice: false,
             hide_haxe_iteratee_log_lines: default_hide_haxe_iteratee_log_lines(),
+            mods_disclosure_confirmed: false,
         }
     }
 }

@@ -652,17 +652,20 @@ pub fn names_mods_dir(args: &[String]) -> bool {
         .any(|arg| arg == "--mods-dir" || arg.starts_with("--mods-dir="))
 }
 
+/// Whether Play passes the launcher's mods folder: a mod is enabled and the
+/// arguments name no folder of their own.
+pub fn passes_mods(install_dir: &Path, args: &[String]) -> bool {
+    !names_mods_dir(args) && !Library::new(install_dir).enabled().is_empty()
+}
+
 /// Adds `--mods-dir` with the launcher's folder when a mod is enabled and the
 /// arguments name no folder of their own.
 pub fn add_mods_dir(install_dir: &Path, args: &mut Vec<String>) {
-    if names_mods_dir(args) {
+    if !passes_mods(install_dir, args) {
         return;
     }
-    let library = Library::new(install_dir);
-    if library.enabled().is_empty() {
-        return;
-    }
-    let dir = std::path::absolute(&library.dir).unwrap_or(library.dir);
+    let dir = paths::mods_dir(install_dir);
+    let dir = std::path::absolute(&dir).unwrap_or(dir);
     args.push("--mods-dir".to_string());
     args.push(dir.display().to_string());
 }
@@ -1072,6 +1075,19 @@ mod tests {
 
         let plan = library.plan_enable(&empty, "user2", None).unwrap();
         assert_eq!(plan.enabled, ["api", "user", "other", "lib", "user2"]);
+    }
+
+    #[test]
+    fn passes_the_mods_only_with_one_enabled_and_no_folder_named() {
+        let install = tempfile::tempdir().unwrap();
+        let library = Library::new(install.path());
+        assert!(!passes_mods(install.path(), &[]));
+        library.write_enabled(&["mine".to_string()]).unwrap();
+        assert!(passes_mods(install.path(), &[]));
+        assert!(!passes_mods(
+            install.path(),
+            &["--mods-dir=elsewhere".to_string()]
+        ));
     }
 
     #[test]

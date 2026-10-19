@@ -687,7 +687,7 @@ The UI should make this explicit and avoid treating Steam shortcut editing as gu
 
 ## Mods
 
-The modder commands ([Launch Modes](#launch-modes)) and the Mods page exist; the Mods page does not yet show `last-run.json`, the first-run disclosure, nor installs from a zip or a link. The runtime design lives in the game
+The modder commands ([Launch Modes](#launch-modes)) and the Mods page exist; the Mods page does not yet install from a zip or a link. The runtime design lives in the game
 repository: [docs/modding.md](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/modding.md).
 That document is the source of truth for how mods load, compile (hxScript /
 cppia in the game process), how they are published, and how they talk to DRH.
@@ -878,9 +878,11 @@ store.
 - once, a first-run disclosure before the user actually plays with mods
   (code in-process, official servers, updates, replace clashes,
   how to return to vanilla, one line that DRH/mods are not the official
-  client). Stored in launcher config; do not show every launch. `--play`
-  with a non-empty `enabled.json` and no confirmation yet opens the full
-  UI, like an available update. Browsing the catalog does not require it.
+  client). Stored in launcher config; do not show every launch. It comes
+  before the first install or enable, and before Play when Play would
+  pass the mods folder; Continue goes on with it. `--play` in that case
+  opens the full UI with it shown, and Continue plays. Browsing the
+  catalog does not require it; an About mods link by the Mods page's tabs shows it again.
 
 Out of v1: ratings, comments, galleries, collections, a publishing UI
 (the modder commands cover publishing), Thunderstore/Nexus as identity.

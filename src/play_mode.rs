@@ -4,6 +4,7 @@ use crate::config::LauncherConfig;
 use crate::github_releases::discover_latest_platform_release;
 use crate::install_state::InstallState;
 use crate::launch_options::load_installed_launch_options;
+use crate::mods::library;
 use crate::platform::Platform;
 use crate::release_source::ReleaseSource;
 use crate::{diagnostics, game_install, game_launch, game_logs, paths, release_update_available};
@@ -17,6 +18,9 @@ pub enum StartupMode {
 pub enum Outcome {
     Exit(i32),
     OpenGui(String),
+    /// Mods are enabled and their notice was never confirmed: the UI shows
+    /// it, then plays.
+    ConfirmMods,
 }
 
 pub fn startup_mode_from_args(
@@ -103,6 +107,19 @@ pub fn run() -> Outcome {
     }
 
     let installed_launch_options = load_installed_launch_options(&config);
+    if !config.mods_disclosure_confirmed
+        && library::passes_mods(
+            &install_dir,
+            &config.effective_game_args(installed_launch_options.as_ref()),
+        )
+    {
+        let _ = diagnostics::write(
+            &install_dir,
+            diagnostics::LogLevel::Info,
+            "--play: mods are enabled and their notice was never confirmed; opening DRH Launcher.",
+        );
+        return Outcome::ConfirmMods;
+    }
     let command_summary = game_launch::launch_command_summary_with_options(
         &config,
         installed_launch_options.as_ref(),

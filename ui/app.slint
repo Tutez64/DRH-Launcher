@@ -617,6 +617,9 @@ export component AppWindow inherits Window {
     in property <bool> mods-busy: false;
     in property <string> mods-error;
     in property <string> mods-run-text;
+    in-out property <bool> mods-disclosure-visible: false;
+    // Before a first use of mods: Continue goes on with it. Else only read.
+    in-out property <bool> mods-disclosure-asking: false;
     in property <bool> mods-run-warning: false;
     in property <bool> mod-confirm-visible: false;
     in property <string> mod-confirm-title;
@@ -779,6 +782,8 @@ export component AppWindow inherits Window {
     callback mod-confirm-accepted();
     callback mod-confirm-cancelled();
     callback dismiss-mods-error();
+    callback mods-disclosure-continue();
+    callback mods-disclosure-close();
     callback toggle-mod(int);
 
     function show-mod-tooltip(text: string, x: length, y: length) {
@@ -1870,6 +1875,28 @@ export component AppWindow inherits Window {
                                     root.select-mods-page(1);
                                 }
                             }
+
+                            // The notice shown before mods are first used.
+                            Rectangle {
+                                width: about-mods-label.preferred-width + 8px;
+
+                                about-mods-label := Text {
+                                    text: "About mods";
+                                    color: about-mods-touch.has-hover ? Theme.accent-warm : Theme.text-secondary;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                }
+
+                                about-mods-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.mods-disclosure-asking = false;
+                                        root.mods-disclosure-visible = true;
+                                    }
+                                }
+                            }
                         }
 
                         // The last action's failure; the log has all of it.
@@ -2842,6 +2869,82 @@ export component AppWindow inherits Window {
                     enabled: root.selected-version-action-enabled;
                     clicked => {
                         root.install-selected-drh-version();
+                    }
+                }
+            }
+        }
+    }
+
+    if root.mods-disclosure-visible : Rectangle {
+        z: 2000;
+        background: Theme.modal-scrim;
+
+        TouchArea {}
+
+        Rectangle {
+            width: min(600px, parent.width - 32px);
+            height: mods-disclosure-content.preferred-height + 48px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border-accent-muted;
+            background: Theme.surface-raised;
+            drop-shadow-blur: 18px;
+            drop-shadow-offset-y: 6px;
+            drop-shadow-color: Theme.shadow-strong;
+
+            mods-disclosure-content := VerticalLayout {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                height: parent.height - 48px;
+                spacing: 12px;
+
+                Text {
+                    text: "Before you play with mods";
+                    color: Theme.text-title;
+                    font-size: 19px;
+                    font-weight: 800;
+                }
+
+                for point in [
+                    "A mod is code that runs inside the game, with its access to your computer. Mods in the catalog are open source, one click from their page, and are reviewed by hand, which is no guarantee; mods installed from elsewhere are not reviewed at all.",
+                    "You play on the same servers as with DRH alone. No one can promise anything about bans, either way.",
+                    "A DRH update can break a mod, and some mods may not work together.",
+                    "To play without mods, disable them: the game's files are never changed.",
+                    "Like DRH, mods are not made or endorsed by Dungeon Rampage's rights holders.",
+                ]: Text {
+                    text: "• " + point;
+                    color: Theme.text-body;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    min-height: 42px;
+                    spacing: 10px;
+                    alignment: end;
+
+                    if root.mods-disclosure-asking : SecondaryButton {
+                        text: "Cancel";
+                        clicked => {
+                            root.mods-disclosure-close();
+                        }
+                    }
+
+                    if root.mods-disclosure-asking : PrimaryButton {
+                        text: "Continue";
+                        clicked => {
+                            root.mods-disclosure-continue();
+                        }
+                    }
+
+                    if !root.mods-disclosure-asking : SecondaryButton {
+                        text: "Close";
+                        clicked => {
+                            root.mods-disclosure-close();
+                        }
                     }
                 }
             }
