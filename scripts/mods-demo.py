@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Starts DRH Launcher on a made-up install and mod index, showing every case
 of the Mods page: updates, withdrawn versions, missing, disabled or unfitting
-dependencies, mods built for another DRH, mods not from the index, and a
-catalog to install from. Linux only: the launcher's folders follow XDG there.
+dependencies, mods built for another DRH, mods not from the index, the last
+game's report, and a catalog to install from. Linux only: the launcher's folders follow XDG there.
 
     python3 scripts/mods-demo.py          a fresh demo
     python3 scripts/mods-demo.py --keep   the last one, as the launcher left it
 
 Everything lives in target/mods-demo/; your own install is not touched. The
 index is served on a free local port; the zips install for real. DRH is a
-stand-in V13: Play starts nothing.
+stand-in V13: Play starts nothing, and shows a game that stopped before
+loading the mods.
 """
 
 import hashlib
@@ -244,6 +245,30 @@ def write_install():
                "hud_tweaks"]
     with open(os.path.join(MODS, "enabled.json"), "w") as file:
         json.dump({"mods": [{"id": id} for id in enabled]}, file, indent=2)
+
+    # The last game's report, as the game writes it.
+    def run(id, version, status="ok", mode="compiled", error=None):
+        record = {"id": id, "version": version, "status": status, "mode": mode}
+        if error:
+            record["error"] = error
+        return record
+
+    with open(os.path.join(MODS, "last-run.json"), "w") as file:
+        json.dump({"drh": "13", "started": "2026-10-18T20:00:00Z", "ready": True, "mods": [
+            run("api", "0.1.0"),
+            run("party_board", "0.1.0"),
+            run("old_mod", "1.0.0", "failed", error="Null Object Reference in onInit"),
+            run("boss_rework", "0.3.0", mode="mixed", error="2 modules left interpreted"),
+            run("needs_ghost", "1.0.0", "failed", error="dependency ghost_lib missing"),
+            run("needs_text", "1.0.0", "failed", error="dependency text_lib missing"),
+            run("wants_new_api", "1.0.0"),
+            run("from_zip", "1.0.0", mode="interpreted",
+                error="the compiler threw: Unknown identifier : Hud"),
+            run("from_repo", "1.0.0"),
+            run("broken_json", "1.0.0", "failed", error="mod.json: api must be a version"),
+            run("orphan_lib", "0.1.0"),
+            run("hud_tweaks", "1.2.0"),
+        ]}, file, indent=2)
 
     sources = {row[0]: source_of(row[0], row[1], row[4]) for row in INDEXED}
     state = {

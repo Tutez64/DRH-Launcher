@@ -215,11 +215,18 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
         log_for_config(&config.borrow(), diagnostics::LogLevel::Warn, warning);
     }
     refresh_logs_view(&ui, &config.borrow());
+    let mods_page = Rc::new(mods_page::register(
+        &ui,
+        &config,
+        &app_shutting_down,
+        &game_process,
+    ));
 
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
         let latest_release = Arc::clone(&latest_release);
+        let mods_page = Rc::clone(&mods_page);
         let game_process = Rc::clone(&game_process);
         let game_monitor = Rc::clone(&game_monitor);
         let game_stop_timer = Rc::clone(&game_stop_timer);
@@ -330,6 +337,7 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
                                 game.session_log.path.display(),
                             ),
                         );
+                        mods_page.game_launched(game.with_mods);
                         game_process.borrow_mut().replace(game);
                         refresh_playing_state(&ui, &config, HomeMessage::Running, false);
                         start_game_monitor(
@@ -1191,8 +1199,6 @@ fn run(startup_notice: Option<String>) -> Result<(), slint::PlatformError> {
             );
         });
     }
-
-    mods_page::register(&ui, &config, &app_shutting_down);
 
     {
         let ui = ui.as_weak();

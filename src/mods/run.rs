@@ -6,10 +6,9 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use serde::Deserialize;
-
 use super::index::Index;
 use super::install::cached_mod;
+use super::last_run;
 use super::manifest::read_needs;
 use super::resolve::resolve;
 use super::version::tag_number;
@@ -154,32 +153,12 @@ fn print_new_output(log: Option<&mut File>) {
     }
 }
 
-#[derive(Deserialize)]
-struct LastRun {
-    #[serde(default)]
-    ready: bool,
-    #[serde(default)]
-    mods: Vec<LastRunMod>,
-}
-
-#[derive(Deserialize)]
-struct LastRunMod {
-    id: String,
-    #[serde(default)]
-    version: String,
-    status: String,
-    #[serde(default)]
-    mode: Option<String>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
 /// Each mod's outcome; an error unless the mod under test is `ok`.
 fn report_last_run(mods_dir: &Path, id: &str) -> Result<(), String> {
     let path = mods_dir.join("last-run.json");
     let text = fs::read_to_string(&path)
         .map_err(|_| "No last-run.json: the game stopped before loading the mods.".to_string())?;
-    let last_run: LastRun = serde_json::from_str(&text)
+    let last_run = last_run::parse(&text)
         .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
     println!();
     for record in &last_run.mods {

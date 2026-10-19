@@ -616,6 +616,8 @@ export component AppWindow inherits Window {
     in-out property <string> mod-search;
     in property <bool> mods-busy: false;
     in property <string> mods-error;
+    in property <string> mods-run-text;
+    in property <bool> mods-run-warning: false;
     in property <bool> mod-confirm-visible: false;
     in property <string> mod-confirm-title;
     in property <string> mod-confirm-text;
@@ -1936,6 +1938,14 @@ export component AppWindow inherits Window {
                                 font-size: 12px;
                                 vertical-alignment: center;
                             }
+                        }
+
+                        // How the last game went with the mods.
+                        if !root.mod-detail-open && root.mods-page == 0 && root.mods-run-text != "" : Text {
+                            text: (root.mods-run-warning ? "⚠ " : "") + root.mods-run-text;
+                            color: root.mods-run-warning ? Theme.accent-warm : Theme.text-support;
+                            font-size: 13px;
+                            wrap: word-wrap;
                         }
 
                         if !root.mod-detail-open && root.mod-entries.length == 0 : Text {

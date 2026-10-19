@@ -12,6 +12,9 @@ use crate::{game_logs, paths, platform::Platform};
 pub struct RunningGame {
     pub child: Child,
     pub session_log: game_logs::GameSessionLog,
+    /// Started with the launcher's mods folder: `last-run.json` there is
+    /// this session's.
+    pub with_mods: bool,
     reaped_status: Option<ExitStatus>,
 }
 
@@ -205,9 +208,11 @@ pub fn launch_game_with_options(
     let pre_launch_command = parse_command_line(&config.pre_launch_command)
         .map_err(|error| format!("Could not parse pre-launch command: {error}"))?;
     let game_args = game_args(config, launch_options, install_dir);
-    if !library::names_mods_dir(&config.effective_game_args(launch_options)) {
+    let own_mods_dir = library::names_mods_dir(&config.effective_game_args(launch_options));
+    if !own_mods_dir {
         library::clear_last_run(install_dir);
     }
+    let with_mods = !own_mods_dir && library::names_mods_dir(&game_args);
 
     let mut command = if !pre_launch_command.is_empty() {
         let mut command = Command::new(&pre_launch_command[0]);
@@ -249,6 +254,7 @@ pub fn launch_game_with_options(
     Ok(RunningGame {
         child,
         session_log,
+        with_mods,
         reaped_status: None,
     })
 }

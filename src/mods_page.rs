@@ -7,14 +7,18 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, Timer, TimerMode, VecModel};
 
 use crate::changelog_markdown::markdown_document;
 use crate::config::LauncherConfig;
 use crate::diagnostics::{self, LogLevel};
 use crate::game_install::inspect_install;
+use crate::game_launch::RunningGame;
+use crate::game_runtime::process_is_running;
 use crate::mods::index::{Entry, Index};
+use crate::mods::last_run::{self, LastRun};
 use crate::mods::library::{InstalledMod, Library, Origin, Plan, needed_by, unneeded};
 use crate::mods::readme;
 use crate::mods::repository;
@@ -27,6 +31,9 @@ const OFFICIAL_API_SOURCE: &str = "https://github.com/Tutez64/DRH-Mod-API";
 
 /// The tabs: Installed is 0.
 const CATALOG: usize = 1;
+
+/// The window's Mods page.
+const MODS_PAGE: i32 = 3;
 
 #[derive(Default)]
 struct Page {
@@ -56,6 +63,19 @@ struct Page {
     /// Every installed mod in the user's order, the disabled ones in their
     /// place.
     order: Vec<String>,
+    game: Game,
+    /// The game's report on the mods it started, read with the folder.
+    last_run: Option<LastRun>,
+}
+
+/// The last game this launcher started with its mods folder.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum Game {
+    /// None this session: a report present is from an earlier one.
+    #[default]
+    None,
+    Running,
+    Exited,
 }
 
 type Shared = Arc<Mutex<Page>>;
@@ -77,16 +97,47 @@ struct Confirm {
     button: String,
 }
 
+/// The page, for the game launch to tell it about a game.
+pub(crate) struct ModsPage(Context);
+
+impl ModsPage {
+    /// A game was just started: with the launcher's mods folder, the page
+    /// follows it until it exits, reading its report.
+    pub(crate) fn game_launched(&self, with_mods: bool) {
+        if !with_mods {
+            return;
+        }
+        let context = &self.0;
+        {
+            let mut page = context.page.lock().expect("mods page lock poisoned");
+            page.game = Game::Running;
+            page.last_run = None;
+        }
+        let on = context.clone();
+        context
+            .game_poll
+            .start(TimerMode::Repeated, GAME_POLL_INTERVAL, move || {
+                on.follow_game()
+            });
+    }
+}
+
+/// How often the page reads the report while the game runs.
+const GAME_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
 pub(crate) fn register(
     ui: &AppWindow,
     config: &Rc<RefCell<LauncherConfig>>,
     app_shutting_down: &Arc<AtomicBool>,
-) {
+    game_process: &Rc<RefCell<Option<RunningGame>>>,
+) -> ModsPage {
     let context = Context {
         ui: ui.as_weak(),
         config: Rc::clone(config),
         app_shutting_down: Arc::clone(app_shutting_down),
         page: Arc::default(),
+        game_process: Rc::clone(game_process),
+        game_poll: Rc::default(),
     };
 
     let on = context.clone();
@@ -255,7 +306,7 @@ pub(crate) fn register(
         }
     });
 
-    let on = context;
+    let on = context.clone();
     ui.on_open_mods_folder(move || {
         let view = on.view();
         let Some(dir) = view.install_dir.clone() else {
@@ -270,6 +321,8 @@ pub(crate) fn register(
             view.render();
         }
     });
+
+    ModsPage(context)
 }
 
 /// What the callbacks hold, on the UI thread.
@@ -279,9 +332,31 @@ struct Context {
     config: Rc<RefCell<LauncherConfig>>,
     app_shutting_down: Arc<AtomicBool>,
     page: Shared,
+    game_process: Rc<RefCell<Option<RunningGame>>>,
+    /// Runs while a game started with the mods folder does.
+    game_poll: Rc<Timer>,
 }
 
 impl Context {
+    /// Reads the report again while the page is shown, and once the game
+    /// has exited.
+    fn follow_game(&self) {
+        let view = self.view();
+        let running = process_is_running(&self.game_process);
+        if !running {
+            view.lock().game = Game::Exited;
+            self.game_poll.stop();
+        }
+        let shown = view
+            .ui
+            .upgrade()
+            .is_some_and(|ui| ui.get_active_page() == MODS_PAGE);
+        if !running || shown {
+            view.read_last_run();
+            view.render();
+        }
+    }
+
     fn view(&self) -> View {
         View {
             ui: self.ui.clone(),
@@ -534,6 +609,14 @@ impl View {
         let mut page = self.lock();
         page.enabled = library.enabled();
         page.tag = installed_tag(dir);
+        drop(page);
+        self.read_last_run();
+    }
+
+    fn read_last_run(&self) {
+        if let Some(dir) = &self.install_dir {
+            self.lock().last_run = last_run::read(&paths::mods_dir(dir));
+        }
     }
 
     /// Logs what an action did and its warnings, and clears the last
@@ -663,6 +746,9 @@ impl View {
             rows.into_iter().map(|(_, view)| view).collect::<Vec<_>>(),
         )));
         ui.set_mods_error(page.error.clone().unwrap_or_default().into());
+        let (run_text, run_warning) = run_summary(&page);
+        ui.set_mods_run_text(run_text.into());
+        ui.set_mods_run_warning(run_warning);
         let confirm = page.confirm.as_ref();
         ui.set_mod_confirm_visible(confirm.is_some());
         ui.set_mod_confirm_title(confirm.map(|c| c.title.clone()).unwrap_or_default().into());
@@ -771,6 +857,7 @@ fn detail(page: &Page, id: &str, tag: Option<u32>) -> Detail {
         .into_iter()
         .chain(installed.map_or_else(Vec::new, |m| dependency_tags(page, m)))
         .chain(other_tags(installed.map(|m| m.origin.as_ref()), &issues))
+        .chain(installed.map_or_else(Vec::new, |m| run_tags(page, m)))
         .collect();
 
     detail.long_description = match (installed, indexed) {
@@ -944,6 +1031,7 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                         dependency_tags(page, m)
                             .into_iter()
                             .chain(other_tags(Some(m.origin.as_ref()), &issues))
+                            .chain(run_tags(page, m))
                             .collect::<Vec<_>>(),
                     )),
                     status: status.into(),
@@ -1459,6 +1547,115 @@ fn confirmation(page: &Page, action: &Action, consequences: &Consequences) -> Op
     })
 }
 
+/// The game's report, unless it was written by another DRH than the
+/// installed one.
+fn report(page: &Page) -> Option<&LastRun> {
+    page.last_run.as_ref().filter(|report| {
+        let written_by = report
+            .drh
+            .as_deref()
+            .and_then(|drh| drh.parse::<u32>().ok());
+        page.tag.is_none() || written_by.is_none() || written_by == page.tag
+    })
+}
+
+/// How the last game went with the mods, and whether that is a warning;
+/// empty when there is nothing to say.
+fn run_summary(page: &Page) -> (String, bool) {
+    let stale = page.last_run.is_some() && report(page).is_none();
+    match (page.game, report(page)) {
+        _ if stale => (String::new(), false),
+        (Game::Running, None) => ("Game starting...".to_string(), false),
+        (Game::Running, Some(report)) if !report.ready => (
+            format!("Game loading: {} started.", count(report.mods.len(), "mod")),
+            false,
+        ),
+        (Game::Running, Some(report)) => (format!("Game running: {}.", outcome(report)), false),
+        (Game::Exited, None) => (
+            "The last game stopped before loading the mods.".to_string(),
+            true,
+        ),
+        (_, Some(report)) if !report.ready => (
+            "The last game stopped before it was ready.".to_string(),
+            true,
+        ),
+        (_, Some(report)) => (
+            format!("Last game: {}.", outcome(report)),
+            report.mods.iter().any(|run| run.status != "ok"),
+        ),
+        (Game::None, None) => (String::new(), false),
+    }
+}
+
+/// `N mods loaded`, then how many failed or were skipped.
+fn outcome(report: &LastRun) -> String {
+    let with = |status: &str| {
+        report
+            .mods
+            .iter()
+            .filter(|run| run.status == status)
+            .count()
+    };
+    let mut text = format!("{} loaded", count(with("ok"), "mod"));
+    for (status, label) in [("failed", "failed"), ("skipped", "skipped")] {
+        if with(status) > 0 {
+            text.push_str(&format!(", {} {label}", with(status)));
+        }
+    }
+    text
+}
+
+fn count(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
+/// What the last game reported of `m`: only while it is the version that
+/// ran, and enabled.
+fn run_tags(page: &Page, m: &InstalledMod) -> Vec<ModTagView> {
+    let Some(run) = report(page)
+        .and_then(|report| report.mods.iter().find(|run| run.id == m.id))
+        .filter(|run| run.version == m.version && page.enabled.contains(&m.id))
+    else {
+        return Vec::new();
+    };
+    let reason = |text: &str| match &run.error {
+        Some(error) => format!("{text}: {error}"),
+        None => format!("{text}."),
+    };
+    let mut tags = Vec::new();
+    match run.status.as_str() {
+        "failed" => tags.push(tag_view(
+            "⚠ failed",
+            &reason("The last game failed it"),
+            ModTagKind::Problem,
+        )),
+        "skipped" => tags.push(tag_view(
+            "⚠ skipped",
+            &reason("The last game skipped it: its folder or mod.json was missing"),
+            ModTagKind::Problem,
+        )),
+        _ => {}
+    }
+    match run.mode.as_deref() {
+        Some("interpreted") => tags.push(tag_view(
+            "interpreted",
+            &reason("Its code could not be compiled, so it ran interpreted, slower"),
+            ModTagKind::Info,
+        )),
+        Some("mixed") => tags.push(tag_view(
+            "mixed",
+            &reason("Part of its code could not be compiled, so it ran interpreted, slower"),
+            ModTagKind::Info,
+        )),
+        _ => {}
+    }
+    tags
+}
+
 fn log(install_dir: &Path, level: LogLevel, message: &str) {
     let _ = diagnostics::write(install_dir, level, message);
 }
@@ -1673,6 +1870,78 @@ mod tests {
         assert_eq!(shown.primary, "Disable");
         assert_eq!(shown.update, "Update to 1.1.0");
         assert!(shown.installed);
+    }
+
+    fn reported(ready: bool, drh: &str) -> LastRun {
+        last_run::parse(&format!(
+            r#"{{"drh": "{drh}", "ready": {ready}, "mods": [
+                {{"id": "mine", "version": "1.0.0", "status": "failed", "error": "boom"}},
+                {{"id": "other", "version": "1.0.0", "status": "ok", "mode": "mixed",
+                  "error": "2 modules left interpreted"}}]}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn sums_up_the_last_game() {
+        let mut page = Page {
+            tag: Some(13),
+            ..library_page()
+        };
+        assert_eq!(run_summary(&page), (String::new(), false));
+        page.game = Game::Running;
+        assert_eq!(run_summary(&page).0, "Game starting...");
+        page.last_run = Some(reported(false, "13"));
+        assert_eq!(run_summary(&page).0, "Game loading: 2 mods started.");
+        page.game = Game::Exited;
+        assert_eq!(
+            run_summary(&page),
+            (
+                "The last game stopped before it was ready.".to_string(),
+                true
+            )
+        );
+        page.last_run = Some(reported(true, "13"));
+        assert_eq!(
+            run_summary(&page),
+            ("Last game: 1 mod loaded, 1 failed.".to_string(), true)
+        );
+        page.last_run = None;
+        assert_eq!(
+            run_summary(&page),
+            (
+                "The last game stopped before loading the mods.".to_string(),
+                true
+            )
+        );
+        // Written by another DRH: it says nothing of this one.
+        page.last_run = Some(reported(true, "12"));
+        assert_eq!(run_summary(&page), (String::new(), false));
+    }
+
+    #[test]
+    fn labels_what_the_last_game_reported() {
+        let mut page = Page {
+            tag: Some(13),
+            last_run: Some(reported(true, "13")),
+            ..library_page()
+        };
+        let text = |page: &Page, id: &str| {
+            let m = page.mods.iter().find(|m| m.id == id).unwrap();
+            run_tags(page, m)
+                .iter()
+                .map(|tag| tag.text.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(text(&page, "mine"), ["⚠ failed"]);
+        assert_eq!(text(&page, "other"), ["mixed"]);
+        assert!(text(&page, "lib").is_empty());
+
+        // Another version than the one that ran, or disabled since.
+        page.mods[1].version = "1.1.0".to_string();
+        assert!(text(&page, "mine").is_empty());
+        page.enabled.retain(|id| id != "other");
+        assert!(text(&page, "other").is_empty());
     }
 
     #[test]

@@ -844,7 +844,12 @@ store.
   with `drh`, UTC `started`, and `ready`). `drh` is the tag-number
   string of the game that wrote the file (`"20"`, no `V` — same space
   as `mod.json`; compare to `installed.json` by stripping `V`). Show it
-  on the Mods page. Delete `last-run.json` before each Play with
+  on the Mods page: a line above the Installed list sums the last game up
+  with the process state, and a mod gets `⚠ failed`, `⚠ skipped`,
+  `interpreted` or `mixed` (the `error` in its tooltip) while it is
+  enabled in the version that ran. A file from another DRH tag is
+  ignored. Read when the page is shown, every 2 s while a game started
+  with the mods folder runs, and once it exits. Delete `last-run.json` before each Play with
   `--mods-dir` (`--play` included), so a file present is this run's.
   A missing file means the game is still booting while the process is
   alive, and that it crashed before its first write once it has exited
