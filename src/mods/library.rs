@@ -46,6 +46,10 @@ struct State {
     /// The DRH tag the dependencies were last resolved for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tag: Option<u32>,
+    /// Every installed mod in the user's order, the disabled ones in their
+    /// place: `enabled.json` holds only the enabled ones.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    order: Vec<String>,
 }
 
 /// A mod in the folder, read from its `mod.json` without refusing it: texts
@@ -219,6 +223,8 @@ impl Library {
 
     /// Returns a warning for each enabled mod that needs it.
     pub fn disable(&self, id: &str) -> Result<Vec<String>, String> {
+        // Its place is kept for when it is enabled again.
+        self.order()?;
         let mut enabled = self.enabled();
         enabled.retain(|known| known != id);
         self.write_enabled(&enabled)?;
@@ -230,16 +236,56 @@ impl Library {
             .collect())
     }
 
-    /// The user's load order: the enabled ids in a new order.
+    /// The user's order: every installed id, the enabled ones written to
+    /// `enabled.json` in it.
     pub fn set_order(&self, ids: &[String]) -> Result<(), String> {
+        let mut state = self.read_state();
+        state.order = ids.to_vec();
+        self.write_state(&state)?;
         let enabled = self.enabled();
-        let mut ordered: Vec<String> = ids
+        self.write_enabled(&in_order(&state.order, enabled))
+    }
+
+    /// Every installed mod in the user's order, saved when it changed. Mods
+    /// not in it yet come last: on a first read, the enabled ones in their
+    /// order then the others by name. `enabled.json` decides the enabled
+    /// ones' order among their places, as the game reads it.
+    pub fn order(&self) -> Result<Vec<String>, String> {
+        let mods = self.scan()?;
+        let mut state = self.read_state();
+        let enabled = self.enabled();
+        let installed = |id: &String| mods.iter().any(|m| m.id == *id);
+        let mut order: Vec<String> = Vec::new();
+        for id in state
+            .order
             .iter()
-            .filter(|id| enabled.contains(id))
+            .chain(&enabled)
+            .filter(|id| installed(id))
+        {
+            if !order.contains(id) {
+                order.push(id.clone());
+            }
+        }
+        let mut rest: Vec<&InstalledMod> = mods.iter().filter(|m| !order.contains(&m.id)).collect();
+        rest.sort_by_key(|m| m.name.to_lowercase());
+        order.extend(rest.into_iter().map(|m| m.id.clone()));
+
+        let placed: Vec<String> = enabled
+            .iter()
+            .filter(|id| order.contains(id))
             .cloned()
             .collect();
-        ordered.extend(enabled.into_iter().filter(|id| !ids.contains(id)));
-        self.write_enabled(&ordered)
+        let mut enabled_order = placed.iter();
+        for slot in order.iter_mut() {
+            if enabled.contains(slot) {
+                *slot = enabled_order.next().expect("one id per place").clone();
+            }
+        }
+        if order != state.order {
+            state.order = order.clone();
+            self.write_state(&state)?;
+        }
+        Ok(order)
     }
 
     /// Removes a mod.
@@ -388,7 +434,8 @@ impl Library {
         warnings.extend(resolution.missing);
         Ok(Plan {
             entries,
-            enabled,
+            // A mod enabled again goes back to its place.
+            enabled: in_order(&self.read_state().order, enabled),
             warnings,
         })
     }
@@ -498,6 +545,17 @@ impl Library {
         let text = serde_json::to_string_pretty(state).expect("the mods state serializes");
         write_file(&self.state_file, &format!("{text}\n"))
     }
+}
+
+/// `ids` in `order`, those not in it last as they were.
+fn in_order(order: &[String], mut ids: Vec<String>) -> Vec<String> {
+    ids.sort_by_key(|id| {
+        order
+            .iter()
+            .position(|known| known == id)
+            .unwrap_or(usize::MAX)
+    });
+    ids
 }
 
 enum Added<'a> {
@@ -886,6 +944,55 @@ mod tests {
             .unwrap();
         assert_eq!(library.prune_enabled().unwrap(), ["gone"]);
         assert_eq!(library.enabled(), ["mine"]);
+    }
+
+    #[test]
+    fn keeps_a_disabled_mod_in_its_place() {
+        let install = tempfile::tempdir().unwrap();
+        let library = Library::new(install.path());
+        for id in ["alpha", "beta", "gamma", "zeta"] {
+            write(
+                &install.path().join(format!("mods/{id}/mod.json")),
+                &manifest(id, "1.0.0", None),
+            );
+        }
+        let ids = |list: &[&str]| list.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+        library.write_enabled(&ids(&["gamma", "alpha"])).unwrap();
+        // First read: the enabled ones in their order, then the others by name.
+        assert_eq!(library.order().unwrap(), ["gamma", "alpha", "beta", "zeta"]);
+
+        library.disable("alpha").unwrap();
+        assert_eq!(library.order().unwrap(), ["gamma", "alpha", "beta", "zeta"]);
+        library
+            .enable(
+                &Index {
+                    entries: Vec::new(),
+                },
+                "zeta",
+                None,
+            )
+            .unwrap();
+        library
+            .enable(
+                &Index {
+                    entries: Vec::new(),
+                },
+                "alpha",
+                None,
+            )
+            .unwrap();
+        assert_eq!(library.enabled(), ["gamma", "alpha", "zeta"]);
+
+        // A hand-edited enabled.json orders the enabled ones in their places.
+        library
+            .write_enabled(&ids(&["zeta", "alpha", "gamma"]))
+            .unwrap();
+        assert_eq!(library.order().unwrap(), ["zeta", "alpha", "beta", "gamma"]);
+
+        library
+            .set_order(&ids(&["beta", "zeta", "alpha", "gamma"]))
+            .unwrap();
+        assert_eq!(library.enabled(), ["zeta", "alpha", "gamma"]);
     }
 
     #[test]

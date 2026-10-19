@@ -95,7 +95,7 @@ The intended managed content layout is:
         <completed-session-timestamp>.log.zst
     downloads/
     staging/
-    mods.json         # how each mod in mods/ got there: index, zip or repository, and whether as a dependency
+    mods.json         # how each mod in mods/ got there: index, zip or repository, and whether as a dependency; every mod's place in the order
     mod-staging/      # mod versions downloaded before they replace the installed ones
     mod-index.json    # the last mod index fetched, for the Mods page offline
     mod-cache/        # --run-mod: indexed mod versions, one folder each
@@ -786,7 +786,10 @@ store.
   `^[a-z][a-z0-9_]{1,62}[a-z0-9]$` and be outside the Haxe keyword and
   Windows reserved-name lists; otherwise refuse the install. No
   uncompressed size cap.
-- show installed vs listed; enable or disable; load order. The written
+- show installed vs listed; enable or disable; load order. One list
+  orders every installed mod, a disabled one keeping its place for when
+  it is enabled again; `enabled.json` gets the enabled ones in it, and a
+  hand edit there reorders them among their places. The written
   order is the user's: the game starts every mod after its dependencies
   (`api` included) whatever their place in the file. A dependency that
   cannot be installed or that the user disabled gets a warning, not a

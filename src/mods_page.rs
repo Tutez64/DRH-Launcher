@@ -53,6 +53,9 @@ struct Page {
     working: Option<(String, &'static str)>,
     /// The installed DRH tag's number.
     tag: Option<u32>,
+    /// Every installed mod in the user's order, the disabled ones in their
+    /// place.
+    order: Vec<String>,
 }
 
 type Shared = Arc<Mutex<Page>>;
@@ -519,9 +522,14 @@ impl View {
         let library = Library::new(dir);
         let pruned = library.prune_enabled();
         let scanned = library.scan();
-        match (pruned, scanned) {
-            (Ok(_), Ok(mods)) => self.lock().mods = mods,
-            (Err(error), _) | (_, Err(error)) => self.fail(error),
+        let order = library.order();
+        match (pruned, scanned, order) {
+            (Ok(_), Ok(mods), Ok(order)) => {
+                let mut page = self.lock();
+                page.mods = mods;
+                page.order = order;
+            }
+            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => self.fail(error),
         }
         let mut page = self.lock();
         page.enabled = library.enabled();
@@ -593,7 +601,7 @@ impl View {
             let Some(id) = self.selected_id(&page) else {
                 return;
             };
-            let mut order = load_order(&page);
+            let mut order = list_order(&page);
             let Some(at) = order.iter().position(|known| *known == id) else {
                 return;
             };
@@ -607,7 +615,7 @@ impl View {
             order
         };
         match Library::new(dir).set_order(&order) {
-            Ok(()) => self.succeed(&format!("Load order: {}.", order.join(", ")), &[]),
+            Ok(()) => self.succeed(&format!("Order: {}.", order.join(", ")), &[]),
             Err(error) => self.fail(error),
         }
         self.rescan();
@@ -876,20 +884,31 @@ fn drh_issue(drh: Option<&str>, uses: &[String], tag: Option<u32>) -> Option<Iss
     })
 }
 
-/// The enabled mods in load order, the official `api` first: the game starts
-/// a mod after what it needs anyway, and every mod needs it.
-fn load_order(page: &Page) -> Vec<String> {
-    let (mut order, rest): (Vec<String>, Vec<String>) = page
-        .enabled
+/// Every installed mod in the user's order, the official `api` first: the
+/// game starts a mod after what it needs anyway, and every mod needs it.
+fn list_order(page: &Page) -> Vec<String> {
+    let installed = |id: &String| page.mods.iter().any(|m| m.id == *id);
+    let mut order: Vec<String> = page
+        .order
         .iter()
+        .filter(|id| installed(id))
         .cloned()
-        .partition(|id| is_official(page, id));
-    order.extend(rest);
-    order
+        .collect();
+    let mut rest: Vec<&InstalledMod> = page
+        .mods
+        .iter()
+        .filter(|m| !order.contains(&m.id))
+        .collect();
+    rest.sort_by_key(|m| m.name.to_lowercase());
+    order.extend(rest.into_iter().map(|m| m.id.clone()));
+    let (mut first, rest): (Vec<String>, Vec<String>) =
+        order.into_iter().partition(|id| is_official(page, id));
+    first.extend(rest);
+    first
 }
 
 fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
-    let order = load_order(page);
+    let order = list_order(page);
     let search = &page.search[0];
     // Moving swaps with the neighbour in the whole order, which a search may
     // hide.
@@ -899,11 +918,7 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
         .iter()
         .filter(|m| matches(search, &m.name, &m.id, source_of(page, &m.id).as_deref()))
         .collect();
-    // Enabled first, in load order; then the others by name.
-    mods.sort_by_key(|m| {
-        let at = order.iter().position(|id| *id == m.id);
-        (at.is_none(), at, m.name.to_lowercase())
-    });
+    mods.sort_by_key(|m| order.iter().position(|id| *id == m.id));
     mods.into_iter()
         .map(|m| {
             let official = is_official(page, &m.id);
@@ -932,9 +947,9 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                             .collect::<Vec<_>>(),
                     )),
                     status: status.into(),
-                    enabled: at.is_some(),
-                    orderable: at.is_some() && !official && reorderable,
-                    can_move_up: at.is_some() && at > first_movable,
+                    enabled: page.enabled.contains(&m.id),
+                    orderable: !official && reorderable,
+                    can_move_up: at > first_movable,
                     can_move_down: at.is_some_and(|at| at + 1 < order.len()),
                 },
             )

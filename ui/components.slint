@@ -1462,10 +1462,12 @@ export component ModRow inherits Rectangle {
         padding-right: 12px;
         spacing: 10px;
 
+        // Disabled, it keeps its place, toned down.
         VerticalLayout {
             horizontal-stretch: 1;
             alignment: center;
             spacing: 4px;
+            opacity: root.enabled ? 1 : 0.55;
 
             HorizontalLayout {
                 spacing: 8px;
