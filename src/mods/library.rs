@@ -417,15 +417,53 @@ impl Library {
             entries.push(((*entry).clone(), false));
         }
 
-        let mut wanted: Vec<&str> = resolution
+        // Enabled with it: the added mod and what it needs, through what that
+        // needs, and what was not installed yet. A mod the user disabled stays
+        // so for the others.
+        let chosen = |id: &str| {
+            resolution.entries.iter().any(|entry| entry.id == id)
+                || resolution.kept.iter().any(|kept| kept == id)
+        };
+        let needs_of = |id: &str| -> Needs {
+            if Some(id) == added_id {
+                return roots
+                    .last()
+                    .map(|(_, needs)| needs.clone())
+                    .unwrap_or_default();
+            }
+            resolution
+                .entries
+                .iter()
+                .find(|entry| entry.id == id)
+                .and_then(|entry| entry_needs(entry).ok())
+                .or_else(|| mods.iter().find(|m| m.id == id).map(|m| m.needs.clone()))
+                .unwrap_or_default()
+        };
+        let mut wanted: Vec<String> = added_id.map(str::to_string).into_iter().collect();
+        let mut next = 0;
+        while next < wanted.len() {
+            for (need, _) in needs_of(&wanted[next].clone()) {
+                if chosen(&need) && !wanted.contains(&need) {
+                    wanted.push(need);
+                }
+            }
+            next += 1;
+        }
+        wanted.extend(
+            entries
+                .iter()
+                .filter(|(entry, _)| !mods.iter().any(|m| m.id == entry.id))
+                .map(|(entry, _)| entry.id.clone()),
+        );
+        // In the order they were before: the `api` first, then by id.
+        let listed = resolution
             .entries
             .iter()
             .map(|entry| entry.id.as_str())
-            .collect();
-        wanted.extend(resolution.kept.iter().map(String::as_str));
-        wanted.extend(added_id);
-        for id in wanted {
-            if !enabled.iter().any(|known| known == id) {
+            .chain(resolution.kept.iter().map(String::as_str))
+            .chain(added_id);
+        for id in listed {
+            if wanted.iter().any(|known| known == id) && !enabled.iter().any(|known| known == id) {
                 enabled.push(id.to_string());
             }
         }
@@ -993,6 +1031,47 @@ mod tests {
             .set_order(&ids(&["beta", "zeta", "alpha", "gamma"]))
             .unwrap();
         assert_eq!(library.enabled(), ["zeta", "alpha", "gamma"]);
+    }
+
+    #[test]
+    fn enables_only_what_the_enabled_mod_needs() {
+        let install = tempfile::tempdir().unwrap();
+        let library = Library::new(install.path());
+        let needing_lib = |id: &str| {
+            serde_json::json!({
+                "id": id, "name": id, "description": "d", "version": "1.0.0",
+                "author": "me", "entry": "Main", "uses": [], "api": "1.0",
+                "dependencies": { "lib": "1.0" }
+            })
+            .to_string()
+        };
+        for (id, api) in [("api", None), ("lib", Some("1.0")), ("other", Some("1.0"))] {
+            write(
+                &install.path().join(format!("mods/{id}/mod.json")),
+                &manifest(id, "1.0.0", api),
+            );
+        }
+        write(
+            &install.path().join("mods/user/mod.json"),
+            &needing_lib("user"),
+        );
+        write(
+            &install.path().join("mods/user2/mod.json"),
+            &needing_lib("user2"),
+        );
+        library
+            .write_enabled(&["api".to_string(), "user".to_string()])
+            .unwrap();
+        let empty = Index {
+            entries: Vec::new(),
+        };
+
+        // lib was disabled by hand: enabling another mod leaves it so.
+        library.enable(&empty, "other", None).unwrap();
+        assert_eq!(library.enabled(), ["api", "user", "other"]);
+
+        let plan = library.plan_enable(&empty, "user2", None).unwrap();
+        assert_eq!(plan.enabled, ["api", "user", "other", "lib", "user2"]);
     }
 
     #[test]

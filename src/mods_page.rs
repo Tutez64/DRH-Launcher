@@ -360,7 +360,7 @@ impl Context {
         let asked = {
             let page = view.lock();
             consequences(&page, &Library::new(&dir), &action)
-                .map(|problems| confirmation(&page, &action, &problems))
+                .map(|consequences| confirmation(&page, &action, &consequences))
         };
         match asked {
             Ok(None) => self.run(action),
@@ -1283,7 +1283,15 @@ fn index_status(page: &Page) -> String {
 
 /// The problems `action` would add: each mod's issues it does not have yet,
 /// by label.
-fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Vec<String>, String> {
+/// What an action changes besides its own mod, and the problems it adds.
+#[derive(Debug, Default)]
+struct Consequences {
+    /// Each other mod it installs, updates or enables.
+    also: Vec<String>,
+    problems: Vec<String>,
+}
+
+fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Consequences, String> {
     let empty = Index {
         entries: Vec::new(),
     };
@@ -1295,16 +1303,25 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Vec<S
             .cloned()
             .collect()
     };
-    let (mods, enabled) = match action {
+    let plan = match action {
         Action::Install(entry) | Action::Update(entry) => {
-            planned(page, library.plan_install(index, entry, page.tag)?)
+            Some((&entry.id, library.plan_install(index, entry, page.tag)?))
         }
-        Action::Enable(id) => planned(page, library.plan_enable(index, id, page.tag)?),
-        Action::Disable(id) => (page.mods.clone(), without(id)),
-        Action::Uninstall(id) => (
+        Action::Enable(id) => Some((id, library.plan_enable(index, id, page.tag)?)),
+        Action::Disable(_) | Action::Uninstall(_) => None,
+    };
+    let also = plan
+        .as_ref()
+        .map(|(id, plan)| others_changed(page, id, plan))
+        .unwrap_or_default();
+    let (mods, enabled) = match (action, plan) {
+        (_, Some((_, plan))) => planned(page, plan),
+        (Action::Uninstall(id), None) => (
             page.mods.iter().filter(|m| m.id != *id).cloned().collect(),
             without(id),
         ),
+        // Disable.
+        (_, None) => (page.mods.clone(), without(id_of(action))),
     };
     let after = Page {
         index: page.index.clone(),
@@ -1313,7 +1330,7 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Vec<S
         tag: page.tag,
         ..Page::default()
     };
-    Ok(after
+    let problems = after
         .mods
         .iter()
         .flat_map(|m| {
@@ -1333,7 +1350,38 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Vec<S
                 .filter(move |issue| !known.contains(&issue.label))
                 .map(move |issue| format!("{}: {}", m.name, issue.message))
         })
-        .collect())
+        .collect();
+    Ok(Consequences { also, problems })
+}
+
+fn id_of(action: &Action) -> &str {
+    match action {
+        Action::Install(entry) | Action::Update(entry) => &entry.id,
+        Action::Enable(id) | Action::Disable(id) | Action::Uninstall(id) => id,
+    }
+}
+
+/// The mods `plan` installs, updates or enables besides `id`.
+fn others_changed(page: &Page, id: &str, plan: &Plan) -> Vec<String> {
+    let mut also: Vec<String> = plan
+        .entries
+        .iter()
+        .filter(|(entry, _)| entry.id != id)
+        .map(
+            |(entry, _)| match page.mods.iter().find(|m| m.id == entry.id) {
+                Some(m) => format!("updates {} to {}", m.name, entry.version),
+                None => format!("installs {} {}", entry.name, entry.version),
+            },
+        )
+        .collect();
+    also.extend(
+        plan.enabled
+            .iter()
+            .filter(|other| *other != id && !page.enabled.contains(other))
+            .filter_map(|other| page.mods.iter().find(|m| m.id == *other))
+            .map(|m| format!("enables {}", m.name)),
+    );
+    also
 }
 
 /// The installed mods and enabled ids once `plan` is carried out.
@@ -1350,10 +1398,11 @@ fn planned(page: &Page, plan: Plan) -> (Vec<InstalledMod>, Vec<String>) {
 }
 
 /// What to ask before `action`: always before an uninstall, else only when it
-/// adds `problems`.
-fn confirmation(page: &Page, action: &Action, problems: &[String]) -> Option<Confirm> {
+/// changes other mods or adds problems.
+fn confirmation(page: &Page, action: &Action, consequences: &Consequences) -> Option<Confirm> {
+    let Consequences { also, problems } = consequences;
     let uninstall = matches!(action, Action::Uninstall(_));
-    if problems.is_empty() && !uninstall {
+    if also.is_empty() && problems.is_empty() && !uninstall {
         return None;
     }
     let (title, verb) = match action {
@@ -1380,9 +1429,15 @@ fn confirmation(page: &Page, action: &Action, problems: &[String]) -> Option<Con
     } else {
         String::new()
     };
+    if !also.is_empty() {
+        text.push_str("This also:");
+        for change in also {
+            text.push_str(&format!("\n• {change}"));
+        }
+    }
     if !problems.is_empty() {
         if !text.is_empty() {
-            text.push(' ');
+            text.push_str(if also.is_empty() { " " } else { "\n\n" });
         }
         text.push_str("This leaves these problems:");
         for problem in problems {
@@ -1545,39 +1600,50 @@ mod tests {
     fn asks_before_what_breaks_another_mod() {
         let page = library_page();
         let library = Library::new(Path::new("unused"));
-        let problems = consequences(&page, &library, &Action::Disable("lib".to_string())).unwrap();
+        let found = consequences(&page, &library, &Action::Disable("lib".to_string())).unwrap();
+        assert!(found.also.is_empty());
         assert_eq!(
-            problems,
+            found.problems,
             ["mine: Needs lib, which is disabled: the game fails it."]
         );
-        assert!(confirmation(&page, &Action::Disable("lib".to_string()), &problems).is_some());
+        assert!(confirmation(&page, &Action::Disable("lib".to_string()), &found).is_some());
 
         let none = consequences(&page, &library, &Action::Disable("other".to_string())).unwrap();
-        assert!(none.is_empty());
+        assert!(none.problems.is_empty());
         assert!(confirmation(&page, &Action::Disable("other".to_string()), &none).is_none());
         assert!(confirmation(&page, &Action::Uninstall("other".to_string()), &none).is_some());
     }
 
     #[test]
-    fn asks_before_installing_what_does_not_fit() {
+    fn asks_before_installing_more_or_what_does_not_fit() {
         let meter = Entry {
             uses: vec!["extends".to_string()],
             drh: Some("14".to_string()),
+            dependencies: [("lib".to_string(), "1.0".to_string())].into(),
             ..entry("meter", "1.0.0")
         };
         let page = Page {
             index: Some(Index {
-                entries: vec![meter.clone()],
+                entries: vec![meter.clone(), entry("lib", "1.0.2")],
             }),
             tag: Some(13),
             ..Page::default()
         };
         // Nothing installed: the plan only reads the folder.
         let library = Library::new(Path::new("no-such-install"));
-        let problems = consequences(&page, &library, &Action::Install(meter)).unwrap();
+        let action = Action::Install(meter);
+        let found = consequences(&page, &library, &action).unwrap();
+        assert_eq!(found.also, ["installs lib 1.0.2"]);
         assert_eq!(
-            problems,
+            found.problems,
             ["meter: Built for DRH 14, and DRH 13 is installed: it may not work."]
+        );
+        let asked = confirmation(&page, &action, &found).unwrap();
+        assert_eq!(asked.button, "Install anyway");
+        assert!(
+            asked
+                .text
+                .starts_with("This also:\n• installs lib 1.0.2\n\n")
         );
     }
 

@@ -740,7 +740,8 @@ game apply the same one.
 `api` and each dependency take a version (`"1.2"`: same major, not
 older; with major `0`, same minor). Enabling a mod installs and enables
 its missing dependencies, `api` included, from the index: for each id,
-the highest version that satisfies every enabled mod naming it. For an
+the highest version that satisfies every enabled mod naming it. Only its
+own are enabled: a mod the user disabled stays so for the others. For an
 `extends` / `replace` mod such as `api`, one whose `drh` contains the
 installed tag comes first; when none does, install the highest
 satisfying version anyway, with the `drh` warning. One version per id; when none satisfies everyone, keep
@@ -804,9 +805,10 @@ store.
   mod's README never has to say it is installed with others. `api` is no
   exception: installed with the first mod that needs it, it gets none of
   these labels.
-- an action that would add problems (a needed mod disabled or
+- an action that installs, updates or enables other mods, or would add
+  problems (a needed mod disabled or
   uninstalled, a mod or dependency not built for the installed DRH, a
-  dependency missing or not fitting) lists them and asks first;
+  dependency missing or not fitting), lists them and asks first;
   uninstalling always asks. Actions and their warnings go to the launcher
   log; a failed one shows in a line above the list, until dismissed or an
   action succeeds.
