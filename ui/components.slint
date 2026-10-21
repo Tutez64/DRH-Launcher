@@ -158,7 +158,9 @@ export component DiscreteSlider inherits Rectangle {
     }
 }
 
-export component HelpMenuButton inherits Rectangle {
+// A button opening a menu: its arrow points down, and up while it is open.
+export component MenuButton inherits Rectangle {
+    in property <string> text;
     in property <bool> active;
     callback clicked();
 
@@ -170,7 +172,7 @@ export component HelpMenuButton inherits Rectangle {
     background: root.active ? Theme.surface-accent : touch.pressed ? Theme.surface-pressed : touch.has-hover ? Theme.surface-accent : Theme.surface-raised;
 
     Text {
-        text: "Help";
+        text: root.text;
         width: parent.width;
         color: Theme.text-primary;
         font-size: 14px;
@@ -539,7 +541,7 @@ export component HomePlayerCount inherits Rectangle {
     }
 }
 
-export component HelpGitHubButton inherits Rectangle {
+export component GitHubButton inherits Rectangle {
     in property <string> text;
     callback clicked();
 

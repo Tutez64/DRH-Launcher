@@ -817,7 +817,7 @@ store.
   for a mod installed from a repository link, when that repository's
   latest release is newer (checked with the index, one GitHub API call
   per such mod)
-- open the mods folder. **More mods…** installs from a local zip or from
+- open the mods folder. **More mods** installs from a local zip or from
   a GitHub repository link, links to Discord to suggest a mod, and to
   the game repository's `docs/making-a-mod.md`. A mod installed either
   way is not index-reviewed: labeled so, and installing it always asks
