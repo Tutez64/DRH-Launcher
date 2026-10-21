@@ -16,6 +16,7 @@ use super::manifest::{
 };
 use super::resolve::{Installed, Needs, entry_needs, resolve};
 use super::version::Version;
+use crate::archive::extract_zip;
 use crate::paths;
 
 /// How a mod got into the folder.
@@ -194,6 +195,57 @@ impl Library {
         self.settle(index, Some(Added::Entry(entry)), installed_tag)
     }
 
+    /// Installs `entry`, from its repository's latest release, as `install`
+    /// does; the launcher then updates it from that repository.
+    pub fn install_from_repository(
+        &self,
+        index: &Index,
+        entry: &Entry,
+        installed_tag: Option<u32>,
+    ) -> Result<Vec<String>, String> {
+        self.settle(index, Some(Added::Release(entry)), installed_tag)
+    }
+
+    /// Extracts a mod's zip to install it: its `mod.json` is at the root or
+    /// in its only folder, as in a repository's source zip. The mod read
+    /// from it, to install with `install_staged` or drop with
+    /// `discard_staged`.
+    pub fn stage_zip(&self, zip: &Path) -> Result<InstalledMod, String> {
+        let staging = self.staging.join(STAGED);
+        let _ = fs::remove_dir_all(&staging);
+        let staged = extract_zip(zip, &staging).and_then(|()| {
+            mod_folder(&staging)
+                .and_then(|folder| read_mod(&folder))
+                .ok_or_else(|| {
+                    format!(
+                        "{} holds no mod.json with a valid id, at its root or in its only folder.",
+                        zip.display()
+                    )
+                })
+        });
+        if staged.is_err() {
+            self.discard_staged();
+        }
+        staged
+    }
+
+    /// Installs a mod `stage_zip` extracted, with what it needs, and enables
+    /// them.
+    pub fn install_staged(
+        &self,
+        index: &Index,
+        staged: &InstalledMod,
+        installed_tag: Option<u32>,
+    ) -> Result<Vec<String>, String> {
+        let result = self.settle(index, Some(Added::Staged(staged)), installed_tag);
+        self.discard_staged();
+        result
+    }
+
+    pub fn discard_staged(&self) {
+        let _ = fs::remove_dir_all(self.staging.join(STAGED));
+    }
+
     /// Enables an installed mod with what it needs, installing what is
     /// missing from `index`.
     pub fn enable(
@@ -328,6 +380,16 @@ impl Library {
         self.plan(index, Some(Added::Entry(entry)), installed_tag)
     }
 
+    /// What `install_staged` would do, without doing it.
+    pub fn plan_staged(
+        &self,
+        index: &Index,
+        staged: &InstalledMod,
+        installed_tag: Option<u32>,
+    ) -> Result<Plan, String> {
+        self.plan(index, Some(Added::Staged(staged)), installed_tag)
+    }
+
     /// What `enable` would do, without doing it.
     pub fn plan_enable(
         &self,
@@ -350,8 +412,36 @@ impl Library {
             .iter()
             .map(|(entry, as_dependency)| (entry, *as_dependency))
             .collect();
-        self.put(&self.scan()?, &to_install)?;
+        let mods = self.scan()?;
+        self.put(&mods, &to_install)?;
         let mut state = self.read_state();
+        match added {
+            Some(Added::Release(entry)) => {
+                if let Some(record) = state.mods.get_mut(&entry.id) {
+                    record.origin = Origin::Repository {
+                        url: entry.source.clone(),
+                    };
+                }
+            }
+            Some(Added::Staged(staged)) => {
+                let old = mods
+                    .iter()
+                    .find(|m| m.id == staged.id)
+                    .map(|m| m.folder.as_path());
+                fs::create_dir_all(&self.dir)
+                    .map_err(|error| format!("Could not create {}: {error}", self.dir.display()))?;
+                self.swap(&staged.folder, old, &self.dir.join(&staged.id))?;
+                state.mods.insert(
+                    staged.id.clone(),
+                    Record {
+                        origin: Origin::Zip,
+                        dependency: false,
+                        source: None,
+                    },
+                );
+            }
+            _ => {}
+        }
         state.tag = installed_tag;
         self.write_state(&state)?;
         self.write_enabled(&plan.enabled)?;
@@ -374,7 +464,10 @@ impl Library {
             .map(|m| (m.id.clone(), m.needs.clone()))
             .collect();
         match &added {
-            Some(Added::Entry(entry)) => roots.push((entry.id.clone(), entry_needs(entry)?)),
+            Some(Added::Entry(entry) | Added::Release(entry)) => {
+                roots.push((entry.id.clone(), entry_needs(entry)?));
+            }
+            Some(Added::Staged(staged)) => roots.push((staged.id.clone(), staged.needs.clone())),
             Some(Added::Installed(id)) => {
                 let found = mods
                     .iter()
@@ -384,10 +477,22 @@ impl Library {
             }
             None => {}
         }
-        // The entry being installed replaces whatever version is there.
+        // The mod being installed replaces whatever version is there. One
+        // from a zip is already extracted: resolved as installed, and kept.
+        let replaced = |m: &InstalledMod| {
+            matches!(
+                &added,
+                Some(Added::Entry(_) | Added::Release(_) | Added::Staged(_))
+            ) && Some(m.id.as_str()) == added_id
+        };
+        let staged = match &added {
+            Some(Added::Staged(staged)) => Some(*staged),
+            _ => None,
+        };
         let installed: BTreeMap<String, Installed> = mods
             .iter()
-            .filter(|m| !matches!(&added, Some(Added::Entry(entry)) if entry.id == m.id))
+            .filter(|m| !replaced(m))
+            .chain(staged)
             .filter_map(|m| {
                 let version = Version::parse(&m.version)?;
                 let replaceable = m.origin == Some(Origin::Index) && m.dependency;
@@ -413,7 +518,7 @@ impl Library {
             })
             .map(|entry| (entry.clone(), true))
             .collect();
-        if let Some(Added::Entry(entry)) = &added {
+        if let Some(Added::Entry(entry) | Added::Release(entry)) = &added {
             entries.push(((*entry).clone(), false));
         }
 
@@ -515,16 +620,23 @@ impl Library {
                 .find(|m| m.id == entry.id)
                 .map(|m| m.folder.as_path());
             self.swap(folder, old, &self.dir.join(&entry.id))?;
-            // An update keeps how the mod first came; a new one is a
-            // dependency when another mod brought it.
-            let dependency = match state.mods.get(&entry.id) {
-                Some(record) => record.dependency,
-                None => *as_dependency && old.is_none(),
+            // An update keeps how the mod first came, and where from when it
+            // is a repository; a new one is a dependency when another mod
+            // brought it.
+            let (origin, dependency) = match state.mods.get(&entry.id) {
+                Some(record) => (
+                    match &record.origin {
+                        Origin::Repository { url } => Origin::Repository { url: url.clone() },
+                        _ => Origin::Index,
+                    },
+                    record.dependency,
+                ),
+                None => (Origin::Index, *as_dependency && old.is_none()),
             };
             state.mods.insert(
                 entry.id.clone(),
                 Record {
-                    origin: Origin::Index,
+                    origin,
                     dependency,
                     source: Some(entry.source.clone()),
                 },
@@ -596,18 +708,41 @@ fn in_order(order: &[String], mut ids: Vec<String>) -> Vec<String> {
     ids
 }
 
+#[derive(Clone, Copy)]
 enum Added<'a> {
     Entry(&'a Entry),
+    /// From its repository's latest release.
+    Release(&'a Entry),
+    /// Extracted from a zip.
+    Staged(&'a InstalledMod),
     Installed(&'a str),
 }
 
 impl Added<'_> {
     fn id(&self) -> &str {
         match self {
-            Added::Entry(entry) => &entry.id,
+            Added::Entry(entry) | Added::Release(entry) => &entry.id,
+            Added::Staged(staged) => &staged.id,
             Added::Installed(id) => id,
         }
     }
+}
+
+/// Where `stage_zip` extracts, under the staging folder.
+const STAGED: &str = "added";
+
+/// `dir` when its `mod.json` is there, else its only folder when it is.
+fn mod_folder(dir: &Path) -> Option<PathBuf> {
+    if dir.join("mod.json").is_file() {
+        return Some(dir.to_path_buf());
+    }
+    let mut entries = fs::read_dir(dir).ok()?.filter_map(Result::ok);
+    let only = entries.next()?;
+    if entries.next().is_some() || !only.file_type().is_ok_and(|kind| kind.is_dir()) {
+        return None;
+    }
+    let folder = only.path();
+    folder.join("mod.json").is_file().then_some(folder)
 }
 
 /// The mods installed as a dependency that no enabled mod needs, directly or
@@ -737,6 +872,7 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mods::repository;
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
@@ -760,18 +896,30 @@ mod tests {
     }
 
     fn zip_of(mod_json: &str) -> Vec<u8> {
+        zip_with(&[("mod.json", mod_json)])
+    }
+
+    fn zip_with(files: &[(&str, &str)]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        writer
-            .start_file("mod.json", SimpleFileOptions::default())
-            .unwrap();
-        writer.write_all(mod_json.as_bytes()).unwrap();
+        for (path, text) in files {
+            writer
+                .start_file(*path, SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(text.as_bytes()).unwrap();
+        }
         writer.finish().unwrap().into_inner()
     }
 
     /// Serves each path's bytes over HTTP, for as long as the tests run.
     fn serve(files: Vec<(String, Vec<u8>)>) -> String {
+        serve_with(|_| files)
+    }
+
+    /// `serve`, with files that may name the server's address.
+    fn serve_with(files: impl FnOnce(&str) -> Vec<(String, Vec<u8>)>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let files = files(&format!("http://{address}"));
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let mut stream = stream.unwrap();
@@ -913,6 +1061,120 @@ mod tests {
         );
         assert!(!library.needs_refresh(Some(14)));
         assert!(library.needs_refresh(Some(15)));
+    }
+
+    #[test]
+    fn installs_a_mod_from_a_zip() {
+        let install = tempfile::tempdir().unwrap();
+        let library = Library::new(install.path());
+        let index = served_index();
+        let zip = install.path().join("DRH-Mod-Zipped.zip");
+        fs::write(
+            &zip,
+            zip_with(&[
+                (
+                    "DRH-Mod-Zipped-main/mod.json",
+                    &manifest("zipped", "1.0.0", Some("0.1")),
+                ),
+                ("DRH-Mod-Zipped-main/src/Main.hx", "class Main {}"),
+            ]),
+        )
+        .unwrap();
+
+        let staged = library.stage_zip(&zip).unwrap();
+        assert_eq!(staged.id, "zipped");
+        let plan = library.plan_staged(&index, &staged, Some(14)).unwrap();
+        let planned: Vec<&str> = plan
+            .entries
+            .iter()
+            .map(|(entry, _)| entry.id.as_str())
+            .collect();
+        assert_eq!(planned, ["api"]);
+        assert_eq!(plan.enabled, ["api", "zipped"]);
+
+        library.install_staged(&index, &staged, Some(14)).unwrap();
+        let found = library.scan().unwrap();
+        assert_eq!(ids(&found), ["api", "zipped"]);
+        assert_eq!(found[1].origin, Some(Origin::Zip));
+        assert_eq!(found[1].source, None);
+        assert!(!found[1].dependency);
+        assert!(found[1].folder.join("src/Main.hx").is_file());
+        assert_eq!(library.enabled(), ["api", "zipped"]);
+        assert!(!install.path().join("data/mod-staging/added").exists());
+
+        fs::write(&zip, zip_with(&[("readme.txt", "not a mod")])).unwrap();
+        let error = library.stage_zip(&zip).unwrap_err();
+        assert!(
+            error
+                .ends_with("holds no mod.json with a valid id, at its root or in its only folder.")
+        );
+        assert!(!install.path().join("data/mod-staging/added").exists());
+    }
+
+    /// A repository whose latest release is `version` of `rel`, which needs
+    /// the `api`, as the mod release workflow publishes it; the API's address.
+    fn served_release(version: &str) -> String {
+        let zip = zip_of(&manifest("rel", version, Some("0.1")));
+        let version = version.to_string();
+        serve_with(move |base| {
+            let entry = entry(base, "rel", &version, Some("0.1"), &zip);
+            let release = serde_json::json!({ "assets": [
+                { "name": format!("rel-{version}.zip"), "size": zip.len(),
+                  "browser_download_url": entry.url },
+                { "name": format!("rel-{version}.json"), "size": 500,
+                  "browser_download_url": format!("{base}/rel-{version}.json") },
+            ]});
+            vec![
+                (
+                    "/repos/me/DRH-Mod-rel/releases/latest".to_string(),
+                    release.to_string().into_bytes(),
+                ),
+                (
+                    format!("/rel-{version}.json"),
+                    entry.to_file_text().into_bytes(),
+                ),
+                (format!("/rel-{version}.zip"), zip),
+            ]
+        })
+    }
+
+    #[test]
+    fn installs_and_updates_a_mod_from_its_repository() {
+        let install = tempfile::tempdir().unwrap();
+        let library = Library::new(install.path());
+        let index = served_index();
+        let source = "https://github.com/me/DRH-Mod-rel";
+
+        let api = served_release("1.0.0");
+        let entry = repository::latest_entry_from(&api, source).unwrap();
+        assert_eq!(
+            (entry.id.as_str(), entry.version.as_str()),
+            ("rel", "1.0.0")
+        );
+        assert_eq!(entry.source, source);
+        library
+            .install_from_repository(&index, &entry, Some(14))
+            .unwrap();
+        let from_repository = Some(Origin::Repository {
+            url: source.to_string(),
+        });
+        let found = library.scan().unwrap();
+        assert_eq!(ids(&found), ["api", "rel"]);
+        assert_eq!(found[1].origin, from_repository);
+        assert_eq!(library.enabled(), ["api", "rel"]);
+
+        let api = served_release("1.1.0");
+        let entry = repository::latest_entry_from(&api, source).unwrap();
+        library.install(&index, &entry, Some(14)).unwrap();
+        let found = library.scan().unwrap();
+        assert_eq!(found[1].version, "1.1.0");
+        assert_eq!(found[1].origin, from_repository);
+
+        let error = repository::latest_entry_from(&api, "https://github.com/me/none").unwrap_err();
+        assert_eq!(
+            error,
+            "https://github.com/me/none has no published release, or is not a public repository."
+        );
     }
 
     #[test]

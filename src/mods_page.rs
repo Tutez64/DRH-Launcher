@@ -2,6 +2,7 @@
 //! `mods::library`.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
@@ -35,6 +36,12 @@ const CATALOG: usize = 1;
 /// The window's Mods page.
 const MODS_PAGE: i32 = 3;
 
+const MOD_GUIDE_URL: &str = concat!(
+    "https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/making-a-mod.md",
+    "?utm_source=drh_launcher&utm_medium=mods_page",
+    "&utm_campaign=project_links&utm_content=making_a_mod",
+);
+
 #[derive(Default)]
 struct Page {
     index: Option<Index>,
@@ -66,6 +73,13 @@ struct Page {
     game: Game,
     /// The game's report on the mods it started, read with the folder.
     last_run: Option<LastRun>,
+    /// The latest release of each mod installed from its repository, read
+    /// with the index.
+    releases: BTreeMap<String, Entry>,
+    /// Counts the reads of a link or zip, so a cancelled one is dropped.
+    elsewhere: u64,
+    /// What the last one gave.
+    elsewhere_found: Option<Result<Elsewhere, String>>,
 }
 
 /// The last game this launcher started with its mods folder.
@@ -91,6 +105,32 @@ enum Action {
     Enable(String),
     Disable(String),
     Uninstall(String),
+    InstallFrom(Elsewhere),
+}
+
+/// A mod not from the index.
+#[derive(Clone)]
+enum Elsewhere {
+    /// Its repository's latest release.
+    Release(Entry),
+    /// Extracted from a zip, not installed yet.
+    Zip(InstalledMod),
+}
+
+impl Elsewhere {
+    fn id(&self) -> &str {
+        match self {
+            Elsewhere::Release(entry) => &entry.id,
+            Elsewhere::Zip(staged) => &staged.id,
+        }
+    }
+
+    fn name_and_version(&self) -> String {
+        match self {
+            Elsewhere::Release(entry) => format!("{} {}", entry.name, entry.version),
+            Elsewhere::Zip(staged) => format!("{} {}", staged.name, staged.version),
+        }
+    }
 }
 
 struct Confirm {
@@ -277,8 +317,93 @@ pub(crate) fn register(
     let on = context.clone();
     ui.on_mod_confirm_cancelled(move || {
         let view = on.view();
-        view.lock().confirm = None;
+        let confirm = view.lock().confirm.take();
+        if let (Some(dir), Some(Action::InstallFrom(Elsewhere::Zip(_)))) =
+            (&view.install_dir, confirm.map(|confirm| confirm.action))
+        {
+            Library::new(dir).discard_staged();
+        }
         view.render();
+    });
+
+    let on = context.clone();
+    ui.on_mod_install_from_link(move |link| {
+        let Some(ui) = on.ui.upgrade() else {
+            return;
+        };
+        let Some(source) = repository::from_link(&link) else {
+            ui.set_mod_elsewhere_error(
+                "That is not a GitHub repository's link, such as https://github.com/owner/DRH-Mod-Name."
+                    .into(),
+            );
+            return;
+        };
+        on.read_elsewhere(
+            format!("Reading the latest release of {source}..."),
+            move |_| repository::latest_entry(&source).map(Elsewhere::Release),
+        );
+    });
+
+    let on = context.clone();
+    ui.on_mod_install_from_zip(move || {
+        let Some(ui) = on.ui.upgrade() else {
+            return;
+        };
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("Choose a mod's zip")
+            .add_filter("Zip", &["zip"])
+            .set_parent(&ui.window().window_handle());
+        let on = on.clone();
+        let _ = slint::spawn_local(async move {
+            if let Some(file) = dialog.pick_file().await {
+                let zip = file.path().to_path_buf();
+                on.read_elsewhere("Reading the zip...".to_string(), move |library| {
+                    library.stage_zip(&zip).map(Elsewhere::Zip)
+                });
+            }
+        });
+    });
+
+    let on = context.clone();
+    ui.on_mod_elsewhere_cancelled(move || {
+        on.view().lock().elsewhere += 1;
+        if let Some(ui) = on.ui.upgrade() {
+            ui.set_mod_elsewhere_visible(false);
+        }
+    });
+
+    let on = context.clone();
+    ui.on_mod_elsewhere_ready(move || {
+        let view = on.view();
+        let (Some(ui), Some(found)) = (view.ui.upgrade(), view.lock().elsewhere_found.take())
+        else {
+            return;
+        };
+        ui.set_mod_elsewhere_working("".into());
+        match found {
+            Ok(found) => {
+                ui.set_mod_elsewhere_visible(false);
+                on.ask(Action::InstallFrom(found));
+            }
+            Err(error) => {
+                if let Some(dir) = &view.install_dir {
+                    log(dir, LogLevel::Warn, &format!("Mods: {error}"));
+                }
+                ui.set_mod_elsewhere_error(error.into());
+            }
+        }
+    });
+
+    let on = context.clone();
+    ui.on_open_mod_guide(move || {
+        if let Some(ui) = on.ui.upgrade() {
+            crate::open_external_link_from_ui(
+                &ui,
+                &on.config.borrow(),
+                "Making a mod",
+                MOD_GUIDE_URL,
+            );
+        }
     });
 
     let on = context.clone();
@@ -454,8 +579,10 @@ impl Context {
                     log(&dir, LogLevel::Warn, &format!("Mods: {warning}"));
                 }
             }
+            let releases = latest_releases(&dir, &library);
             {
                 let mut page = view.lock();
+                page.releases = releases;
                 page.fetching = false;
                 page.fetched = true;
                 match index {
@@ -476,12 +603,55 @@ impl Context {
         });
     }
 
+    /// Reads a mod from a link or a zip on a thread, `working` showing
+    /// meanwhile; `mod-elsewhere-ready` takes it.
+    fn read_elsewhere(
+        &self,
+        working: String,
+        read: impl FnOnce(&Library) -> Result<Elsewhere, String> + Send + 'static,
+    ) {
+        let view = self.view();
+        let (Some(dir), Some(ui)) = (view.install_dir.clone(), view.ui.upgrade()) else {
+            return;
+        };
+        ui.set_mod_elsewhere_working(working.into());
+        ui.set_mod_elsewhere_error("".into());
+        let attempt = {
+            let mut page = view.lock();
+            page.elsewhere += 1;
+            page.elsewhere
+        };
+        let config = self.config.borrow().clone();
+        let app_shutting_down = Arc::clone(&self.app_shutting_down);
+        thread::spawn(move || {
+            let library = Library::new(&dir);
+            let found = read(&library);
+            {
+                let mut page = view.lock();
+                if page.elsewhere != attempt {
+                    if let Ok(Elsewhere::Zip(_)) = found {
+                        library.discard_staged();
+                    }
+                    return;
+                }
+                page.elsewhere_found = Some(found);
+            }
+            crate::invoke_on_event_loop(&config, &app_shutting_down, move || {
+                if let Some(ui) = view.ui.upgrade() {
+                    ui.invoke_mod_elsewhere_ready();
+                }
+            });
+        });
+    }
+
     /// Runs `action` once the user has seen what it would break, and has
-    /// confirmed an uninstall.
+    /// confirmed an uninstall or a mod from elsewhere.
     fn ask(&self, action: Action) {
         // Installing or enabling is playing with mods from then on.
-        if matches!(action, Action::Install(_) | Action::Enable(_))
-            && !self.config.borrow().mods_disclosure_confirmed
+        if matches!(
+            action,
+            Action::Install(_) | Action::Enable(_) | Action::InstallFrom(_)
+        ) && !self.config.borrow().mods_disclosure_confirmed
         {
             let on = self.clone();
             self.disclose_then(move || on.ask(action));
@@ -541,6 +711,30 @@ impl Context {
             }
             Action::Disable(id) => view.disable(&id),
             Action::Uninstall(id) => view.uninstall(&id),
+            Action::InstallFrom(found) => {
+                // It shows there once installed.
+                if let Some(ui) = view.ui.upgrade()
+                    && view.tab() == CATALOG
+                {
+                    ui.invoke_select_mods_page(0);
+                }
+                let working = (found.id().to_string(), "Installing...");
+                let done = format!("Installed {}", found.name_and_version());
+                match found {
+                    Elsewhere::Release(entry) => {
+                        self.in_background(working, move |library, index, tag| {
+                            let warnings = library.install_from_repository(&index, &entry, tag)?;
+                            Ok((format!("{done} from {}.", entry.source), warnings))
+                        });
+                    }
+                    Elsewhere::Zip(staged) => {
+                        self.in_background(working, move |library, index, tag| {
+                            let warnings = library.install_staged(&index, &staged, tag)?;
+                            Ok((format!("{done} from a zip."), warnings))
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -789,15 +983,15 @@ impl View {
 
         ui.set_mod_list_empty_text(
             if tab != CATALOG && page.mods.is_empty() {
-                "No mod installed: find some in Catalog."
+                "No mod installed: find some in Catalog, or under More mods."
             } else if tab != CATALOG {
                 "No mod matches."
             } else if page.fetching && page.index.is_none() {
                 "Loading the index..."
             } else if page.index.is_none() {
-                "The index could not be loaded: Refresh to try again."
+                "The index could not be loaded: Refresh to try again, or see More mods."
             } else {
-                "No mod matches."
+                "No mod matches. Not in the catalog? See More mods."
             }
             .into(),
         );
@@ -1230,11 +1424,17 @@ fn other_tags(installed_from: Option<Option<&Origin>>, issues: &[Issue]) -> Vec<
     if let Some(origin) = installed_from
         && origin != Some(&Origin::Index)
     {
+        let updated = matches!(origin, Some(Origin::Repository { .. }));
         tags.push(tag_view(
             "not reviewed",
             &format!(
-                "{}: no one has reviewed its code, and the launcher does not update it. Only keep it if you trust where it comes from.",
-                origin_text(origin)
+                "{}: no one has reviewed its code{}. Only keep it if you trust where it comes from.",
+                origin_text(origin),
+                if updated {
+                    ""
+                } else {
+                    ", and the launcher does not update it"
+                }
             ),
             ModTagKind::Risk,
         ));
@@ -1277,13 +1477,20 @@ fn offered_entry<'a>(page: &'a Page, id: &str) -> Option<&'a Entry> {
 }
 
 /// The version the index offers with what every enabled mod needing it
-/// accepts, when it is newer than the installed one. Only for a mod from the
-/// index.
+/// accepts, when it is newer than the installed one; for a mod from its
+/// repository, that repository's latest release.
 fn update_for<'a>(page: &'a Page, installed: &InstalledMod) -> Option<&'a Entry> {
+    let current = Version::parse(&installed.version)?;
+    // One from its repository: that repository's latest release.
+    if let Some(Origin::Repository { .. }) = installed.origin {
+        return page
+            .releases
+            .get(&installed.id)
+            .filter(|entry| entry.parsed_version() > Some(current));
+    }
     if installed.origin != Some(Origin::Index) {
         return None;
     }
-    let current = Version::parse(&installed.version)?;
     let needed_by: Vec<_> = page
         .mods
         .iter()
@@ -1375,7 +1582,7 @@ fn origin_text(origin: Option<&Origin>) -> &'static str {
     match origin {
         Some(Origin::Index) => "Installed from the index",
         Some(Origin::Zip) => "Installed from a zip",
-        Some(Origin::Repository { .. }) => "Installed from its repository",
+        Some(Origin::Repository { .. }) => "Installed from its GitHub repository",
         None => "Copied into the mods folder",
     }
 }
@@ -1428,9 +1635,8 @@ fn index_status(page: &Page) -> String {
     }
 }
 
-/// The problems `action` would add: each mod's issues it does not have yet,
-/// by label.
-/// What an action changes besides its own mod, and the problems it adds.
+/// What an action changes besides its own mod, and the problems it adds:
+/// each mod's issues it does not have yet, by label.
 #[derive(Debug, Default)]
 struct Consequences {
     /// Each other mod it installs, updates or enables.
@@ -1455,13 +1661,19 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Conse
             Some((&entry.id, library.plan_install(index, entry, page.tag)?))
         }
         Action::Enable(id) => Some((id, library.plan_enable(index, id, page.tag)?)),
+        Action::InstallFrom(Elsewhere::Release(entry)) => {
+            Some((&entry.id, library.plan_install(index, entry, page.tag)?))
+        }
+        Action::InstallFrom(Elsewhere::Zip(staged)) => {
+            Some((&staged.id, library.plan_staged(index, staged, page.tag)?))
+        }
         Action::Disable(_) | Action::Uninstall(_) => None,
     };
     let also = plan
         .as_ref()
         .map(|(id, plan)| others_changed(page, id, plan))
         .unwrap_or_default();
-    let (mods, enabled) = match (action, plan) {
+    let (mut mods, enabled) = match (action, plan) {
         (_, Some((_, plan))) => planned(page, plan),
         (Action::Uninstall(id), None) => (
             page.mods.iter().filter(|m| m.id != *id).cloned().collect(),
@@ -1470,6 +1682,10 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Conse
         // Disable.
         (_, None) => (page.mods.clone(), without(id_of(action))),
     };
+    if let Action::InstallFrom(Elsewhere::Zip(staged)) = action {
+        mods.retain(|m| m.id != staged.id);
+        mods.push(staged.clone());
+    }
     let after = Page {
         index: page.index.clone(),
         mods,
@@ -1505,6 +1721,7 @@ fn id_of(action: &Action) -> &str {
     match action {
         Action::Install(entry) | Action::Update(entry) => &entry.id,
         Action::Enable(id) | Action::Disable(id) | Action::Uninstall(id) => id,
+        Action::InstallFrom(found) => found.id(),
     }
 }
 
@@ -1547,12 +1764,14 @@ fn planned(page: &Page, plan: Plan) -> (Vec<InstalledMod>, Vec<String>) {
     (mods, plan.enabled)
 }
 
-/// What to ask before `action`: always before an uninstall, else only when it
-/// changes other mods or adds problems.
+/// What to ask before `action`: always before an uninstall or installing a
+/// mod from elsewhere, else only when it changes other mods or adds
+/// problems.
 fn confirmation(page: &Page, action: &Action, consequences: &Consequences) -> Option<Confirm> {
     let Consequences { also, problems } = consequences;
     let uninstall = matches!(action, Action::Uninstall(_));
-    if also.is_empty() && problems.is_empty() && !uninstall {
+    let elsewhere = matches!(action, Action::InstallFrom(_));
+    if also.is_empty() && problems.is_empty() && !uninstall && !elsewhere {
         return None;
     }
     let (title, verb) = match action {
@@ -1573,13 +1792,35 @@ fn confirmation(page: &Page, action: &Action, consequences: &Consequences) -> Op
             format!("Uninstall {}?", names(page, std::slice::from_ref(id))),
             "Uninstall",
         ),
+        Action::InstallFrom(found) => (format!("Install {}?", found.name_and_version()), "Install"),
     };
-    let mut text = if uninstall {
-        "Its folder is deleted from the mods folder.".to_string()
-    } else {
-        String::new()
+    let mut text = match action {
+        Action::Uninstall(_) => "Its folder is deleted from the mods folder.".to_string(),
+        Action::InstallFrom(found) => {
+            let mut text =
+                "No one has reviewed its code: only install it if you trust where it comes from."
+                    .to_string();
+            if let Some(old) = page.mods.iter().find(|m| m.id == found.id()) {
+                text.push_str(&match (&old.origin, found) {
+                    (Some(Origin::Index), Elsewhere::Zip(_)) => format!(
+                        " It replaces {} {} from the catalog, which the launcher will no longer update.",
+                        old.name, old.version
+                    ),
+                    (Some(Origin::Index), Elsewhere::Release(_)) => format!(
+                        " It replaces {} {} from the catalog: the launcher will update it from this repository instead.",
+                        old.name, old.version
+                    ),
+                    _ => format!(" It replaces the installed {} {}.", old.name, old.version),
+                });
+            }
+            text
+        }
+        _ => String::new(),
     };
     if !also.is_empty() {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
         text.push_str("This also:");
         for change in also {
             text.push_str(&format!("\n• {change}"));
@@ -1587,7 +1828,12 @@ fn confirmation(page: &Page, action: &Action, consequences: &Consequences) -> Op
     }
     if !problems.is_empty() {
         if !text.is_empty() {
-            text.push_str(if also.is_empty() { " " } else { "\n\n" });
+            // After an uninstall's one sentence, in the same paragraph.
+            text.push_str(if uninstall && also.is_empty() {
+                " "
+            } else {
+                "\n\n"
+            });
         }
         text.push_str("This leaves these problems:");
         for problem in problems {
@@ -1713,6 +1959,37 @@ fn run_tags(page: &Page, m: &InstalledMod) -> Vec<ModTagView> {
         _ => {}
     }
     tags
+}
+
+/// The latest release of each mod installed from its repository; what could
+/// not be read is logged.
+fn latest_releases(dir: &Path, library: &Library) -> BTreeMap<String, Entry> {
+    let mods = library.scan().unwrap_or_default();
+    let mut releases = BTreeMap::new();
+    for m in &mods {
+        let Some(Origin::Repository { url }) = &m.origin else {
+            continue;
+        };
+        match repository::latest_entry(url) {
+            Ok(entry) if entry.id == m.id => {
+                releases.insert(m.id.clone(), entry);
+            }
+            Ok(entry) => log(
+                dir,
+                LogLevel::Warn,
+                &format!(
+                    "Mods: the latest release of {url} is {}, not {}.",
+                    entry.id, m.id
+                ),
+            ),
+            Err(error) => log(
+                dir,
+                LogLevel::Warn,
+                &format!("Mods: could not check {} for updates: {error}", m.name),
+            ),
+        }
+    }
+    releases
 }
 
 fn log(install_dir: &Path, level: LogLevel, message: &str) {
@@ -1912,6 +2189,41 @@ mod tests {
                 .text
                 .starts_with("This also:\n• installs lib 1.0.2\n\n")
         );
+    }
+
+    #[test]
+    fn always_asks_before_a_mod_from_elsewhere() {
+        let page = Page {
+            mods: vec![installed("mine", "1.0.0", &[])],
+            ..Page::default()
+        };
+        let action = Action::InstallFrom(Elsewhere::Release(entry("mine", "1.1.0")));
+        let asked = confirmation(&page, &action, &Consequences::default()).unwrap();
+        assert_eq!(asked.title, "Install mine 1.1.0?");
+        assert_eq!(
+            asked.text,
+            "No one has reviewed its code: only install it if you trust where it comes from. It replaces mine 1.0.0 from the catalog: the launcher will update it from this repository instead."
+        );
+        assert_eq!(asked.button, "Install");
+    }
+
+    #[test]
+    fn updates_a_mod_from_its_repository_latest_release() {
+        let mut mine = installed("mine", "1.0.0", &[]);
+        mine.origin = Some(Origin::Repository {
+            url: "https://github.com/me/DRH-Mod-M".to_string(),
+        });
+        let mut page = Page {
+            index: Some(Index {
+                entries: vec![entry("mine", "2.0.0")],
+            }),
+            mods: vec![mine],
+            ..Page::default()
+        };
+        assert!(update_for(&page, &page.mods[0]).is_none());
+        page.releases
+            .insert("mine".to_string(), entry("mine", "1.1.0"));
+        assert_eq!(update_for(&page, &page.mods[0]).unwrap().version, "1.1.0");
     }
 
     #[test]

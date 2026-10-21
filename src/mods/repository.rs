@@ -3,6 +3,18 @@
 use std::path::Path;
 use std::process::Command;
 
+use reqwest::StatusCode;
+use reqwest::header::{ACCEPT, USER_AGENT};
+use serde::Deserialize;
+
+use super::index::{Entry, http_client};
+use super::manifest::valid_id;
+
+const GITHUB_API: &str = "https://api.github.com";
+
+/// The largest `.json` asset read as a mod's entry.
+const MAX_ENTRY_BYTES: u64 = 64 * 1024;
+
 /// `https://github.com/<owner>/<repo>`: the repository the release workflow
 /// runs in (`GITHUB_REPOSITORY`), or else the `origin` remote of `dir`.
 pub fn source_of(dir: &Path) -> Result<String, String> {
@@ -57,12 +69,96 @@ pub fn normalize(url: &str) -> Option<String> {
         .then(|| format!("https://github.com/{owner}/{repository}"))
 }
 
+/// A link to a github.com repository, or to a page in it, as
+/// `https://github.com/<owner>/<repo>`.
+pub fn from_link(link: &str) -> Option<String> {
+    let link = link.trim();
+    let path = link
+        .strip_prefix("https://")
+        .or_else(|| link.strip_prefix("http://"))
+        .unwrap_or(link);
+    let path = path.strip_prefix("www.").unwrap_or(path);
+    let path = path.strip_prefix("github.com/")?;
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    let mut parts = path.split('/');
+    let (owner, repository) = (parts.next()?, parts.next()?);
+    normalize(&format!("https://github.com/{owner}/{repository}"))
+}
+
 /// The owner of a normalized source.
 pub fn owner(source: &str) -> Option<&str> {
     source
         .strip_prefix("https://github.com/")?
         .split('/')
         .next()
+}
+
+/// The entry the mod release workflow attaches to `source`'s latest
+/// published release, next to the zip it describes; read without an
+/// account. Its `source` is `source`.
+pub fn latest_entry(source: &str) -> Result<Entry, String> {
+    latest_entry_from(GITHUB_API, source)
+}
+
+#[derive(Deserialize)]
+struct Release {
+    assets: Vec<Asset>,
+}
+
+#[derive(Deserialize)]
+struct Asset {
+    name: String,
+    browser_download_url: String,
+    size: u64,
+}
+
+pub(crate) fn latest_entry_from(api: &str, source: &str) -> Result<Entry, String> {
+    let path = source
+        .strip_prefix("https://github.com/")
+        .ok_or_else(|| format!("{source} is not a GitHub repository"))?;
+    let client = http_client()?;
+    let get = |url: &str| {
+        client
+            .get(url)
+            .header(USER_AGENT, "DRH-Launcher")
+            .header(ACCEPT, "application/vnd.github+json")
+            .send()
+            .map_err(|error| format!("Could not reach {source}: {error}"))
+    };
+    let response = get(&format!("{api}/repos/{path}/releases/latest"))?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Err(format!(
+            "{source} has no published release, or is not a public repository."
+        ));
+    }
+    let release: Release = response
+        .error_for_status()
+        .and_then(|response| response.json())
+        .map_err(|error| format!("Could not read the latest release of {source}: {error}"))?;
+    let zips: Vec<&str> = release
+        .assets
+        .iter()
+        .filter(|asset| asset.name.ends_with(".zip"))
+        .map(|asset| asset.browser_download_url.as_str())
+        .collect();
+    for asset in release
+        .assets
+        .iter()
+        .filter(|asset| asset.name.ends_with(".json") && asset.size <= MAX_ENTRY_BYTES)
+    {
+        let Ok(mut entry) = get(&asset.browser_download_url)
+            .and_then(|response| response.json::<Entry>().map_err(|error| error.to_string()))
+        else {
+            continue;
+        };
+        if valid_id(&entry.id) && zips.contains(&entry.url.as_str()) {
+            entry.source = source.to_string();
+            return Ok(entry);
+        }
+    }
+    Err(format!(
+        "The latest release of {source} holds no mod zip with its entry: it was not made with the DRH mod release workflow."
+    ))
 }
 
 /// Runs git, in `dir` when given; its error output on failure.
@@ -114,6 +210,26 @@ mod tests {
             assert_eq!(normalize(remote), None, "{remote}");
         }
         assert_eq!(owner("https://github.com/me/m"), Some("me"));
+    }
+
+    #[test]
+    fn reads_a_repository_from_a_link_to_it() {
+        for link in [
+            "https://github.com/me/DRH-Mod-Some",
+            " github.com/me/DRH-Mod-Some/ ",
+            "https://www.github.com/me/DRH-Mod-Some.git",
+            "https://github.com/me/DRH-Mod-Some/releases/latest",
+            "https://github.com/me/DRH-Mod-Some/tree/main?tab=readme#top",
+        ] {
+            assert_eq!(
+                from_link(link).as_deref(),
+                Some("https://github.com/me/DRH-Mod-Some"),
+                "{link}"
+            );
+        }
+        for link in ["https://github.com/me", "https://gitlab.com/me/m", "me/m"] {
+            assert_eq!(from_link(link), None, "{link}");
+        }
     }
 
     #[test]

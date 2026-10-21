@@ -687,7 +687,7 @@ The UI should make this explicit and avoid treating Steam shortcut editing as gu
 
 ## Mods
 
-The modder commands ([Launch Modes](#launch-modes)) and the Mods page exist; the Mods page does not yet install from a zip or a link. The runtime design lives in the game
+The modder commands ([Launch Modes](#launch-modes)) and the Mods page exist. The runtime design lives in the game
 repository: [docs/modding.md](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/modding.md).
 That document is the source of truth for how mods load, compile (hxScript /
 cppia in the game process), how they are published, and how they talk to DRH.
@@ -813,12 +813,21 @@ store.
   uninstalling always asks. Actions and their warnings go to the launcher
   log; a failed one shows in a line above the list, until dismissed or an
   action succeeds.
-- offer updates when the index has a newer artifact for the same `id`
-- open the mods folder; install from a local zip or from a GitHub
-  repository link (unlisted, labeled as not index-reviewed). A link
-  installs the zip of the repository's latest published release, never a
-  branch, and is remembered to offer that repository's later releases
-- empty state that points at Discord / index docs
+- offer updates when the index has a newer artifact for the same `id`;
+  for a mod installed from a repository link, when that repository's
+  latest release is newer (checked with the index, one GitHub API call
+  per such mod)
+- open the mods folder. **More mods…** installs from a local zip or from
+  a GitHub repository link, links to Discord to suggest a mod, and to
+  the game repository's `docs/making-a-mod.md`. A mod installed either
+  way is not index-reviewed: labeled so, and installing it always asks
+  first, saying so, and what it replaces. Its dependencies come from the
+  index. A zip holds its `mod.json` at its root or in its only folder (a
+  repository's source zip). A link installs from the repository's
+  latest published release, never a branch: the entry the mod release
+  workflow attaches next to the zip gives its size and SHA-256; a
+  release without one is refused. The link is remembered for updates.
+- empty states point at **More mods**
 - pass **`--mods-dir`** as a quoted absolute path to `<install-dir>/mods/`
   (paths may contain spaces) when a mod is enabled, and write
   `enabled.json` there. Launch arguments that already name a

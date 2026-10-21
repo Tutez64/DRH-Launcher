@@ -625,6 +625,12 @@ export component AppWindow inherits Window {
     in property <string> mod-confirm-title;
     in property <string> mod-confirm-text;
     in property <string> mod-confirm-button;
+    // Installing a mod from a GitHub link or a zip: what it is doing, or why
+    // it could not.
+    in-out property <bool> mod-elsewhere-visible: false;
+    in-out property <string> mod-elsewhere-link;
+    in-out property <string> mod-elsewhere-working;
+    in-out property <string> mod-elsewhere-error;
     in property <string> mods-index-status;
     in property <string> selected-mod-title: "No mod selected";
     in property <string> selected-mod-description;
@@ -784,6 +790,12 @@ export component AppWindow inherits Window {
     callback dismiss-mods-error();
     callback mods-disclosure-continue();
     callback mods-disclosure-close();
+    callback mod-install-from-link(string);
+    callback mod-install-from-zip();
+    callback mod-elsewhere-cancelled();
+    // The mod a link or zip gave, or its error, is ready.
+    callback mod-elsewhere-ready();
+    callback open-mod-guide();
     callback toggle-mod(int);
 
     function show-mod-tooltip(text: string, x: length, y: length) {
@@ -2177,6 +2189,78 @@ export component AppWindow inherits Window {
                         HorizontalLayout {
                             spacing: 10px;
 
+                            // For a mod the catalog does not have.
+                            if !root.mod-detail-open : Rectangle {
+                                horizontal-stretch: 1;
+                                min-width: more-mods-button.min-width;
+                                min-height: more-mods-button.min-height;
+
+                                more-mods-button := SecondaryButton {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    text: "More mods…";
+                                    clicked => {
+                                        more-mods-menu.show();
+                                    }
+                                }
+
+                                more-mods-menu := PopupWindow {
+                                    x: 0px;
+                                    y: -self.height - 6px;
+                                    width: max(parent.width, 300px);
+                                    height: 3 * 36px + 12px;
+
+                                    Rectangle {
+                                        border-radius: 6px;
+                                        border-width: 1px;
+                                        border-color: Theme.border-accent-muted;
+                                        background: Theme.surface-raised;
+                                        drop-shadow-blur: 12px;
+                                        drop-shadow-offset-y: 4px;
+                                        drop-shadow-color: Theme.shadow-strong;
+
+                                        VerticalLayout {
+                                            padding: 6px;
+
+                                            for item[i] in [
+                                                "Install from a zip or a GitHub link…",
+                                                "Suggest a mod on Discord",
+                                                "Make your own mod",
+                                            ]: Rectangle {
+                                                height: 36px;
+                                                border-radius: 4px;
+                                                background: item-touch.has-hover ? Theme.surface-accent : transparent;
+
+                                                Text {
+                                                    x: 10px;
+                                                    width: parent.width - 20px;
+                                                    text: item;
+                                                    color: Theme.text-primary;
+                                                    font-size: 14px;
+                                                    vertical-alignment: center;
+                                                }
+
+                                                item-touch := TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => {
+                                                        if (i == 0) {
+                                                            root.mod-elsewhere-link = "";
+                                                            root.mod-elsewhere-working = "";
+                                                            root.mod-elsewhere-error = "";
+                                                            root.mod-elsewhere-visible = true;
+                                                        } else if (i == 1) {
+                                                            root.open-discord-link();
+                                                        } else {
+                                                            root.open-mod-guide();
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             SecondaryButton {
                                 horizontal-stretch: 1;
                                 text: "Open mods folder";
@@ -2944,6 +3028,128 @@ export component AppWindow inherits Window {
                         text: "Close";
                         clicked => {
                             root.mods-disclosure-close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.mod-elsewhere-visible : Rectangle {
+        z: 2000;
+        background: Theme.modal-scrim;
+
+        TouchArea {}
+
+        Rectangle {
+            width: min(560px, parent.width - 32px);
+            height: mod-elsewhere-content.preferred-height + 48px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border-accent-muted;
+            background: Theme.surface-raised;
+            drop-shadow-blur: 18px;
+            drop-shadow-offset-y: 6px;
+            drop-shadow-color: Theme.shadow-strong;
+
+            mod-elsewhere-content := VerticalLayout {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                height: parent.height - 48px;
+                spacing: 16px;
+
+                Text {
+                    text: "Install a mod from elsewhere";
+                    color: Theme.text-title;
+                    font-size: 19px;
+                    font-weight: 800;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: "No one reviews a mod installed this way: only install one you trust.";
+                    color: Theme.text-body;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+
+                VerticalLayout {
+                    spacing: 8px;
+
+                    Text {
+                        text: "From the latest release of its GitHub repository:";
+                        color: Theme.text-support;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 10px;
+
+                        AppLineEdit {
+                            placeholder: "https://github.com/owner/DRH-Mod-Name";
+                            enabled: root.mod-elsewhere-working == "";
+                            value <=> root.mod-elsewhere-link;
+                        }
+
+                        SecondaryButton {
+                            text: "Install";
+                            enabled: root.mod-elsewhere-working == "" && root.mod-elsewhere-link != "";
+                            clicked => {
+                                root.mod-install-from-link(root.mod-elsewhere-link);
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 8px;
+
+                    Text {
+                        text: "Or from a zip on this computer:";
+                        color: Theme.text-support;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+
+                        SecondaryButton {
+                            text: "Choose a zip…";
+                            enabled: root.mod-elsewhere-working == "";
+                            clicked => {
+                                root.mod-install-from-zip();
+                            }
+                        }
+                    }
+                }
+
+                if root.mod-elsewhere-working != "" : Text {
+                    text: root.mod-elsewhere-working;
+                    color: Theme.text-support;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+
+                if root.mod-elsewhere-error != "" : Text {
+                    text: "⚠ " + root.mod-elsewhere-error;
+                    color: Theme.accent-warm;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    min-height: 42px;
+                    alignment: end;
+
+                    SecondaryButton {
+                        text: "Cancel";
+                        clicked => {
+                            root.mod-elsewhere-cancelled();
                         }
                     }
                 }
