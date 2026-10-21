@@ -1417,8 +1417,8 @@ fn uses_tag(page: &Page, id: &str, uses: &[String]) -> Option<ModTagView> {
             "Builds on DRH's own code: it may break when DRH updates.",
         ),
         _ => (
-            "api",
-            "Only uses the api: it should keep working across DRH updates.",
+            "API",
+            "Only uses the API: it should keep working across DRH updates.",
         ),
     };
     Some(tag_view(text, tooltip, ModTagKind::Info))

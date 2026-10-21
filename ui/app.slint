@@ -928,22 +928,22 @@ export component AppWindow inherits Window {
                 }
 
                 NavButton {
-                    text: "Versions";
-                    active: root.active-page == 2;
-                    clicked => {
-                        root.help-menu-open = false;
-                        root.active-page = 2;
-                        root.ensure-version-history();
-                    }
-                }
-
-                NavButton {
                     text: "Mods";
                     active: root.active-page == 3;
                     clicked => {
                         root.help-menu-open = false;
                         root.active-page = 3;
                         root.ensure-mods();
+                    }
+                }
+
+                NavButton {
+                    text: "Versions";
+                    active: root.active-page == 2;
+                    clicked => {
+                        root.help-menu-open = false;
+                        root.active-page = 2;
+                        root.ensure-version-history();
                     }
                 }
 
@@ -1999,7 +1999,7 @@ export component AppWindow inherits Window {
 
                         if !root.mod-detail-open && root.mods-page == 1 : ScrollView {
                             vertical-stretch: 1;
-                            viewport-y <=> root.mod-list-scroll;
+                            content-y <=> root.mod-list-scroll;
                             content-width: self.width;
                             content-height: mod-grid.height;
 
@@ -2041,7 +2041,7 @@ export component AppWindow inherits Window {
 
                         if !root.mod-detail-open && root.mods-page == 0 : ScrollView {
                             vertical-stretch: 1;
-                            viewport-y <=> root.mod-list-scroll;
+                            content-y <=> root.mod-list-scroll;
                             content-width: self.width;
                             content-height: mod-rows.preferred-height;
 
@@ -2122,7 +2122,7 @@ export component AppWindow inherits Window {
                             ScrollView {
                                 horizontal-stretch: 1;
                                 vertical-stretch: 1;
-                                viewport-y <=> root.mod-detail-scroll;
+                                content-y <=> root.mod-detail-scroll;
                                 content-width: self.width;
                                 content-height: mod-description-content.preferred-height;
 
@@ -3111,6 +3111,11 @@ export component AppWindow inherits Window {
                             placeholder: "https://github.com/owner/DRH-Mod-Name";
                             enabled: root.mod-elsewhere-working == "";
                             value <=> root.mod-elsewhere-link;
+                            accepted => {
+                                if (root.mod-elsewhere-link != "") {
+                                    root.mod-install-from-link(root.mod-elsewhere-link);
+                                }
+                            }
                         }
 
                         SecondaryButton {

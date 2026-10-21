@@ -619,7 +619,7 @@ This is preferred over incremental `Vx -> Vx.y` patch chains because it keeps fr
 
 ## Version History
 
-The launcher exposes a `Versions` screen above `Mods`. It has two sub-tabs:
+The launcher exposes a `Versions` screen below `Mods`. It has two sub-tabs:
 
 - `Dungeon Rampage Haxe`
 - `DRH Launcher`
@@ -874,7 +874,7 @@ store.
   detect that. Not live IPC. The game also logs one line per mod at
   load; the session log already captures that.
 - show the strongest of `uses`: `replace` > `extends` > stable only
-  (labelled `api`); recommend stable only. Warn that `extends` may break
+  (labelled `API`); recommend stable only. Warn that `extends` may break
   on DRH updates and that `replace` may clash with other mods (overlap of
   rewritten methods/fields/`new`). One exception: the mod whose index
   entry's `source` is `Tutez64/DRH-Mod-API`, built into the launcher, is

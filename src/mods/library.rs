@@ -1187,7 +1187,7 @@ mod tests {
         let error = library
             .install(&index, &index.entries[1].clone(), Some(14))
             .unwrap_err();
-        assert_eq!(error, "api 0.1.0: SHA-256 does not match the index");
+        assert_eq!(error, "api 0.1.0: SHA-256 does not match its entry");
         assert!(library.scan().unwrap().is_empty());
         assert!(library.enabled().is_empty());
     }

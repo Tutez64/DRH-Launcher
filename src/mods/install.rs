@@ -85,7 +85,7 @@ fn download_verified(entry: &Entry, path: &Path) -> Result<(), String> {
         }
         if size != entry.size {
             return Err(format!(
-                "{label}: {size} bytes, the index says {}",
+                "{label}: {size} bytes, its entry says {}",
                 entry.size
             ));
         }
@@ -95,7 +95,7 @@ fn download_verified(entry: &Entry, path: &Path) -> Result<(), String> {
             .map(|byte| format!("{byte:02x}"))
             .collect();
         if sha256 != entry.sha256.to_ascii_lowercase() {
-            return Err(format!("{label}: SHA-256 does not match the index"));
+            return Err(format!("{label}: SHA-256 does not match its entry"));
         }
         Ok(())
     })();
