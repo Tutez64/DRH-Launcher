@@ -1020,7 +1020,14 @@ impl View {
             }
             .into(),
         );
-        ui.set_mods_index_status(index_status(&page).into());
+        ui.set_mods_index_status(
+            if tab == CATALOG {
+                index_status(&page)
+            } else {
+                installed_status(&page)
+            }
+            .into(),
+        );
 
         let detail = selected
             .as_deref()
@@ -1616,7 +1623,7 @@ fn readme_text(folder: &Path) -> String {
 }
 
 fn index_status(page: &Page) -> String {
-    let count = page.index.as_ref().map(|index| {
+    let mods = page.index.as_ref().map(|index| {
         let mut ids: Vec<&str> = index
             .entries
             .iter()
@@ -1626,13 +1633,27 @@ fn index_status(page: &Page) -> String {
         ids.dedup();
         ids.len()
     });
-    match (page.fetching, &page.index_error, count) {
+    match (page.fetching, &page.index_error, mods) {
         (true, _, _) => "Loading the index...".to_string(),
-        (false, Some(_), Some(count)) => format!("Index offline: {count} mods, last copy"),
+        (false, Some(_), Some(mods)) => format!("{}, offline copy", count(mods, "mod")),
         (false, Some(_), None) => "Index unavailable".to_string(),
-        (false, None, Some(count)) => format!("Index: {count} mods"),
+        (false, None, Some(mods)) => count(mods, "mod"),
         (false, None, None) => String::new(),
     }
+}
+
+/// How many mods are installed, and how many of them enabled; nothing
+/// when none is, as the list says so.
+fn installed_status(page: &Page) -> String {
+    if page.mods.is_empty() {
+        return String::new();
+    }
+    let enabled = page
+        .mods
+        .iter()
+        .filter(|m| page.enabled.contains(&m.id))
+        .count();
+    format!("{}, {enabled} enabled", count(page.mods.len(), "mod"))
 }
 
 /// What an action changes besides its own mod, and the problems it adds:
@@ -2224,6 +2245,30 @@ mod tests {
         page.releases
             .insert("mine".to_string(), entry("mine", "1.1.0"));
         assert_eq!(update_for(&page, &page.mods[0]).unwrap().version, "1.1.0");
+    }
+
+    #[test]
+    fn counts_the_mods_of_each_tab() {
+        let mut page = Page {
+            index: Some(Index {
+                entries: vec![
+                    entry("lib", "1.0.0"),
+                    entry("lib", "1.1.0"),
+                    entry("mine", "1.0.0"),
+                ],
+            }),
+            ..Page::default()
+        };
+        assert_eq!(index_status(&page), "2 mods");
+        assert_eq!(installed_status(&page), "");
+        page.index_error = Some("offline".to_string());
+        assert_eq!(index_status(&page), "2 mods, offline copy");
+        page.mods = vec![
+            installed("lib", "1.0.0", &[]),
+            installed("mine", "1.0.0", &[]),
+        ];
+        page.enabled = vec!["mine".to_string()];
+        assert_eq!(installed_status(&page), "2 mods, 1 enabled");
     }
 
     #[test]

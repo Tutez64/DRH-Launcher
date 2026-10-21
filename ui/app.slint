@@ -1974,7 +1974,7 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            if root.mods-page == 1 : Text {
+                            Text {
                                 text: root.mods-index-status;
                                 color: Theme.text-support;
                                 font-size: 12px;
@@ -2255,36 +2255,50 @@ export component AppWindow inherits Window {
                             padding: 6px;
 
                             for item[i] in [
-                                "Install from a zip or a GitHub link…",
-                                "Suggest a mod on Discord",
+                                "Share a mod idea on Discord",
                                 "Make your own mod",
-                            ]: Rectangle {
-                                height: 36px;
-                                border-radius: 4px;
-                                background: item-touch.has-hover ? Theme.surface-accent : transparent;
+                                "Install from a zip or a GitHub link…",
+                            ]: VerticalLayout {
+                                // The risky one apart, last.
+                                if i == 2 : Rectangle {
+                                    height: 9px;
 
-                                Text {
-                                    x: 10px;
-                                    width: parent.width - 20px;
-                                    text: item;
-                                    color: Theme.text-primary;
-                                    font-size: 14px;
-                                    vertical-alignment: center;
+                                    Rectangle {
+                                        x: 8px;
+                                        width: parent.width - 16px;
+                                        height: 1px;
+                                        background: Theme.border-accent-muted;
+                                    }
                                 }
 
-                                item-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => {
-                                        root.more-mods-open = false;
-                                        if (i == 0) {
-                                            root.mod-elsewhere-link = "";
-                                            root.mod-elsewhere-working = "";
-                                            root.mod-elsewhere-error = "";
-                                            root.mod-elsewhere-visible = true;
-                                        } else if (i == 1) {
-                                            root.open-discord-link();
-                                        } else {
-                                            root.open-mod-guide();
+                                Rectangle {
+                                    height: 36px;
+                                    border-radius: 4px;
+                                    background: item-touch.has-hover ? Theme.surface-accent : transparent;
+
+                                    Text {
+                                        x: 10px;
+                                        width: parent.width - 20px;
+                                        text: item;
+                                        color: Theme.text-primary;
+                                        font-size: 14px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    item-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.more-mods-open = false;
+                                            if (i == 0) {
+                                                root.open-discord-link();
+                                            } else if (i == 1) {
+                                                root.open-mod-guide();
+                                            } else {
+                                                root.mod-elsewhere-link = "";
+                                                root.mod-elsewhere-working = "";
+                                                root.mod-elsewhere-error = "";
+                                                root.mod-elsewhere-visible = true;
+                                            }
                                         }
                                     }
                                 }
