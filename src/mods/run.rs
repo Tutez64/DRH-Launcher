@@ -9,7 +9,7 @@ use std::time::Duration;
 use super::index::Index;
 use super::install::cached_mod;
 use super::last_run;
-use super::manifest::read_needs;
+use super::manifest::{MOD_DATA, read_needs};
 use super::resolve::resolve;
 use super::version::tag_number;
 use crate::archive::extract_zip;
@@ -69,7 +69,7 @@ pub fn run_mod(path: &Path) -> Result<(), String> {
     }
 
     let mods_dir = paths::run_mod_dir(&install_dir);
-    recreate(&mods_dir)?;
+    clear_but(&mods_dir, MOD_DATA)?;
     let cache = paths::mod_cache_dir(&install_dir);
     let mut enabled = Vec::new();
     for entry in &resolution.entries {
@@ -189,6 +189,27 @@ fn recreate(dir: &Path) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|error| format!("Could not create {}: {error}", dir.display()))
 }
 
+/// Empties `dir` but its `kept` entry, creating it if needed.
+fn clear_but(dir: &Path, kept: &str) -> Result<(), String> {
+    fs::create_dir_all(dir)
+        .map_err(|error| format!("Could not create {}: {error}", dir.display()))?;
+    let entries =
+        fs::read_dir(dir).map_err(|error| format!("Could not read {}: {error}", dir.display()))?;
+    for entry in entries.filter_map(Result::ok) {
+        if entry.file_name() == kept {
+            continue;
+        }
+        let path = entry.path();
+        let removed = if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        removed.map_err(|error| format!("Could not clear {}: {error}", path.display()))?;
+    }
+    Ok(())
+}
+
 fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     if from.is_dir() {
         fs::create_dir_all(to)
@@ -215,6 +236,24 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clears_a_run_but_what_the_mods_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let mods = dir.path().join("run-mod");
+        fs::create_dir_all(mods.join("data/mine")).unwrap();
+        fs::write(mods.join("data/mine/settings.json"), "{}").unwrap();
+        fs::create_dir_all(mods.join("mine/src")).unwrap();
+        fs::write(mods.join("enabled.json"), "{}").unwrap();
+
+        clear_but(&mods, MOD_DATA).unwrap();
+        let left: Vec<_> = fs::read_dir(&mods)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["data"]);
+        assert!(mods.join("data/mine/settings.json").is_file());
+    }
 
     #[test]
     fn replaces_the_users_mods_dir() {

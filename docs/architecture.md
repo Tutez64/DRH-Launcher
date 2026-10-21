@@ -99,7 +99,7 @@ The intended managed content layout is:
     mod-staging/      # mod versions downloaded before they replace the installed ones
     mod-index.json    # the last mod index fetched, for the Mods page offline
     mod-cache/        # --run-mod: indexed mod versions, one folder each
-    run-mod/          # --run-mod: the mods folder it composes, rebuilt each run
+    run-mod/          # --run-mod: the mods folder it composes, rebuilt each run but its data/
     run-mod-zip/      # --run-mod on a zip: the zip extracted
   Dungeon Rampage Haxe/
     current/
@@ -113,13 +113,15 @@ The intended managed content layout is:
   mods/
     enabled.json
     last-run.json
+    data/
+      some_mod/
     some_mod/
       mod.json
       src/
       Resources/
 ```
 
-`some_mod/` is an example installed mod; folder name = `id`. `last-run.json` is written by the game when launched with `--mods-dir`. See Mods.
+`some_mod/` is an example installed mod; folder name = `id`. `last-run.json` is written by the game when launched with `--mods-dir`, and `data/<id>/` by the mod itself (`data` is not a valid id): the launcher leaves it, through updates and uninstall. See Mods.
 
 The exact executable names and native libraries vary by platform.
 

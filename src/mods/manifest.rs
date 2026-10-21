@@ -71,8 +71,12 @@ const HAXE_KEYWORDS: [&str; 42] = [
     "while",
 ];
 
-/// `^[a-z][a-z0-9_]{1,62}[a-z0-9]$`, neither a Haxe keyword nor a Windows
-/// reserved device name: the mod's folder and package.
+/// The mods folder's `data/`, where the game gives each mod a folder to
+/// write in: not an id.
+pub const MOD_DATA: &str = "data";
+
+/// `^[a-z][a-z0-9_]{1,62}[a-z0-9]$`, neither a Haxe keyword, a Windows
+/// reserved device name nor `data`: the mod's folder and package.
 pub fn valid_id(id: &str) -> bool {
     let bytes = id.as_bytes();
     let shape = (3..=64).contains(&bytes.len())
@@ -81,7 +85,7 @@ pub fn valid_id(id: &str) -> bool {
         && bytes
             .iter()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_');
-    shape && !HAXE_KEYWORDS.contains(&id) && !reserved_device_name(id)
+    shape && !HAXE_KEYWORDS.contains(&id) && !reserved_device_name(id) && id != MOD_DATA
 }
 
 fn reserved_device_name(id: &str) -> bool {
@@ -406,7 +410,7 @@ mod tests {
             assert!(valid_id(id), "{id}");
         }
         for id in [
-            "ab", "1ab", "Abc", "abc_", "a-b", "new", "class", "con", "com1", "lpt9",
+            "ab", "1ab", "Abc", "abc_", "a-b", "new", "class", "con", "com1", "lpt9", "data",
         ] {
             assert!(!valid_id(id), "{id}");
         }
