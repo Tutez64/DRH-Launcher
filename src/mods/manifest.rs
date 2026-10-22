@@ -311,10 +311,14 @@ fn read_uses(fields: &Map<String, Value>, problems: &mut Vec<String>) -> Vec<Str
     };
     for item in items {
         match item.as_str() {
-            Some(kind @ ("extends" | "replace")) if !uses.iter().any(|seen| seen == kind) => {
+            // The game cannot run it yet: a mod declaring it could not use it.
+            Some("replace") => problems.push(
+                "mod.json: uses cannot take \"replace\" yet: DRH does not support it".to_string(),
+            ),
+            Some(kind @ "extends") if !uses.iter().any(|seen| seen == kind) => {
                 uses.push(kind.to_string());
             }
-            Some(kind @ ("extends" | "replace")) => {
+            Some(kind @ "extends") => {
                 problems.push(format!("mod.json: uses lists {kind} twice"));
             }
             _ => problems.push(format!(
@@ -452,10 +456,22 @@ mod tests {
         let found = problems(|fields| _ = fields.insert("drh".into(), "20".into()));
         assert_eq!(found, ["mod.json: drh is only for extends or replace"]);
         let found = problems(|fields| {
-            fields.insert("uses".into(), serde_json::json!(["replace", "extends"]));
+            fields.insert("uses".into(), serde_json::json!(["extends"]));
             fields.insert("drh".into(), "20-22".into());
         });
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn refuses_replace_until_drh_supports_it() {
+        let found = problems(|fields| {
+            fields.insert("uses".into(), serde_json::json!(["extends", "replace"]));
+            fields.insert("drh".into(), "20".into());
+        });
+        assert_eq!(
+            found,
+            ["mod.json: uses cannot take \"replace\" yet: DRH does not support it"]
+        );
     }
 
     #[test]
