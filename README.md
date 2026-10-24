@@ -5,7 +5,7 @@
 
 <p align="center">
 Official launcher for <a href="https://github.com/Tutez64/Dungeon-Rampage-Haxe" target="_blank">Dungeon Rampage Haxe</a>.
-Install, update, configure, and play DRH easily.</p>
+Install, update, and play DRH easily, with mods and options to customize your game.</p>
 
 ## Installation
 
@@ -41,10 +41,14 @@ On newer macOS versions, you may also need to allow it from
 1. Open **DRH Launcher**.
 2. Click **Install DRH**.
 3. Click **Play**.
+4. Optionally, adjust the game in **Options** and add mods in **Mods**.
 
 ## Features
 
 - Install, update, repair, and launch Dungeon Rampage Haxe.
+- Browse, install, update, enable, and order mods from the reviewed
+  [mod index](https://github.com/Tutez64/DRH-Mods-Index), with what they need;
+  or install one from a zip or a GitHub repository.
 - Match the game frame rate to the primary display refresh rate automatically or choose a preset or custom value.
 - Use recommended launch options by default or adjust them as you wish.
 - Optionally, use a pre-launch command and custom extra game arguments.
@@ -53,6 +57,8 @@ On newer macOS versions, you may also need to allow it from
 - Show launcher and game session logs.
 - Browse DRH and DRH Launcher release history, read changelogs, and install older DRH versions.
 - Update itself when a new release is available.
+- Make, test, and publish a mod from the command line: see
+  [Making a mod](https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/making-a-mod.md).
 - ...more to come!
 
 ## Community

@@ -14,7 +14,7 @@ It should:
 - check for updates automatically
 - launch DRH with user-configurable options
 - provide a simple place for settings, changelogs, diagnostics and links
-- eventually manage mods and Steam shortcuts
+- manage mods, and eventually Steam shortcuts
 
 DRH itself should remain launchable directly for debugging, recovery and advanced users, but direct launch is not the default user flow.
 
