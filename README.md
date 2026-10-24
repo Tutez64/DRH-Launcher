@@ -45,7 +45,7 @@ On newer macOS versions, you may also need to allow it from
 
 ## Features
 
-- Install, update, repair, and launch Dungeon Rampage Haxe.
+- Install, update, and launch Dungeon Rampage Haxe.
 - Browse, install, update, enable, and order mods from the reviewed
   [mod index](https://github.com/Tutez64/DRH-Mods-Index), with what they need;
   or install one from a zip or a GitHub repository.
