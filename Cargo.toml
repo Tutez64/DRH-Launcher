@@ -26,7 +26,18 @@ flate2 = "1.1.10"
 # reqwest 0.12 + rustls-tls-native-roots (ring). Bumping our reqwest to 0.13
 # reintroduces a second HTTP/TLS stack (reqwest 0.13 + aws-lc). Patch
 # releases of 0.12 are fine. Move to 0.13 only when the updater does.
-reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
+#
+# `rustls-tls-webpki-roots` adds Mozilla's roots, built in, to the system's.
+# Windows ships only part of its trusted roots and downloads the others when
+# its own APIs first verify a certificate that needs them; rustls only reads
+# the store as it is, so a root no Windows API has fetched yet, such as the
+# one api.github.com chains to, fails with "invalid peer certificate:
+# UnknownIssuer" while browsers, which carry their own roots, work. When
+# moving to 0.13, drop both root features for its default
+# `rustls-platform-verifier`, which hands verification to the system
+# (Windows fetches missing roots, macOS honors its keychain trust settings)
+# and needs no built-in list to keep up to date.
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots", "rustls-tls-webpki-roots"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
