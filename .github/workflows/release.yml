@@ -19,8 +19,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The AppImage needs the glibc of the system it was built on or newer;
+          # the AppImage catalog tests on the oldest Ubuntu LTS in standard support.
           - name: Linux x64
-            runner: ubuntu-24.04
+            runner: ubuntu-22.04
             platform: linux
             upload_pattern: dist/*.AppImage*
           - name: Windows x64

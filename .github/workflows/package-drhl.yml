@@ -155,7 +155,7 @@ jobs:
         if: inputs.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfontconfig1-dev
+          sudo apt-get install -y libfontconfig1-dev libxkbcommon-x11-0
           pkg-config --modversion fontconfig
 
       - name: Report macOS toolchain
@@ -205,18 +205,25 @@ jobs:
         if: inputs.platform == 'linux'
         run: cargo packager --release --formats appimage --out-dir dist
 
-      - name: Check AppRun permissions
+      - name: Check AppImage contents
         if: inputs.platform == 'linux'
         run: |
           artifacts=("$PWD"/dist/*.AppImage)
           test "${#artifacts[@]}" -eq 1
           extract_dir="$(mktemp -d)"
-          (cd "$extract_dir" && "${artifacts[0]}" --appimage-extract AppRun > /dev/null)
-          mode="$(stat -c %a "$extract_dir/squashfs-root/AppRun")"
+          (cd "$extract_dir" && "${artifacts[0]}" --appimage-extract > /dev/null)
+          appdir="$extract_dir/squashfs-root"
+          mode="$(stat -c %a "$appdir/AppRun")"
           if [[ "$mode" != 755 ]]; then
             echo "AppRun has mode $mode instead of 755" >&2
             exit 1
           fi
+          for lib in libxkbcommon.so.0 libxkbcommon-x11.so.0; do
+            if [[ -z "$(find "$appdir/usr/lib" -name "$lib" -print -quit)" ]]; then
+              echo "$lib is not bundled" >&2
+              exit 1
+            fi
+          done
 
       - name: Sign Linux update package
         if: inputs.sign_update_package && inputs.platform == 'linux'

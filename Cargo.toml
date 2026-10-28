@@ -97,6 +97,11 @@ binaries = [{ path = "DRH-Launcher", main = true }]
 # a missing source is skipped, so the AppImage and the .app carry nothing.
 resources = [{ src = "target/release/DRH-Launcher-console.exe", target = "DRH-Launcher.com" }]
 
+[package.metadata.packager.appimage]
+# winit opens these with dlopen, so linuxdeploy does not bundle them on its own,
+# and systems without an X11 toolkit installed may lack libxkbcommon-x11.
+libs = ["libxkbcommon.so.0", "libxkbcommon-x11.so.0"]
+
 [package.metadata.packager.appimage.files]
 "assets/icons/app-icon-16.png" = "usr/lib/DRH-Launcher/icons/16.png"
 "assets/icons/app-icon-32.png" = "usr/lib/DRH-Launcher/icons/32.png"
