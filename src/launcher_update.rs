@@ -3,6 +3,7 @@ use std::env;
 use std::process::Command;
 use std::time::Duration;
 
+use crate::error_chain::with_sources;
 use crate::linux_appimage;
 
 const DEFAULT_UPDATE_ENDPOINT: &str =
@@ -27,9 +28,12 @@ impl LauncherUpdate {
         }
 
         let restart_command = restart_command()?;
-        self.update
-            .download_and_install()
-            .map_err(|error| format!("Could not install launcher update: {error}"))?;
+        self.update.download_and_install().map_err(|error| {
+            format!(
+                "Could not install launcher update: {}",
+                with_sources(&error)
+            )
+        })?;
 
         Command::new(restart_command)
             .spawn()
@@ -87,12 +91,17 @@ pub fn check() -> Result<Option<LauncherUpdate>, String> {
     let updater = cargo_packager_updater::UpdaterBuilder::new(current_version, config)
         .timeout(Duration::from_secs(15))
         .build()
-        .map_err(|error| format!("Could not configure launcher updates: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Could not configure launcher updates: {}",
+                with_sources(&error)
+            )
+        })?;
 
     updater
         .check()
         .map(|update| update.map(|update| LauncherUpdate { update }))
-        .map_err(|error| format!("Could not check launcher updates: {error}"))
+        .map_err(|error| format!("Could not check launcher updates: {}", with_sources(&error)))
 }
 
 fn public_key() -> &'static str {

@@ -3,6 +3,7 @@ use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::Deserialize;
 use std::time::Duration;
 
+use crate::error_chain::with_sources;
 use crate::paths;
 use crate::platform::Platform;
 use crate::release_manifest::{
@@ -121,11 +122,16 @@ fn discover_latest_platform_release_with_manifest(
         .header(USER_AGENT, "DRH-Launcher")
         .header(ACCEPT, "application/vnd.github+json")
         .send()
-        .map_err(|error| format!("Could not check GitHub releases: {error}"))?
+        .map_err(|error| format!("Could not check GitHub releases: {}", with_sources(&error)))?
         .error_for_status()
-        .map_err(|error| format!("GitHub release check failed: {error}"))?
+        .map_err(|error| format!("GitHub release check failed: {}", with_sources(&error)))?
         .json()
-        .map_err(|error| format!("Could not parse GitHub release response: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Could not parse GitHub release response: {}",
+                with_sources(&error)
+            )
+        })?;
 
     let manifest = if include_manifest {
         fetch_manifest_if_available(&client, &release)?
@@ -185,11 +191,26 @@ pub fn discover_platform_release_by_tag_for_install(
         .header(USER_AGENT, "DRH-Launcher")
         .header(ACCEPT, "application/vnd.github+json")
         .send()
-        .map_err(|error| format!("Could not check GitHub release {tag}: {error}"))?
+        .map_err(|error| {
+            format!(
+                "Could not check GitHub release {tag}: {}",
+                with_sources(&error)
+            )
+        })?
         .error_for_status()
-        .map_err(|error| format!("GitHub release {tag} check failed: {error}"))?
+        .map_err(|error| {
+            format!(
+                "GitHub release {tag} check failed: {}",
+                with_sources(&error)
+            )
+        })?
         .json()
-        .map_err(|error| format!("Could not parse GitHub release {tag}: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Could not parse GitHub release {tag}: {}",
+                with_sources(&error)
+            )
+        })?;
 
     let manifest = fetch_manifest_if_available(&client, &release)?;
     select_platform_release(release, platform, manifest.as_ref())
@@ -199,7 +220,7 @@ fn github_client() -> Result<Client, String> {
     Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
-        .map_err(|error| format!("Could not create GitHub client: {error}"))
+        .map_err(|error| format!("Could not create GitHub client: {}", with_sources(&error)))
 }
 
 fn fetch_repository_releases(source: &ReleaseSource) -> Result<Vec<GitHubRelease>, String> {
@@ -209,11 +230,26 @@ fn fetch_repository_releases(source: &ReleaseSource) -> Result<Vec<GitHubRelease
         .header(USER_AGENT, "DRH-Launcher")
         .header(ACCEPT, "application/vnd.github+json")
         .send()
-        .map_err(|error| format!("Could not check GitHub release history: {error}"))?
+        .map_err(|error| {
+            format!(
+                "Could not check GitHub release history: {}",
+                with_sources(&error)
+            )
+        })?
         .error_for_status()
-        .map_err(|error| format!("GitHub release history check failed: {error}"))?
+        .map_err(|error| {
+            format!(
+                "GitHub release history check failed: {}",
+                with_sources(&error)
+            )
+        })?
         .json()
-        .map_err(|error| format!("Could not parse GitHub release history: {error}"))
+        .map_err(|error| {
+            format!(
+                "Could not parse GitHub release history: {}",
+                with_sources(&error)
+            )
+        })
 }
 
 fn repository_release_from_github(release: &GitHubRelease) -> RepositoryRelease {
@@ -262,11 +298,16 @@ fn fetch_manifest_if_available(
         .header(USER_AGENT, "DRH-Launcher")
         .header(ACCEPT, "application/octet-stream")
         .send()
-        .map_err(|error| format!("Could not download release manifest: {error}"))?
+        .map_err(|error| {
+            format!(
+                "Could not download release manifest: {}",
+                with_sources(&error)
+            )
+        })?
         .error_for_status()
-        .map_err(|error| format!("Release manifest download failed: {error}"))?
+        .map_err(|error| format!("Release manifest download failed: {}", with_sources(&error)))?
         .text()
-        .map_err(|error| format!("Could not read release manifest: {error}"))?;
+        .map_err(|error| format!("Could not read release manifest: {}", with_sources(&error)))?;
 
     ReleaseManifest::parse(&contents).map(Some)
 }
@@ -281,11 +322,26 @@ pub fn fetch_release_manifest(
         .header(USER_AGENT, "DRH-Launcher")
         .header(ACCEPT, "application/vnd.github+json")
         .send()
-        .map_err(|error| format!("Could not check GitHub release {tag}: {error}"))?
+        .map_err(|error| {
+            format!(
+                "Could not check GitHub release {tag}: {}",
+                with_sources(&error)
+            )
+        })?
         .error_for_status()
-        .map_err(|error| format!("GitHub release {tag} check failed: {error}"))?
+        .map_err(|error| {
+            format!(
+                "GitHub release {tag} check failed: {}",
+                with_sources(&error)
+            )
+        })?
         .json()
-        .map_err(|error| format!("Could not parse GitHub release {tag}: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Could not parse GitHub release {tag}: {}",
+                with_sources(&error)
+            )
+        })?;
 
     fetch_manifest_if_available(&client, &release)
 }

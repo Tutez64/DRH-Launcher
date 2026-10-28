@@ -9,6 +9,7 @@ mod changelog_markdown;
 mod config;
 mod diagnostics;
 mod download;
+mod error_chain;
 mod game_install;
 mod game_launch;
 mod game_logs;

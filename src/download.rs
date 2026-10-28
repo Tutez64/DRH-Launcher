@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::atomic_file;
+use crate::error_chain::with_sources;
 use crate::github_releases::ReleaseAsset;
 use crate::paths;
 use crate::release_manifest::validate_sha256;
@@ -63,15 +64,27 @@ pub fn download_and_verify_with_progress(
     let client = Client::builder()
         .timeout(Duration::from_secs(60))
         .build()
-        .map_err(|error| format!("Could not create download client: {error}"))?;
+        .map_err(|error| format!("Could not create download client: {}", with_sources(&error)))?;
 
     let mut response = client
         .get(&asset.download_url)
         .header(USER_AGENT, "DRH-Launcher")
         .send()
-        .map_err(|error| format!("Could not download {}: {error}", asset.name))?
+        .map_err(|error| {
+            format!(
+                "Could not download {}: {}",
+                asset.name,
+                with_sources(&error)
+            )
+        })?
         .error_for_status()
-        .map_err(|error| format!("Download failed for {}: {error}", asset.name))?;
+        .map_err(|error| {
+            format!(
+                "Download failed for {}: {}",
+                asset.name,
+                with_sources(&error)
+            )
+        })?;
 
     // Any failure below must not leave a partial `.download` file behind: a stalled
     // read times out mid-transfer, and the cache pruning would otherwise keep the
@@ -89,9 +102,13 @@ pub fn download_and_verify_with_progress(
             total: expected_size,
         });
         loop {
-            let bytes_read = response
-                .read(&mut buffer)
-                .map_err(|error| format!("Could not download {}: {error}", asset.name))?;
+            let bytes_read = response.read(&mut buffer).map_err(|error| {
+                format!(
+                    "Could not download {}: {}",
+                    asset.name,
+                    with_sources(&error)
+                )
+            })?;
             if bytes_read == 0 {
                 break;
             }

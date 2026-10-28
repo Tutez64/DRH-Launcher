@@ -12,6 +12,8 @@ use super::index::{Entry, http_client};
 use super::manifest::Manifest;
 use super::repository::{self, git};
 
+use crate::error_chain::with_sources;
+
 const INDEX_REPOSITORY: &str = "Tutez64/DRH-Mods-Index";
 
 /// `fork_owner` is the account holding the fork, the source's owner unless
@@ -130,7 +132,7 @@ fn fetch_entry(url: &str) -> Result<Entry, String> {
         .get(url)
         .header(USER_AGENT, "DRH-Launcher")
         .send()
-        .map_err(|error| format!("Could not fetch {url}: {error}"))?;
+        .map_err(|error| format!("Could not fetch {url}: {}", with_sources(&error)))?;
     if response.status() == StatusCode::NOT_FOUND {
         return Err(format!(
             "{url} is not there: publish the release (not a draft) that the release workflow built"
@@ -139,7 +141,7 @@ fn fetch_entry(url: &str) -> Result<Entry, String> {
     let text = response
         .error_for_status()
         .and_then(|response| response.text())
-        .map_err(|error| format!("Could not fetch {url}: {error}"))?;
+        .map_err(|error| format!("Could not fetch {url}: {}", with_sources(&error)))?;
     serde_json::from_str(&text).map_err(|error| format!("{url} is not an index entry: {error}"))
 }
 
@@ -148,7 +150,7 @@ fn page_exists(url: &str) -> Result<bool, String> {
         .get(url)
         .header(USER_AGENT, "DRH-Launcher")
         .send()
-        .map_err(|error| format!("Could not reach {url}: {error}"))?;
+        .map_err(|error| format!("Could not reach {url}: {}", with_sources(&error)))?;
     match response.status() {
         status if status.is_success() => Ok(true),
         StatusCode::NOT_FOUND => Ok(false),

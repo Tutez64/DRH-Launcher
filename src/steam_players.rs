@@ -5,6 +5,7 @@ use reqwest::blocking::Client;
 use reqwest::header::USER_AGENT;
 use serde::Deserialize;
 
+use crate::error_chain::with_sources;
 use crate::steam_buildid::STEAM_APP_ID;
 
 const HTTP_USER_AGENT: &str = "DRH-Launcher";
@@ -39,16 +40,36 @@ pub fn fetch_player_count() -> Result<u32, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
-        .map_err(|error| format!("Could not create Steam player-count client: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Could not create Steam player-count client: {}",
+                with_sources(&error)
+            )
+        })?;
     let response = client
         .get(player_count_url())
         .header(USER_AGENT, HTTP_USER_AGENT)
         .send()
-        .map_err(|error| format!("Could not check Steam player count: {error}"))?
+        .map_err(|error| {
+            format!(
+                "Could not check Steam player count: {}",
+                with_sources(&error)
+            )
+        })?
         .error_for_status()
-        .map_err(|error| format!("Steam player count request failed: {error}"))?
+        .map_err(|error| {
+            format!(
+                "Steam player count request failed: {}",
+                with_sources(&error)
+            )
+        })?
         .json::<PlayerCountResponse>()
-        .map_err(|error| format!("Could not parse Steam player count: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Could not parse Steam player count: {}",
+                with_sources(&error)
+            )
+        })?;
 
     parse_player_count(&response)
         .ok_or_else(|| "Steam player count was missing from the response.".to_string())

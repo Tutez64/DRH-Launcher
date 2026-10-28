@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use super::manifest::{MAX_AUTHOR_CHARS, MAX_DESCRIPTION_CHARS, MAX_NAME_CHARS, shortened};
 use super::version::Version;
 
+use crate::error_chain::with_sources;
+
 const DEFAULT_INDEX_URL: &str = "https://tutez64.github.io/DRH-Mods-Index/index.json";
 
 /// The generated file's format this launcher reads.
@@ -150,14 +152,19 @@ fn fetch_text() -> Result<String, String> {
         .send()
         .and_then(|response| response.error_for_status())
         .and_then(|response| response.text())
-        .map_err(|error| format!("Could not fetch the mod index {url}: {error}"))
+        .map_err(|error| {
+            format!(
+                "Could not fetch the mod index {url}: {}",
+                with_sources(&error)
+            )
+        })
 }
 
 pub fn http_client() -> Result<Client, String> {
     Client::builder()
         .timeout(Duration::from_secs(60))
         .build()
-        .map_err(|error| format!("Could not create HTTP client: {error}"))
+        .map_err(|error| format!("Could not create HTTP client: {}", with_sources(&error)))
 }
 
 #[cfg(test)]

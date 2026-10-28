@@ -5,6 +5,7 @@ use reqwest::blocking::Client;
 use reqwest::header::USER_AGENT;
 
 use crate::config::LauncherConfig;
+use crate::error_chain::with_sources;
 use crate::install_metadata::InstalledState;
 
 pub const STEAM_APP_ID: u32 = 3053950;
@@ -95,16 +96,36 @@ pub fn fetch_official_public_buildid() -> Result<u64, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
-        .map_err(|error| format!("Could not create Steam product-info client: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Could not create Steam product-info client: {}",
+                with_sources(&error)
+            )
+        })?;
     let value = client
         .get(PRODUCT_INFO_URL)
         .header(USER_AGENT, HTTP_USER_AGENT)
         .send()
-        .map_err(|error| format!("Could not check the official Steam build: {error}"))?
+        .map_err(|error| {
+            format!(
+                "Could not check the official Steam build: {}",
+                with_sources(&error)
+            )
+        })?
         .error_for_status()
-        .map_err(|error| format!("Official Steam build request failed: {error}"))?
+        .map_err(|error| {
+            format!(
+                "Official Steam build request failed: {}",
+                with_sources(&error)
+            )
+        })?
         .json::<serde_json::Value>()
-        .map_err(|error| format!("Could not parse the official Steam build: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Could not parse the official Steam build: {}",
+                with_sources(&error)
+            )
+        })?;
 
     parse_official_public_buildid(&value)
         .ok_or_else(|| "Official Steam public BuildID was missing from the response.".to_string())

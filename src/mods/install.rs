@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use super::index::{Entry, http_client};
 use super::manifest::valid_id;
 use crate::archive::extract_zip;
+use crate::error_chain::with_sources;
 
 /// `<cache>/<id>-<version>/`, extracted from the entry's zip once its size and
 /// SHA-256 match. Kept for later runs.
@@ -61,7 +62,7 @@ fn download_verified(entry: &Entry, path: &Path) -> Result<(), String> {
         .header(USER_AGENT, "DRH-Launcher")
         .send()
         .and_then(|response| response.error_for_status())
-        .map_err(|error| format!("Could not download {label}: {error}"))?;
+        .map_err(|error| format!("Could not download {label}: {}", with_sources(&error)))?;
     let result = (|| {
         let mut file = File::create(path)
             .map_err(|error| format!("Could not create {}: {error}", path.display()))?;
@@ -71,7 +72,7 @@ fn download_verified(entry: &Entry, path: &Path) -> Result<(), String> {
         loop {
             let read = response
                 .read(&mut buffer)
-                .map_err(|error| format!("Could not download {label}: {error}"))?;
+                .map_err(|error| format!("Could not download {label}: {}", with_sources(&error)))?;
             if read == 0 {
                 break;
             }

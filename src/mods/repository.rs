@@ -10,6 +10,8 @@ use serde::Deserialize;
 use super::index::{Entry, http_client};
 use super::manifest::valid_id;
 
+use crate::error_chain::with_sources;
+
 const GITHUB_API: &str = "https://api.github.com";
 
 /// The largest `.json` asset read as a mod's entry.
@@ -123,7 +125,7 @@ pub(crate) fn latest_entry_from(api: &str, source: &str) -> Result<Entry, String
             .header(USER_AGENT, "DRH-Launcher")
             .header(ACCEPT, "application/vnd.github+json")
             .send()
-            .map_err(|error| format!("Could not reach {source}: {error}"))
+            .map_err(|error| format!("Could not reach {source}: {}", with_sources(&error)))
     };
     let response = get(&format!("{api}/repos/{path}/releases/latest"))?;
     if response.status() == StatusCode::NOT_FOUND {
@@ -134,7 +136,12 @@ pub(crate) fn latest_entry_from(api: &str, source: &str) -> Result<Entry, String
     let release: Release = response
         .error_for_status()
         .and_then(|response| response.json())
-        .map_err(|error| format!("Could not read the latest release of {source}: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Could not read the latest release of {source}: {}",
+                with_sources(&error)
+            )
+        })?;
     let zips: Vec<&str> = release
         .assets
         .iter()
