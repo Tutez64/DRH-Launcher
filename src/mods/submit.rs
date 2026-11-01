@@ -60,12 +60,18 @@ pub fn submit_mod(dir: &Path, fork_owner: Option<&str>) -> Result<(), String> {
     let upstream = format!("https://github.com/{INDEX_REPOSITORY}");
     let result = commit_and_push(&work, &entry, &upstream, &fork);
     let _ = fs::remove_dir_all(&work);
-    let (base, branch) = result?;
+    let (base, branch, replaced) = result?;
 
     let compare = format!(
         "https://github.com/{INDEX_REPOSITORY}/compare/{base}...{owner}:DRH-Mods-Index:{branch}?expand=1"
     );
-    println!("Pushed {branch} to {fork}. Open the pull request: {compare}");
+    if replaced {
+        println!(
+            "Replaced {branch} on {fork}: an open pull request from it now shows the new entry. If it is closed or was never opened, open one: {compare}"
+        );
+    } else {
+        println!("Pushed {branch} to {fork}. Open the pull request: {compare}");
+    }
     if let Err(error) = crate::open_url(&compare) {
         println!("warning: could not open the browser: {error}");
     }
@@ -73,13 +79,15 @@ pub fn submit_mod(dir: &Path, fork_owner: Option<&str>) -> Result<(), String> {
 }
 
 /// Clones the index, adds the entry on a new branch, and pushes it to the
-/// fork; the index's default branch and the new one.
+/// fork; the index's default branch, the new one, and whether it replaced a
+/// branch of that name, such as the one of a pull request for a release
+/// redone before its merge.
 fn commit_and_push(
     work: &Path,
     entry: &Entry,
     upstream: &str,
     fork: &str,
-) -> Result<(String, String), String> {
+) -> Result<(String, String, bool), String> {
     let work_text = work.to_string_lossy().into_owned();
     git(None, &["clone", "--quiet", upstream, &work_text])?;
     let base = git(Some(work), &["symbolic-ref", "--short", "HEAD"])?;
@@ -109,6 +117,16 @@ fn commit_and_push(
         ],
     )?;
 
+    // Only over the branch as it was read here, never over a push made since.
+    let existing = git(
+        Some(work),
+        &["ls-remote", fork, &format!("refs/heads/{branch}")],
+    )?;
+    let lease = format!(
+        "--force-with-lease=refs/heads/{branch}:{}",
+        existing.split_whitespace().next().unwrap_or("")
+    );
+
     // Inherits the console: git may ask for the account's credentials.
     let pushed = Command::new("git")
         .arg("-C")
@@ -116,6 +134,7 @@ fn commit_and_push(
         .args([
             "push",
             "--quiet",
+            &lease,
             fork,
             &format!("HEAD:refs/heads/{branch}"),
         ])
@@ -124,7 +143,7 @@ fn commit_and_push(
     if !pushed.success() {
         return Err(format!("Could not push {branch} to {fork}"));
     }
-    Ok((base, branch))
+    Ok((base, branch, !existing.is_empty()))
 }
 
 fn fetch_entry(url: &str) -> Result<Entry, String> {
@@ -215,18 +234,29 @@ mod tests {
             std::env::set_var("GIT_COMMITTER_NAME", "t");
             std::env::set_var("GIT_COMMITTER_EMAIL", "t@t");
         }
-        let (base, branch) =
+        let (base, branch, replaced) =
             commit_and_push(&work, &entry(), &text(&upstream), &text(&fork)).unwrap();
         assert_eq!(
-            (base.as_str(), branch.as_str()),
-            ("master", "cool_hud-0.2.0")
+            (base.as_str(), branch.as_str(), replaced),
+            ("master", "cool_hud-0.2.0", false)
         );
-        let pushed = git(
-            Some(&fork),
-            &["show", "cool_hud-0.2.0:mods/cool_hud/0.2.0.json"],
-        )
-        .unwrap();
-        assert_eq!(pushed + "\n", entry().to_file_text());
+        let pushed = || {
+            git(
+                Some(&fork),
+                &["show", "cool_hud-0.2.0:mods/cool_hud/0.2.0.json"],
+            )
+            .unwrap()
+        };
+        assert_eq!(pushed() + "\n", entry().to_file_text());
+
+        // A release redone before its merge replaces the branch of its pull request.
+        fs::remove_dir_all(&work).unwrap();
+        let mut redone = entry();
+        redone.description = "redone".to_string();
+        let (_, _, replaced) =
+            commit_and_push(&work, &redone, &text(&upstream), &text(&fork)).unwrap();
+        assert!(replaced);
+        assert_eq!(pushed() + "\n", redone.to_file_text());
 
         fs::remove_dir_all(&work).unwrap();
         git(
