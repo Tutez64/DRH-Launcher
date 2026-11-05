@@ -1074,12 +1074,15 @@ export component CompactCheck inherits Rectangle {
 export component LaunchOptionToggle inherits Rectangle {
     in property <string> text;
     in property <bool> checked;
+    // also a setting in the game's options
+    in property <bool> in-game;
     property <length> label-left-padding: 38px;
     property <length> label-right-padding: 12px;
+    property <length> badge-width: root.in-game ? badge-measurement.preferred-width + 8px : 0px;
     callback toggled(bool);
 
     height: 38px;
-    min-width: max(112px, measurement.preferred-width + root.label-left-padding + root.label-right-padding);
+    min-width: max(112px, measurement.preferred-width + root.badge-width + root.label-left-padding + root.label-right-padding);
     border-radius: 6px;
     border-width: 1px;
     border-color: root.checked ? Theme.accent-warm : touch.has-hover ? Theme.border-accent-muted : Theme.border-muted;
@@ -1115,9 +1118,26 @@ export component LaunchOptionToggle inherits Rectangle {
         }
     }
 
+    badge-measurement := Text {
+        text: "IN GAME";
+        font-size: 10px;
+        font-weight: 700;
+        opacity: 0;
+    }
+
+    if root.in-game : Text {
+        x: parent.width - root.label-right-padding - self.width;
+        width: badge-measurement.preferred-width;
+        text: "IN GAME";
+        color: Theme.text-support;
+        font-size: 10px;
+        font-weight: 700;
+        vertical-alignment: center;
+    }
+
     Text {
         x: root.label-left-padding;
-        width: parent.width - root.label-left-padding - root.label-right-padding;
+        width: parent.width - root.label-left-padding - root.label-right-padding - root.badge-width;
         text: root.text;
         color: root.checked ? Theme.text-primary : Theme.text-muted;
         font-size: 13px;

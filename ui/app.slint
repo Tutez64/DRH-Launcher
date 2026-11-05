@@ -39,6 +39,7 @@ export struct LaunchOptionView {
     name: string,
     flag: string,
     checked: bool,
+    in-game: bool,
 }
 
 export struct LogLineView {
@@ -692,6 +693,7 @@ export component AppWindow inherits Window {
     in-out property <string> pre-launch-command;
     in property <bool> frame-rate-controls-visible: false;
     in property <bool> frame-rate-supported: false;
+    in property <bool> frame-rate-in-game: false;
     in-out property <int> frame-rate-mode: 0;
     in-out property <int> saved-frame-rate-mode: 0;
     in-out property <string> game-frame-rate;
@@ -1441,7 +1443,7 @@ export component AppWindow inherits Window {
                                             label: "Frame rate";
                                         }
 
-                                        InfoHint {
+                                        if !root.frame-rate-in-game : InfoHint {
                                             text: "The original Dungeon Rampage mostly runs at 24 FPS, even if counters show 60.\nHigher rates make DRH smoother, but excessive values may reduce performance or slow the game down.";
                                             show-tooltip(text, x, y) => {
                                                 root.info-tooltip-text = text;
@@ -1458,7 +1460,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    if root.frame-rate-controls-visible : HorizontalLayout {
+                                    if root.frame-rate-controls-visible && !root.frame-rate-in-game : HorizontalLayout {
                                         spacing: 0px;
 
                                         SegmentedButton {
@@ -1489,7 +1491,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    if root.frame-rate-controls-visible && root.frame-rate-mode != 2 : VerticalLayout {
+                                    if root.frame-rate-controls-visible && !root.frame-rate-in-game && root.frame-rate-mode != 2 : VerticalLayout {
                                         spacing: 4px;
 
                                         HorizontalLayout {
@@ -1544,7 +1546,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
 
-                                    if root.frame-rate-controls-visible && root.frame-rate-mode == 2 : HorizontalLayout {
+                                    if root.frame-rate-controls-visible && !root.frame-rate-in-game && root.frame-rate-mode == 2 : HorizontalLayout {
                                         spacing: 8px;
                                         alignment: start;
 
@@ -1564,7 +1566,7 @@ export component AppWindow inherits Window {
                                     Text {
                                         text: root.frame-rate-notice;
                                         font-size: 13px;
-                                        color: root.frame-rate-mode == 2 ? Theme.accent-warm : Theme.text-support;
+                                        color: root.frame-rate-mode == 2 && !root.frame-rate-in-game ? Theme.accent-warm : Theme.text-support;
                                         wrap: word-wrap;
                                     }
 
@@ -1595,7 +1597,7 @@ export component AppWindow inherits Window {
                                         }
 
                                         InfoHint {
-                                            text: "Original Dungeon Rampage launch options.\nGame defaults: leave them untouched.\nDRHL recommended: use launcher defaults.\nCustom: adjust them manually.";
+                                            text: "Original Dungeon Rampage launch options.\nGame defaults: leave them untouched.\nDRHL recommended: use launcher defaults.\nCustom: adjust them manually.\nIn game: also in the game's options. Changed here, it overrides them.";
                                             show-tooltip(text, x, y) => {
                                                 root.info-tooltip-text = text;
                                                 root.info-tooltip-width = 270px;
@@ -1649,6 +1651,7 @@ export component AppWindow inherits Window {
                                             width: launch-option-flow.cell-width;
                                             text: option.name;
                                             checked: option.checked;
+                                            in-game: option.in-game;
                                             toggled(checked) => {
                                                 root.toggle-launch-option(index, checked);
                                             }
@@ -2852,6 +2855,7 @@ export component AppWindow inherits Window {
         launch-option-measure := VerticalLayout {
             for option in root.launch-options: LaunchOptionToggle {
                 text: option.name;
+                in-game: option.in-game;
             }
         }
     }

@@ -267,12 +267,14 @@ mod tests {
                 custom_min: 1,
                 custom_max: 10_000,
             }),
+            frame_rate_in_game: false,
             game_arguments: vec![ManifestGameArgument {
                 name: "want-zoom".to_string(),
                 flag: "--want-zoom".to_string(),
                 default: false,
                 recommended: Some(true),
                 config_key: None,
+                in_game: false,
             }],
         }
     }

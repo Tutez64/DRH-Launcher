@@ -67,6 +67,9 @@ pub struct ManifestPlatform {
 pub struct ManifestLaunchOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame_rate: Option<ManifestFrameRate>,
+    /// The game sets its frame rate in its own options (DRH built on Dungeon Rampage 1.0 and later).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub frame_rate_in_game: bool,
     #[serde(default)]
     pub game_arguments: Vec<ManifestGameArgument>,
 }
@@ -130,6 +133,9 @@ pub struct ManifestGameArgument {
     pub recommended: Option<bool>,
     #[serde(default)]
     pub config_key: Option<String>,
+    /// Also a setting in the game's options, which this argument overrides when it is passed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub in_game: bool,
 }
 
 pub fn is_manifest_asset_name(name: &str, version: &str) -> bool {
@@ -162,6 +168,30 @@ pub fn validate_sha256(value: &str, description: &str) -> Result<String, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_in_game_frame_rate_and_arguments() {
+        let manifest = ReleaseManifest::parse(
+            r#"{
+                "version": "V16",
+                "platforms": {},
+                "launch_options": {
+                    "frame_rate_in_game": true,
+                    "game_arguments": [
+                        {"name": "want-zoom", "flag": "--want-zoom", "default": true, "in_game": true},
+                        {"name": "want-mana-bars", "flag": "--want-mana-bars", "default": false}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let options = manifest.launch_options.unwrap();
+        assert!(options.frame_rate.is_none());
+        assert!(options.frame_rate_in_game);
+        assert!(options.game_arguments[0].in_game);
+        assert!(!options.game_arguments[1].in_game);
+    }
 
     #[test]
     fn parses_manifest_and_selects_platform() {

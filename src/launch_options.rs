@@ -8,6 +8,7 @@ const NO_INSTALLED_LAUNCH_OPTIONS_TEXT: &str =
     "Install DRH from the Home screen first to load and edit its launch options.";
 const NO_KNOWN_LAUNCH_OPTIONS_TEXT: &str =
     "No known launch options loaded from the release manifest.";
+const FRAME_RATE_IN_GAME_TEXT: &str = "This DRH version sets its frame rate in the game's options, under Display, as the official game does since its 1.0 update.";
 
 pub(crate) fn refresh_launch_options_view(
     ui: &AppWindow,
@@ -45,6 +46,7 @@ fn has_known_launch_arguments(launch_options: Option<&ManifestLaunchOptions>) ->
 struct FrameRateViewState {
     controls_visible: bool,
     supported: bool,
+    in_game: bool,
     mode: FrameRateMode,
     value: u32,
     preset_index: f32,
@@ -70,6 +72,7 @@ fn frame_rate_view_state(
         return FrameRateViewState {
             controls_visible: false,
             supported: false,
+            in_game: false,
             mode: FrameRateMode::Auto,
             value: 0,
             preset_index: 0.5,
@@ -78,10 +81,23 @@ fn frame_rate_view_state(
                 .to_string(),
         };
     }
+    if launch_options.is_some_and(|options| options.frame_rate_in_game) {
+        return FrameRateViewState {
+            controls_visible: true,
+            supported: false,
+            in_game: true,
+            mode: FrameRateMode::Auto,
+            value: 0,
+            preset_index: 0.5,
+            presets: Vec::new(),
+            notice: FRAME_RATE_IN_GAME_TEXT.to_string(),
+        };
+    }
     let Some(definition) = launch_options.and_then(|options| options.frame_rate.as_ref()) else {
         return FrameRateViewState {
             controls_visible: true,
             supported: false,
+            in_game: false,
             mode: FrameRateMode::Auto,
             value: 0,
             preset_index: 0.5,
@@ -119,6 +135,7 @@ fn frame_rate_view_state(
     FrameRateViewState {
         controls_visible,
         supported: true,
+        in_game: false,
         mode,
         value,
         preset_index,
@@ -147,6 +164,7 @@ fn frame_rate_notice(mode: FrameRateMode, definition: &ManifestFrameRate) -> Str
 fn apply_frame_rate_to_view(ui: &AppWindow, state: &FrameRateViewState) {
     ui.set_frame_rate_controls_visible(state.controls_visible);
     ui.set_frame_rate_supported(state.supported);
+    ui.set_frame_rate_in_game(state.in_game);
     ui.set_frame_rate_mode(state.mode.ui_index());
     ui.set_game_frame_rate(state.value.to_string().into());
     ui.set_frame_rate_preset_index(state.preset_index);
@@ -291,6 +309,7 @@ fn launch_options_view_state(
                 name: argument.name.clone().into(),
                 flag: argument.flag.clone().into(),
                 checked,
+                in_game: argument.in_game,
             })
             .collect(),
         quote_args_for_display(&extra_args),
@@ -595,6 +614,7 @@ mod tests {
                 custom_min: 1,
                 custom_max: 10_000,
             }),
+            frame_rate_in_game: false,
             game_arguments: vec![
                 ManifestGameArgument {
                     name: "want-zoom".to_string(),
@@ -602,6 +622,7 @@ mod tests {
                     default: false,
                     recommended: Some(true),
                     config_key: None,
+                    in_game: false,
                 },
                 ManifestGameArgument {
                     name: "quality-control-button".to_string(),
@@ -609,6 +630,7 @@ mod tests {
                     default: true,
                     recommended: None,
                     config_key: None,
+                    in_game: false,
                 },
             ],
         }
@@ -687,6 +709,7 @@ mod tests {
         );
         let options = ManifestLaunchOptions {
             frame_rate: None,
+            frame_rate_in_game: false,
             game_arguments: Vec::new(),
         };
         assert!(!has_known_launch_arguments(Some(&options)));
@@ -723,6 +746,7 @@ mod tests {
                 custom_min: 1,
                 custom_max: 10_000,
             }),
+            frame_rate_in_game: false,
             game_arguments: Vec::new(),
         };
 
@@ -759,5 +783,71 @@ mod tests {
         assert!(!state.supported);
         assert_eq!(state.value, 0);
         assert_eq!(config.frame_rate.value, Some(300));
+    }
+    #[test]
+    fn in_game_frame_rate_hides_the_controls_and_keeps_the_saved_preference() {
+        let temp = tempdir().unwrap();
+        let install_dir = temp.path();
+        let game_dir = paths::game_dir(install_dir);
+        fs::create_dir_all(&game_dir).unwrap();
+        let executable = game_dir.join(game_install::game_executable_names()[0]);
+        if cfg!(target_os = "macos") {
+            fs::create_dir_all(&executable).unwrap();
+        } else {
+            fs::write(&executable, b"game").unwrap();
+        }
+        let config = LauncherConfig {
+            install_dir: Some(install_dir.to_path_buf()),
+            frame_rate: FrameRatePreference {
+                mode: FrameRateMode::Custom,
+                value: Some(300),
+            },
+            ..LauncherConfig::default()
+        };
+        let options = ManifestLaunchOptions {
+            frame_rate: None,
+            frame_rate_in_game: true,
+            game_arguments: Vec::new(),
+        };
+
+        let state = frame_rate_view_state(&config, Some(&options));
+
+        // still visible: the arguments block shares this visibility
+        assert!(state.controls_visible);
+        assert!(state.in_game);
+        assert!(!state.supported);
+        assert_eq!(state.notice, FRAME_RATE_IN_GAME_TEXT);
+        assert_eq!(config.frame_rate.value, Some(300));
+    }
+
+    #[test]
+    fn launch_option_view_marks_in_game_arguments() {
+        let options = ManifestLaunchOptions {
+            frame_rate: None,
+            frame_rate_in_game: true,
+            game_arguments: vec![
+                ManifestGameArgument {
+                    name: "want-zoom".to_string(),
+                    flag: "--want-zoom".to_string(),
+                    default: true,
+                    recommended: None,
+                    config_key: None,
+                    in_game: true,
+                },
+                ManifestGameArgument {
+                    name: "want-mana-bars".to_string(),
+                    flag: "--want-mana-bars".to_string(),
+                    default: false,
+                    recommended: None,
+                    config_key: None,
+                    in_game: false,
+                },
+            ],
+        };
+
+        let (views, _) = launch_options_view_state(&LauncherConfig::default(), Some(&options));
+
+        assert!(views[0].in_game);
+        assert!(!views[1].in_game);
     }
 }

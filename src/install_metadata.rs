@@ -99,8 +99,7 @@ impl InstalledRelease {
     pub fn needs_frame_rate_fetch(&self) -> bool {
         self.launch_options
             .as_ref()
-            .and_then(|options| options.frame_rate.as_ref())
-            .is_none()
+            .is_none_or(|options| options.frame_rate.is_none() && !options.frame_rate_in_game)
             && manifest_includes_frame_rate(&self.version)
     }
 
@@ -120,6 +119,7 @@ impl InstalledRelease {
             match (&mut self.launch_options, &manifest.launch_options) {
                 (Some(existing), Some(fetched)) if existing.frame_rate.is_none() => {
                     existing.frame_rate = fetched.frame_rate.clone();
+                    existing.frame_rate_in_game = fetched.frame_rate_in_game;
                     changed = true;
                 }
                 (None, Some(fetched)) => {
@@ -224,6 +224,20 @@ mod tests {
     }
 
     #[test]
+    fn in_game_frame_rate_needs_no_frame_rate_fetch() {
+        let mut release = test_installed_release("V16");
+        release.steam_buildid = Some(26_445_120);
+        release.launch_options = Some(ManifestLaunchOptions {
+            frame_rate: None,
+            frame_rate_in_game: true,
+            game_arguments: Vec::new(),
+        });
+
+        assert!(!release.needs_frame_rate_fetch());
+        assert!(!release.needs_manifest_fetch());
+    }
+
+    #[test]
     fn fetched_manifest_fills_only_supported_missing_fields() {
         let mut release = test_installed_release("V14");
         let manifest = ReleaseManifest {
@@ -241,6 +255,7 @@ mod tests {
                     custom_min: 1,
                     custom_max: 10000,
                 }),
+                frame_rate_in_game: false,
                 game_arguments: Vec::new(),
             }),
         };
