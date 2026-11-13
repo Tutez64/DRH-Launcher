@@ -74,6 +74,7 @@ pub fn check_entry(entry_path: &Path, base: &Path, work: &Path, takeover: bool) 
             Ok(checked) => {
                 let expected = entry_for(&checked, &entry.source, entry.size, entry.sha256.clone());
                 report.problems.extend(differences(&expected, &entry));
+                report.notes.extend(checked.notes);
             }
             Err(problems) => report.problems.extend(
                 problems

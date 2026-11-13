@@ -5,7 +5,7 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 
 use super::index::Index;
-use super::manifest::{API_ID, MAX_AUTHOR_CHARS, MAX_NAME_CHARS, valid_id};
+use super::manifest::{API_ID, MAX_AUTHOR_CHARS, MAX_NAME_CHARS, id_from_name, valid_id};
 use super::repository::git;
 
 const TEMPLATE_URL: &str = "https://github.com/Tutez64/DRH-Mods-Template";
@@ -77,21 +77,28 @@ pub fn new_mod(dir: &Path, input: &mut impl BufRead) -> Result<(), String> {
     Ok(())
 }
 
+/// The name first: it gives the id, asked for only when it gives none.
 fn ask(input: &mut impl BufRead) -> Result<NewMod, String> {
-    let id = prompt(
-        input,
-        "id (the mod's folder and package, such as my_cool_mod)",
-        |id| {
-            if valid_id(id) {
-                None
-            } else {
-                Some("3-64 characters of a-z, 0-9 and _, a letter first, no _ last, not a Haxe keyword".to_string())
-            }
-        },
-    )?;
     let name = prompt(input, "name (shown in the catalog)", |name| {
         bounded(name, MAX_NAME_CHARS)
     })?;
+    let id = match id_from_name(&name) {
+        Some(id) => {
+            println!("id: {id} (the mod's folder and package, from its name)");
+            id
+        }
+        None => prompt(
+            input,
+            "id (the mod's folder and package; this name gives none, pick one close to it, such as my_cool_mod)",
+            |id| {
+                if valid_id(id) {
+                    None
+                } else {
+                    Some("3-64 characters of a-z, 0-9 and _, a letter first, no _ last, not a Haxe keyword".to_string())
+                }
+            },
+        )?,
+    };
     let author = prompt(
         input,
         "author (your name, shown next to your GitHub account)",
@@ -243,9 +250,8 @@ mod tests {
     }
 
     #[test]
-    fn asks_again_until_an_answer_fits() {
-        let mut input = "Bad Id\nnew\ncool_mod\n\nCool Mod\nMe\n".as_bytes();
-        let answers = ask(&mut input).unwrap();
+    fn takes_the_id_from_the_name() {
+        let answers = ask(&mut "\nCool Mod\nMe\n".as_bytes()).unwrap();
         assert_eq!(
             (
                 answers.id.as_str(),
@@ -254,7 +260,20 @@ mod tests {
             ),
             ("cool_mod", "Cool Mod", "Me")
         );
-        assert!(ask(&mut "cool_mod\n".as_bytes()).is_err());
+        assert!(ask(&mut "Cool Mod\n".as_bytes()).is_err());
+    }
+
+    #[test]
+    fn asks_for_the_id_a_name_does_not_give() {
+        // "New" is a Haxe keyword, and an id has no accent.
+        for name in ["New", "Café"] {
+            let text = format!("{name}\nBad Id\nnew\ncool_mod\nMe\n");
+            let answers = ask(&mut text.as_bytes()).unwrap();
+            assert_eq!(
+                (answers.id.as_str(), answers.name.as_str()),
+                ("cool_mod", name)
+            );
+        }
     }
 
     #[test]

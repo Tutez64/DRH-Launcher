@@ -3,9 +3,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 ### Added
 
-- For DRH versions that set their frame rate in the game's options (built on Dungeon Rampage 1.0), the Frame rate
-  section says so instead of showing its controls, and the launch options that are also settings in the game are
-  marked In game: set from the launcher, they take precedence over the game's setting.
+- 
 
 ### Fixed
 
@@ -13,4 +11,5 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 ### Improved
 
-- `--submit-mod`, run again for a release redone before its merge, updates the open pull request instead of failing to push.
+- `--new-mod` asks for the mod's name and takes its id from it (`Cool Mod` gives `cool_mod`), asking for one only when the name gives none.
+- `--check-mod` and the index's check note an id that is not the one its name gives, without refusing it.

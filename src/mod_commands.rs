@@ -106,6 +106,9 @@ fn run(command: Command) -> Result<(), String> {
         Command::Check(dir) => match check_mod(&dir) {
             Ok(checked) => {
                 let manifest = &checked.manifest;
+                for note in &checked.notes {
+                    println!("note: {note}");
+                }
                 println!("{} {}: ok", manifest.id, manifest.version);
                 Ok(())
             }

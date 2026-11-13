@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::manifest::Manifest;
+use super::manifest::{Manifest, id_from_name};
 use super::readme;
 
 /// Values `DRH-Mods-Template` ships with, which a mod must replace.
@@ -14,10 +14,12 @@ const TEMPLATE_DESCRIPTION: &str = "What the mod does, in one line.";
 const TEMPLATE_README: &str =
     "What the mod does and how to use it: the launcher shows this part on the mod's page.";
 
-/// A mod that passed: its manifest and what its README shows.
+/// A mod that passed: its manifest, what its README shows, and what it is
+/// reminded of without failing.
 pub struct CheckedMod {
     pub manifest: Manifest,
     pub shown_readme: String,
+    pub notes: Vec<String>,
 }
 
 pub fn check_mod(dir: &Path) -> Result<CheckedMod, Vec<String>> {
@@ -74,12 +76,28 @@ pub fn check_mod(dir: &Path) -> Result<CheckedMod, Vec<String>> {
     }
 
     match manifest {
-        Some(manifest) if problems.is_empty() => Ok(CheckedMod {
-            manifest,
-            shown_readme,
-        }),
+        Some(manifest) if problems.is_empty() => {
+            let notes = id_note(&manifest).into_iter().collect();
+            Ok(CheckedMod {
+                manifest,
+                shown_readme,
+                notes,
+            })
+        }
         _ => Err(problems),
     }
+}
+
+/// An id is the one its name gives, and stays so: said when it is another,
+/// never refused, since some names give none and a reviewer may accept one.
+fn id_note(manifest: &Manifest) -> Option<String> {
+    let given = id_from_name(&manifest.name)?;
+    (given != manifest.id).then(|| {
+        format!(
+            "mod.json: id {} is not the one its name gives ({given})",
+            manifest.id
+        )
+    })
 }
 
 /// Read from the raw file, so they are reported even when other fields fail.
@@ -245,6 +263,31 @@ mod tests {
         let dir = valid_mod();
         let checked = check_mod(dir.path()).unwrap();
         assert_eq!(checked.shown_readme, "Does things.");
+        assert!(checked.notes.is_empty());
+    }
+
+    #[test]
+    fn notes_an_id_its_name_does_not_give() {
+        let dir = valid_mod();
+        let manifest = fs::read_to_string(dir.path().join("mod.json")).unwrap();
+        assert!(manifest.contains("\"Some Mod\""));
+        write(
+            dir.path(),
+            "mod.json",
+            &manifest.replace("\"Some Mod\"", "\"Ultimate Records\""),
+        );
+        let checked = check_mod(dir.path()).unwrap();
+        assert_eq!(
+            checked.notes,
+            ["mod.json: id some_mod is not the one its name gives (ultimate_records)"]
+        );
+        // A name that gives no id has nothing to be compared with.
+        write(
+            dir.path(),
+            "mod.json",
+            &manifest.replace("\"Some Mod\"", "\"Café\""),
+        );
+        assert!(check_mod(dir.path()).unwrap().notes.is_empty());
     }
 
     #[test]

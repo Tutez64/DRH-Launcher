@@ -88,6 +88,27 @@ pub fn valid_id(id: &str) -> bool {
     shape && !HAXE_KEYWORDS.contains(&id) && !reserved_device_name(id) && id != MOD_DATA
 }
 
+/// The id a name gives: in lowercase, with a `_` for each run of anything but
+/// letters and digits and none at either end (`Cool Mod` gives
+/// `cool_mod`). `None` when the name cannot give one: a character outside
+/// ASCII, or a result that is not a valid id.
+pub fn id_from_name(name: &str) -> Option<String> {
+    if !name.is_ascii() {
+        return None;
+    }
+    let mut id = String::new();
+    for word in name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+    {
+        if !id.is_empty() {
+            id.push('_');
+        }
+        id.push_str(&word.to_ascii_lowercase());
+    }
+    valid_id(&id).then_some(id)
+}
+
 fn reserved_device_name(id: &str) -> bool {
     if matches!(id, "con" | "prn" | "aux" | "nul") {
         return true;
@@ -421,6 +442,22 @@ mod tests {
         assert!(valid_id("com"));
         assert!(valid_id(&"a".repeat(64)));
         assert!(!valid_id(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn a_name_gives_its_id() {
+        for (name, id) in [
+            ("Weapon Rater", "weapon_rater"),
+            ("API", "api"),
+            ("Enemy Health and Effects", "enemy_health_and_effects"),
+            ("  Tutez's  HUD-2!  ", "tutez_s_hud_2"),
+        ] {
+            assert_eq!(id_from_name(name).as_deref(), Some(id), "{name}");
+        }
+        // No letter of an id, a digit first, too short, a Haxe keyword, a reserved name.
+        for name in ["Café", "小地图", "3D Minimap", "Go", "New", "Data", "!!!"] {
+            assert_eq!(id_from_name(name), None, "{name}");
+        }
     }
 
     #[test]
