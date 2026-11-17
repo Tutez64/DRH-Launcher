@@ -21,7 +21,7 @@ path = "src/bin/console.rs"
 [dependencies]
 cargo-packager-updater = "0.2.3"
 directories = "6.0.0"
-flate2 = "1.1.10"
+flate2 = "1.1.11"
 # Stay on reqwest 0.12 while cargo-packager-updater does: 0.2.3 depends on
 # reqwest 0.12 + rustls-tls-native-roots (ring). Bumping our reqwest to 0.13
 # reintroduces a second HTTP/TLS stack (reqwest 0.13 + aws-lc). Patch
@@ -38,8 +38,8 @@ flate2 = "1.1.10"
 # (Windows fetches missing roots, macOS honors its keychain trust settings)
 # and needs no built-in list to keep up to date.
 reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots", "rustls-tls-webpki-roots"] }
-pulldown-cmark = { version = "0.13.4", default-features = false }
-rfd = "0.17.2"
+pulldown-cmark = { version = "0.13.6", default-features = false }
+rfd = "0.18.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
@@ -54,11 +54,11 @@ slint = { version = "1.19.0", default-features = false, features = [
 ] }
 steamlocate = "2.1.1"
 tar = "0.4.46"
-zip = { version = "9.0.2", default-features = false, features = ["deflate"] }
-zstd = { version = "0.14.2", default-features = false }
+zip = { version = "9.6.1", default-features = false, features = ["deflate"] }
+zstd = { version = "0.14.4", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.190"
+libc = "0.2.191"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
