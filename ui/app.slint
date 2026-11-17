@@ -118,7 +118,6 @@ component LogViewer inherits Rectangle {
     property <int> sel-end-col: root.selection-forward ? root.sel-cursor-col : root.sel-anchor-col;
     property <bool> has-selection: root.sel-start-line != root.sel-end-line || root.sel-start-col != root.sel-end-col;
     property <bool> selecting: false;
-    property <bool> menu-open: false;
     property <length> pointer-x: 0px;
     property <length> pointer-y: 0px;
 
@@ -134,7 +133,6 @@ component LogViewer inherits Rectangle {
         root.restoring-position = true;
         root.stable-restore-ticks = 0;
         root.selecting = false;
-        root.menu-open = false;
         root.display-settings-open = false;
         root.clear-selection();
     }
@@ -143,7 +141,6 @@ component LogViewer inherits Rectangle {
         root.restoring-position = true;
         root.stable-restore-ticks = 0;
         root.selecting = false;
-        root.menu-open = false;
         root.clear-selection();
     }
 
@@ -185,20 +182,6 @@ component LogViewer inherits Rectangle {
         let current = root.line-at-y(y);
         root.sel-cursor-line = current;
         root.sel-cursor-col = root.col-at(root.pointer-x, current);
-    }
-
-    function show-log-menu() {
-        if (root.menu-open) {
-            log-context-menu.close();
-            root.menu-open = false;
-            return;
-        }
-        log-focus.focus();
-        log-context-menu.show({
-            x: round((log-pointer.absolute-position.x - log-context-menu.absolute-position.x + root.pointer-x) / 1px) * 1px,
-            y: round((log-pointer.absolute-position.y - log-context-menu.absolute-position.y + root.pointer-y) / 1px) * 1px,
-        });
-        root.menu-open = true;
     }
 
     function line-has-selection(index: int) -> bool {
@@ -267,7 +250,7 @@ component LogViewer inherits Rectangle {
         read-only: true;
     }
 
-    log-context-menu := ContextMenuArea {
+    ContextMenuArea {
         width: 100%;
         height: 100%;
 
@@ -276,7 +259,6 @@ component LogViewer inherits Rectangle {
                 title: "Copy";
                 enabled: root.lines.length > 0;
                 activated => {
-                    root.menu-open = false;
                     root.copy-current-selection();
                 }
             }
@@ -285,7 +267,6 @@ component LogViewer inherits Rectangle {
                 title: "Select All";
                 enabled: root.lines.length > 0;
                 activated => {
-                    root.menu-open = false;
                     root.select-all-text();
                 }
             }
@@ -411,7 +392,6 @@ component LogViewer inherits Rectangle {
                             }
                             if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
                                 log-focus.focus();
-                                root.menu-open = false;
                                 root.pointer-x = self.mouse-x;
                                 root.pointer-y = self.mouse-y;
                                 root.selecting = true;
@@ -424,11 +404,6 @@ component LogViewer inherits Rectangle {
                             }
                             if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left) {
                                 root.selecting = false;
-                            }
-                            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right) {
-                                root.pointer-x = self.mouse-x;
-                                root.pointer-y = self.mouse-y;
-                                root.show-log-menu();
                             }
                         }
                         moved => {
