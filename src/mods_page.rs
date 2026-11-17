@@ -281,7 +281,19 @@ pub(crate) fn register(
     ui.on_mod_search_edited(move |text| {
         let view = on.view();
         let tab = view.tab();
-        view.lock().search[tab] = text.to_string();
+        {
+            let mut page = view.lock();
+            // Switching tabs brings the tab's own search back, which lands
+            // here too: the list is already the right one, where it was left.
+            if page.search[tab] == text.as_str() {
+                return;
+            }
+            page.search[tab] = text.to_string();
+        }
+        // Other results: show them from the first one.
+        if let Some(ui) = view.ui.upgrade() {
+            ui.set_mod_list_scroll(0.0);
+        }
         view.render();
     });
 

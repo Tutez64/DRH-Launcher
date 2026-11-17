@@ -801,6 +801,12 @@ export component AppWindow inherits Window {
     callback open-mod-guide();
     callback toggle-mod(int);
 
+    // Slint keeps a ScrollView within its content, except one whose content-y
+    // is bound, as the mod lists' is. `lowest` is the content-y at the end.
+    function keep-mod-list-scroll-in-bounds(lowest: length) {
+        root.mod-list-scroll = min(0px, max(root.mod-list-scroll, lowest));
+    }
+
     function show-mod-tooltip(text: string, x: length, y: length) {
         root.info-tooltip-text = text;
         root.info-tooltip-width = 380px;
@@ -2005,6 +2011,12 @@ export component AppWindow inherits Window {
                             content-y <=> root.mod-list-scroll;
                             content-width: self.width;
                             content-height: mod-grid.height;
+                            changed content-height => {
+                                root.keep-mod-list-scroll-in-bounds(self.visible-height - self.content-height);
+                            }
+                            changed visible-height => {
+                                root.keep-mod-list-scroll-in-bounds(self.visible-height - self.content-height);
+                            }
 
                             // Placed by hand: a FlexboxLayout sizes its rows
                             // from the cards' wrapped text, and they overlap.
@@ -2047,6 +2059,12 @@ export component AppWindow inherits Window {
                             content-y <=> root.mod-list-scroll;
                             content-width: self.width;
                             content-height: mod-rows.preferred-height;
+                            changed content-height => {
+                                root.keep-mod-list-scroll-in-bounds(self.visible-height - self.content-height);
+                            }
+                            changed visible-height => {
+                                root.keep-mod-list-scroll-in-bounds(self.visible-height - self.content-height);
+                            }
 
                             mod-rows := VerticalLayout {
                                 width: parent.width;
