@@ -1,10 +1,11 @@
 //! A mod's GitHub repository: its `source` in the index.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
 use reqwest::StatusCode;
-use reqwest::header::{ACCEPT, USER_AGENT};
+use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::Deserialize;
 
 use super::index::{Entry, http_client};
@@ -12,7 +13,7 @@ use super::manifest::valid_id;
 
 use crate::error_chain::with_sources;
 
-const GITHUB_API: &str = "https://api.github.com";
+pub(crate) const GITHUB_API: &str = "https://api.github.com";
 
 /// The largest `.json` asset read as a mod's entry.
 const MAX_ENTRY_BYTES: u64 = 64 * 1024;
@@ -166,6 +167,86 @@ pub(crate) fn latest_entry_from(api: &str, source: &str) -> Result<Entry, String
     Err(format!(
         "The latest release of {source} holds no mod zip with its entry: it was not made with the DRH mod release workflow."
     ))
+}
+
+/// What GitHub counts for one file of a release.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetStats {
+    /// When its release was published.
+    pub published: Option<String>,
+    pub downloads: u64,
+}
+
+#[derive(Deserialize)]
+struct CountedRelease {
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    published_at: Option<String>,
+    assets: Vec<CountedAsset>,
+}
+
+#[derive(Deserialize)]
+struct CountedAsset {
+    name: String,
+    download_count: u64,
+}
+
+/// A repository's release files, by release tag and file name.
+pub type ReleaseAssets = BTreeMap<(String, String), AssetStats>;
+
+/// GitHub lists at most this many releases a page.
+const RELEASES_PER_PAGE: usize = 100;
+
+/// Every file of `source`'s published releases. `token` is a GitHub token:
+/// without one, GitHub answers 60 requests an hour.
+pub(crate) fn release_assets_from(
+    api: &str,
+    source: &str,
+    token: Option<&str>,
+) -> Result<ReleaseAssets, String> {
+    let path = source
+        .strip_prefix("https://github.com/")
+        .ok_or_else(|| format!("{source} is not a GitHub repository"))?;
+    let client = http_client()?;
+    let mut assets = BTreeMap::new();
+    for page in 1.. {
+        let mut request = client
+            .get(format!(
+                "{api}/repos/{path}/releases?per_page={RELEASES_PER_PAGE}&page={page}"
+            ))
+            .header(USER_AGENT, "DRH-Launcher")
+            .header(ACCEPT, "application/vnd.github+json");
+        if let Some(token) = token {
+            request = request.header(AUTHORIZATION, format!("Bearer {token}"));
+        }
+        let releases: Vec<CountedRelease> = request
+            .send()
+            .and_then(|response| response.error_for_status())
+            .and_then(|response| response.json())
+            .map_err(|error| {
+                format!(
+                    "Could not read the releases of {source}: {}",
+                    with_sources(&error)
+                )
+            })?;
+        let listed = releases.len();
+        for release in releases.into_iter().filter(|release| !release.draft) {
+            for asset in release.assets {
+                assets.insert(
+                    (release.tag_name.clone(), asset.name),
+                    AssetStats {
+                        published: release.published_at.clone(),
+                        downloads: asset.download_count,
+                    },
+                );
+            }
+        }
+        if listed < RELEASES_PER_PAGE {
+            break;
+        }
+    }
+    Ok(assets)
 }
 
 /// Runs git, in `dir` when given; its error output on failure.

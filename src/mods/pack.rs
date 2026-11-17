@@ -96,6 +96,8 @@ pub fn entry_for(checked: &CheckedMod, source: &str, size: u64, sha256: String) 
         sha256,
         source: source.to_string(),
         yanked: None,
+        published: None,
+        downloads: None,
     }
 }
 

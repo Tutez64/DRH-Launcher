@@ -59,6 +59,15 @@ pub struct Entry {
     pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub yanked: Option<String>,
+    /// When this version's release was published, as GitHub writes it
+    /// (`2026-11-16T23:26:40Z`). `--build-index` adds it: an entry file has
+    /// none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published: Option<String>,
+    /// How many times this version's zip had been downloaded when the index
+    /// was generated. Added as `published` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub downloads: Option<u64>,
 }
 
 impl Entry {

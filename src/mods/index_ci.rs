@@ -14,7 +14,9 @@ use super::index::{Entry, FORMAT, Index};
 use super::install::download_and_extract;
 use super::manifest::{API_ID, valid_id};
 use super::pack::entry_for;
-use super::repository::{check_mod_repository, normalize};
+use super::repository::{
+    GITHUB_API, ReleaseAssets, check_mod_repository, normalize, release_assets_from,
+};
 use super::resolve::resolve;
 use super::version::Requirement;
 use crate::diagnostics::format_system_time_utc;
@@ -303,12 +305,36 @@ fn files_under(dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-/// The file the launcher reads: every entry, sorted by id then version.
-pub fn build_index(dir: &Path, out: &Path) -> Result<usize, String> {
+/// What `--build-index` wrote, and what it could not read from GitHub.
+#[derive(Debug)]
+pub struct BuiltIndex {
+    pub entries: usize,
+    pub notes: Vec<String>,
+}
+
+/// The file the launcher reads: every entry, sorted by id then version, each
+/// with when GitHub says it was published and how many times its zip was
+/// downloaded. `GITHUB_TOKEN` or `GH_TOKEN` is sent to GitHub when set.
+pub fn build_index(dir: &Path, out: &Path) -> Result<BuiltIndex, String> {
+    let token = ["GITHUB_TOKEN", "GH_TOKEN"]
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .map(|token| token.trim().to_string())
+        .find(|token| !token.is_empty());
+    build_index_from(dir, out, GITHUB_API, token.as_deref())
+}
+
+fn build_index_from(
+    dir: &Path,
+    out: &Path,
+    api: &str,
+    token: Option<&str>,
+) -> Result<BuiltIndex, String> {
     let mut entries = read_index_dir(dir)?;
     entries.sort_by(|a, b| {
         (a.id.as_str(), a.parsed_version()).cmp(&(b.id.as_str(), b.parsed_version()))
     });
+    let notes = add_release_stats(&mut entries, api, token);
     let generated = format_system_time_utc(SystemTime::now())
         .replace(" UTC", "Z")
         .replacen(' ', "T", 1);
@@ -330,12 +356,51 @@ pub fn build_index(dir: &Path, out: &Path) -> Result<usize, String> {
     }
     fs::write(out, format!("{file}\n"))
         .map_err(|error| format!("Could not write {}: {error}", out.display()))?;
-    Ok(entries.len())
+    Ok(BuiltIndex {
+        entries: entries.len(),
+        notes,
+    })
+}
+
+/// Sets each entry's `published` and `downloads` from its repository's
+/// releases, read once a repository. An entry GitHub says nothing of gets
+/// neither, and a note: the index is still worth deploying without them.
+fn add_release_stats(entries: &mut [Entry], api: &str, token: Option<&str>) -> Vec<String> {
+    let mut notes = Vec::new();
+    let mut by_source: BTreeMap<String, Option<ReleaseAssets>> = BTreeMap::new();
+    for entry in entries {
+        entry.published = None;
+        entry.downloads = None;
+        if !by_source.contains_key(&entry.source) {
+            let assets = release_assets_from(api, &entry.source, token)
+                .map_err(|error| notes.push(error))
+                .ok();
+            by_source.insert(entry.source.clone(), assets);
+        }
+        let Some(Some(assets)) = by_source.get(&entry.source) else {
+            continue;
+        };
+        // By tag and name, not `url`: a renamed repository keeps both.
+        let tag = format!("v{}", entry.version);
+        let zip = format!("{}-{}.zip", entry.id, entry.version);
+        match assets.get(&(tag.clone(), zip.clone())) {
+            Some(stats) => {
+                entry.published = stats.published.clone();
+                entry.downloads = Some(stats.downloads);
+            }
+            None => notes.push(format!(
+                "{} has no {zip} in a release {tag}: {} {} gets no date and no download count",
+                entry.source, entry.id, entry.version
+            )),
+        }
+    }
+    notes
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mods::test_server::serve;
 
     fn entry(id: &str, version: &str) -> Entry {
         serde_json::from_value(serde_json::json!({
@@ -444,7 +509,14 @@ mod tests {
             write_entry(dir.path(), &entry(id, version));
         }
         let out = dir.path().join("site/index.json");
-        assert_eq!(build_index(dir.path(), &out).unwrap(), 3);
+        // Every entry is of one repository, which this GitHub does not know.
+        let built = build_index_from(dir.path(), &out, &serve(Vec::new()), None).unwrap();
+        assert_eq!(built.entries, 3);
+        assert_eq!(built.notes.len(), 1, "{:?}", built.notes);
+        assert!(
+            built.notes[0]
+                .starts_with("Could not read the releases of https://github.com/me/DRH-Mod-M")
+        );
         let index = Index::parse(&fs::read_to_string(&out).unwrap()).unwrap();
         let order: Vec<String> = index
             .entries
@@ -452,5 +524,60 @@ mod tests {
             .map(|entry| format!("{} {}", entry.id, entry.version))
             .collect();
         assert_eq!(order, ["api 1.0.0", "lib 0.9.0", "lib 0.10.0"]);
+        assert!(index.entries.iter().all(|entry| entry.downloads.is_none()));
+    }
+
+    #[test]
+    fn the_index_says_when_each_version_was_published_and_its_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        for version in ["0.9.0", "0.10.0", "0.11.0"] {
+            let mut entry = entry("lib", version);
+            // What an entry file says of them is not kept.
+            entry.downloads = Some(1_000_000);
+            write_entry(dir.path(), &entry);
+        }
+        let release = |version: &str, published: &str, downloads: u64| {
+            serde_json::json!({
+                "tag_name": format!("v{version}"), "published_at": published,
+                "assets": [
+                    { "name": format!("lib-{version}.json"), "download_count": 1 },
+                    { "name": format!("lib-{version}.zip"), "download_count": downloads },
+                ]
+            })
+        };
+        let releases = serde_json::json!([
+            release("0.10.0", "2026-11-02T10:00:00Z", 7),
+            release("0.9.0", "2026-10-20T08:30:00Z", 40),
+            { "tag_name": "v0.11.0", "draft": true, "published_at": null, "assets": [
+                { "name": "lib-0.11.0.zip", "download_count": 3 }
+            ]},
+        ]);
+        let api = serve(vec![(
+            "/repos/me/DRH-Mod-M/releases?per_page=100&page=1".to_string(),
+            releases.to_string().into_bytes(),
+        )]);
+        let out = dir.path().join("site/index.json");
+        let built = build_index_from(dir.path(), &out, &api, None).unwrap();
+        assert_eq!(
+            built.notes,
+            [
+                "https://github.com/me/DRH-Mod-M has no lib-0.11.0.zip in a release v0.11.0: \
+              lib 0.11.0 gets no date and no download count"
+            ]
+        );
+        let index = Index::parse(&fs::read_to_string(&out).unwrap()).unwrap();
+        let stats: Vec<(Option<&str>, Option<u64>)> = index
+            .entries
+            .iter()
+            .map(|entry| (entry.published.as_deref(), entry.downloads))
+            .collect();
+        assert_eq!(
+            stats,
+            [
+                (Some("2026-10-20T08:30:00Z"), Some(40)),
+                (Some("2026-11-02T10:00:00Z"), Some(7)),
+                (None, None),
+            ]
+        );
     }
 }

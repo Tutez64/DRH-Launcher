@@ -259,6 +259,8 @@ mod tests {
             sha256: String::new(),
             source: String::new(),
             yanked: None,
+            published: None,
+            downloads: None,
         }
     }
 

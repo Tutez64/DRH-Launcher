@@ -151,8 +151,11 @@ fn run(command: Command) -> Result<(), String> {
             }
         }
         Command::BuildIndex(dir, out) => {
-            let count = build_index(&dir, &out)?;
-            println!("{}: {count} entries", out.display());
+            let built = build_index(&dir, &out)?;
+            for note in &built.notes {
+                println!("note: {note}");
+            }
+            println!("{}: {} entries", out.display(), built.entries);
             Ok(())
         }
     }

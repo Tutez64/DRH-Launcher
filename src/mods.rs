@@ -15,4 +15,6 @@ pub mod repository;
 pub mod resolve;
 pub mod run;
 pub mod submit;
+#[cfg(test)]
+mod test_server;
 pub mod version;
