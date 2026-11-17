@@ -193,7 +193,6 @@ export component MenuButton inherits Rectangle {
         stroke-width: 1.8px;
         stroke-line-cap: round;
         stroke-line-join: round;
-        fill: transparent;
     }
 
     touch := TouchArea {
@@ -341,7 +340,6 @@ export component HomeNoticeCard inherits Rectangle {
 
         if root.has-link : HorizontalLayout {
             horizontal-stretch: 1;
-            spacing: 0px;
 
             Text {
                 text: root.link-prefix;
@@ -511,7 +509,6 @@ export component HomePlayerCount inherits Rectangle {
 
         VerticalLayout {
             horizontal-stretch: 1;
-            spacing: 0px;
             alignment: center;
 
             Text {
@@ -1025,7 +1022,6 @@ export component CompactCheck inherits Rectangle {
 
     height: 38px;
     width: layout.preferred-width;
-    background: transparent;
 
     layout := HorizontalLayout {
         spacing: 8px;
@@ -1057,7 +1053,6 @@ export component CompactCheck inherits Rectangle {
             color: root.checked ? Theme.text-primary : Theme.text-muted;
             font-size: 13px;
             font-weight: root.checked ? 700 : 600;
-            wrap: no-wrap;
             vertical-alignment: center;
         }
     }
@@ -1093,8 +1088,6 @@ export component LaunchOptionToggle inherits Rectangle {
         text: root.text;
         font-size: 13px;
         font-weight: 700;
-        letter-spacing: 0px;
-        overflow: clip;
         opacity: 0;
     }
 
@@ -1143,7 +1136,6 @@ export component LaunchOptionToggle inherits Rectangle {
         color: root.checked ? Theme.text-primary : Theme.text-muted;
         font-size: 13px;
         font-weight: root.checked ? 700 : 600;
-        letter-spacing: 0px;
         vertical-alignment: center;
         overflow: elide;
     }
@@ -1235,7 +1227,6 @@ export component NumericTextField inherits Rectangle {
         width: parent.width - 12px;
         height: parent.height;
         text <=> root.value;
-        single-line: true;
         horizontal-alignment: center;
         vertical-alignment: center;
         color: Theme.text-primary;

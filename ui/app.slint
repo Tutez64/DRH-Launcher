@@ -273,9 +273,6 @@ component LogViewer inherits Rectangle {
         }
 
         log-focus := FocusScope {
-            width: 100%;
-            height: 100%;
-
             key-pressed(event) => {
                 if ((event.modifiers.control || event.modifiers.meta) && event.text == "c") {
                     if (root.has-selection) {
@@ -372,8 +369,6 @@ component LogViewer inherits Rectangle {
                                 font-family: "Hack";
                                 font-size: 13px;
                                 color: line.color;
-                                wrap: no-wrap;
-                                overflow: clip;
                                 vertical-alignment: center;
                             }
                         }
@@ -489,7 +484,6 @@ component LogViewer inherits Rectangle {
 
                 report-wrap-columns := Timer {
                     interval: 100ms;
-                    running: true;
 
                     triggered => {
                         let character-width-px = character-measurement.preferred-width / 64px;
@@ -511,8 +505,6 @@ component LogViewer inherits Rectangle {
                 z: 5;
                 x: 0px;
                 y: 0px;
-                width: 100%;
-                height: 100%;
                 clicked => {
                     root.display-settings-open = false;
                 }
@@ -859,7 +851,6 @@ export component AppWindow inherits Window {
 
     HorizontalLayout {
         padding: 0px;
-        spacing: 0px;
 
         Rectangle {
             width: 188px;
@@ -961,7 +952,6 @@ export component AppWindow inherits Window {
                 if root.active-page == 0 : Rectangle {
                     horizontal-stretch: 1;
                     vertical-stretch: 1;
-                    background: transparent;
 
                     home-background := Rectangle {
                         x: -26px;
@@ -1013,8 +1003,6 @@ export component AppWindow inherits Window {
                         // Clip overflowing decorations only. clip + border-radius
                         // rasterizes children into a texture, which blurs text.
                         Rectangle {
-                            width: 100%;
-                            height: 100%;
                             clip: true;
                             border-radius: 10px;
 
@@ -1037,7 +1025,6 @@ export component AppWindow inherits Window {
                                 border-radius: 105px;
                                 border-width: 1px;
                                 border-color: Theme.home-panel-ring;
-                                background: transparent;
                             }
 
                             Rectangle {
@@ -1372,7 +1359,6 @@ export component AppWindow inherits Window {
                                 spacing: 10px;
 
                                 GitHubButton {
-                                    min-width: 112px;
                                     horizontal-stretch: 1;
                                     text: "DRH GitHub";
                                     clicked => {
@@ -1382,7 +1368,6 @@ export component AppWindow inherits Window {
                                 }
 
                                 GitHubButton {
-                                    min-width: 112px;
                                     horizontal-stretch: 1;
                                     text: "DRHL GitHub";
                                     clicked => {
@@ -1442,8 +1427,6 @@ export component AppWindow inherits Window {
                                     }
 
                                     if root.frame-rate-controls-visible && !root.frame-rate-in-game : HorizontalLayout {
-                                        spacing: 0px;
-
                                         SegmentedButton {
                                             text: "Auto";
                                             active: root.frame-rate-mode == 0;
@@ -1481,7 +1464,6 @@ export component AppWindow inherits Window {
                                             DiscreteSlider {
                                                 horizontal-stretch: 1;
                                                 enabled: root.frame-rate-supported && root.frame-rate-mode == 1;
-                                                minimum: 0;
                                                 maximum: root.frame-rate-preset-maximum;
                                                 value: root.frame-rate-preset-index;
                                                 changed(value) => {
@@ -1595,8 +1577,6 @@ export component AppWindow inherits Window {
                                     }
 
                                     if root.launch-argument-controls-visible : HorizontalLayout {
-                                        spacing: 0px;
-
                                         SegmentedButton {
                                             text: "Game defaults";
                                             active: root.launch-arguments-mode == 0;
@@ -1910,7 +1890,6 @@ export component AppWindow inherits Window {
                                 padding-left: 12px;
                                 padding-right: 8px;
                                 spacing: 8px;
-                                alignment: stretch;
 
                                 Text {
                                     horizontal-stretch: 1;
@@ -2589,8 +2568,6 @@ export component AppWindow inherits Window {
                                 saved-position-known: root.launcher-log-position-known;
                                 saved-content-y: root.launcher-log-content-y;
                                 saved-at-end: root.launcher-log-at-end;
-                                position-key: 0;
-                                horizontal-stretch: 1;
                                 vertical-stretch: 1;
                                 wrap-columns-measured(columns) => {
                                     root.log-wrap-columns-measured(0, columns);
@@ -2646,12 +2623,10 @@ export component AppWindow inherits Window {
                                     show-display-settings: true;
                                     hide-haxe-iteratee-log-lines: root.hide-haxe-iteratee-log-lines;
                                     lines: root.log-lines;
-                                    default-scroll-to-end: false;
                                     saved-position-known: root.game-log-position-known;
                                     saved-content-y: root.game-log-content-y;
                                     saved-at-end: root.game-log-at-end;
                                     position-key: root.selected-game-log-index;
-                                    horizontal-stretch: 1;
                                     vertical-stretch: 1;
                                     wrap-columns-measured(columns) => {
                                         root.log-wrap-columns-measured(1, columns);
@@ -2785,7 +2760,6 @@ export component AppWindow inherits Window {
                                             discord-link := LinkButton {
                                                 width: link-buttons.cell-width;
                                                 text: "Discord";
-                                                icon-kind: 0;
                                                 clicked => {
                                                     root.open-discord-link();
                                                 }
@@ -2857,7 +2831,6 @@ export component AppWindow inherits Window {
         visible: false;
         text: root.info-tooltip-text;
         font-size: 12px;
-        wrap: no-wrap;
     }
 
     Rectangle {
@@ -2893,7 +2866,6 @@ export component AppWindow inherits Window {
 
     if root.selected-version-replace-confirmation-visible : Rectangle {
         z: 1500;
-        background: transparent;
 
         TouchArea {
             clicked => {
