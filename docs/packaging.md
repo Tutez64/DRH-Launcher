@@ -56,7 +56,7 @@ family adds separate installation, update and validation responsibilities.
 
 ### Wayland Window Icon
 
-Slint 1.16.1 uses winit 0.30.13, whose Wayland backend ignores the window icon
+Slint 1.19.0 still uses winit 0.30.13, whose Wayland backend ignores the window icon
 provided by Slint. Before desktop integration, a native Wayland compositor can
 therefore show its generic Wayland icon. Once installed, the desktop entry uses
 the absolute path of the installed 256 px icon so KWin can associate it with the

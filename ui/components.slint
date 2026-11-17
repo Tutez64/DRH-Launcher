@@ -1069,8 +1069,9 @@ export component CompactCheck inherits Rectangle {
     }
 }
 
-// Its texts must not bind `wrap`, even to `no-wrap` (the default): Slint 1.18's
-// FlexboxLayout would then size the row from the text and ignore `height`.
+// Its texts must not bind `wrap`, even to `no-wrap` (the default): Slint's
+// FlexboxLayout (1.18, and still 1.19) would then size the row from the text
+// and ignore `height`.
 export component LaunchOptionToggle inherits Rectangle {
     in property <string> text;
     in property <bool> checked;

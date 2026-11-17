@@ -43,7 +43,7 @@ rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
-slint = { version = "1.18.1", default-features = false, features = [
+slint = { version = "1.19.0", default-features = false, features = [
     "std",
     "backend-default",
     "renderer-femtovg",
@@ -72,7 +72,7 @@ windows-sys = { version = "0.61.2", features = [
 [build-dependencies]
 # The default `renderer-software` feature only embeds resources for the
 # software renderer; build.rs embeds plain files, so it is dead weight here.
-slint-build = { version = "1.18.1", default-features = false, features = ["compat-1-18"] }
+slint-build = { version = "1.19.0", default-features = false, features = ["compat-1-18"] }
 winresource = "0.1.34"
 
 [dev-dependencies]
