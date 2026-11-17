@@ -14,3 +14,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 - `--new-mod` asks for the mod's name and takes its id from it (`Cool Mod` gives `cool_mod`), asking for one only when the name gives none.
 - `--check-mod` and the index's check note an id that is not the one its name gives, without refusing it.
+
+### Internal
+
+- Slint 1.19, on its edition 1.19, and the other dependencies are updated. The Home glows get gradient stops that keep their look under Slint 1.19.
