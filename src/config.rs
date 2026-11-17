@@ -26,6 +26,19 @@ pub struct LauncherConfig {
     /// The user went past the notice shown before playing with mods.
     #[serde(default)]
     pub mods_disclosure_confirmed: bool,
+    #[serde(default)]
+    pub mods_sort: ModsSort,
+}
+
+/// The sort last chosen for each list of the Mods page, as that page names
+/// it here. A text, not an enum: a name another version wrote must not make
+/// the file unreadable. Empty or unknown, the list is in its own first sort.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ModsSort {
+    #[serde(default)]
+    pub installed: String,
+    #[serde(default)]
+    pub catalog: String,
 }
 
 impl Default for LauncherConfig {
@@ -41,6 +54,7 @@ impl Default for LauncherConfig {
             hide_official_ownership_notice: false,
             hide_haxe_iteratee_log_lines: default_hide_haxe_iteratee_log_lines(),
             mods_disclosure_confirmed: false,
+            mods_sort: ModsSort::default(),
         }
     }
 }
@@ -277,6 +291,22 @@ mod tests {
                 in_game: false,
             }],
         }
+    }
+
+    #[test]
+    fn keeps_the_mods_sorts_and_reads_a_config_without_them() {
+        let mut config = LauncherConfig::default();
+        assert_eq!(config.mods_sort, ModsSort::default());
+        config.mods_sort.catalog = "added".to_string();
+        let saved = serde_json::to_string(&config).unwrap();
+        let read: LauncherConfig = serde_json::from_str(&saved).unwrap();
+        assert_eq!(read.mods_sort.catalog, "added");
+        assert_eq!(read.mods_sort.installed, "");
+
+        let mut older: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        older.as_object_mut().unwrap().remove("mods_sort");
+        let read: LauncherConfig = serde_json::from_value(older).unwrap();
+        assert_eq!(read.mods_sort, ModsSort::default());
     }
 
     #[test]

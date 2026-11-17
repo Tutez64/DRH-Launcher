@@ -55,6 +55,21 @@ enum Sort {
     VersionDownloads,
 }
 
+impl Sort {
+    /// Its name in `config.json`.
+    fn key(self) -> &'static str {
+        match self {
+            Self::LoadOrder => "load_order",
+            Self::Name => "name",
+            Self::Updates => "updates",
+            Self::Updated => "updated",
+            Self::Added => "added",
+            Self::Downloads => "downloads",
+            Self::VersionDownloads => "version_downloads",
+        }
+    }
+}
+
 /// Each tab's sorts as the list names them, the one it starts with first.
 const SORTS: [&[(Sort, &str)]; 2] = [
     &[
@@ -63,13 +78,22 @@ const SORTS: [&[(Sort, &str)]; 2] = [
         (Sort::Updates, "Updates first"),
     ],
     &[
-        (Sort::Name, "Name"),
-        (Sort::Updated, "Last updated"),
-        (Sort::Added, "Newest"),
         (Sort::Downloads, "Downloads: all versions"),
         (Sort::VersionDownloads, "Downloads: latest version"),
+        (Sort::Added, "Newest"),
+        (Sort::Updated, "Last updated"),
+        (Sort::Name, "Name"),
     ],
 ];
+
+/// Where `tab` lists the sort `config.json` names: its first one when that
+/// is none of its own.
+fn saved_sort(tab: usize, key: &str) -> usize {
+    SORTS[tab]
+        .iter()
+        .position(|(sort, _)| sort.key() == key)
+        .unwrap_or(0)
+}
 
 const MOD_GUIDE_URL: &str = concat!(
     "https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/making-a-mod.md",
@@ -225,6 +249,13 @@ pub(crate) fn register(
         game_poll: Rc::default(),
         after_disclosure: Rc::default(),
     };
+    {
+        let saved = &config.borrow().mods_sort;
+        context.view().lock().sort = [
+            saved_sort(0, &saved.installed),
+            saved_sort(CATALOG, &saved.catalog),
+        ];
+    }
 
     let on = context.clone();
     ui.on_ensure_mods(move || {
@@ -337,7 +368,7 @@ pub(crate) fn register(
     ui.on_mod_sort_selected(move |sort| {
         let view = on.view();
         let tab = view.tab();
-        {
+        let sort = {
             let mut page = view.lock();
             let Some(sort) = usize::try_from(sort)
                 .ok()
@@ -346,6 +377,20 @@ pub(crate) fn register(
                 return;
             };
             page.sort[tab] = sort;
+            SORTS[tab][sort].0
+        };
+        // Kept for the next time the launcher starts.
+        {
+            let mut config = on.config.borrow_mut();
+            let saved = if tab == CATALOG {
+                &mut config.mods_sort.catalog
+            } else {
+                &mut config.mods_sort.installed
+            };
+            *saved = sort.key().to_string();
+            if let Err(error) = config.save() {
+                log_for_config(&config, diagnostics::LogLevel::Error, &error.to_string());
+            }
         }
         // Another order: show it from its first mod.
         if let Some(ui) = view.ui.upgrade() {
@@ -2396,10 +2441,10 @@ mod tests {
         let all = |ids: [&str; 3], orderable: bool| ids.map(|id| (id.to_string(), orderable));
         assert_eq!(rows(&page), all(["lib", "mine", "other"], true));
         // Updates first: `other` has one. The rest stays in the load order.
-        page.sort[0] = 2;
+        page.sort[0] = sort_at(0, Sort::Updates);
         assert_eq!(rows(&page), all(["other", "lib", "mine"], false));
         page.order = ["other", "mine", "lib"].map(String::from).to_vec();
-        page.sort[0] = 1;
+        page.sort[0] = sort_at(0, Sort::Name);
         assert_eq!(rows(&page), all(["lib", "mine", "other"], false));
     }
 
@@ -2419,6 +2464,29 @@ mod tests {
             }),
             ..Page::default()
         }
+    }
+
+    #[test]
+    fn a_tab_starts_in_the_sort_the_config_names_when_it_has_it() {
+        for (tab, sorts) in SORTS.iter().enumerate() {
+            for (at, (sort, _)) in sorts.iter().enumerate() {
+                assert_eq!(saved_sort(tab, sort.key()), at);
+            }
+        }
+        // None chosen yet, another version's, the other tab's.
+        assert_eq!(saved_sort(CATALOG, ""), 0);
+        assert_eq!(saved_sort(CATALOG, "stars"), 0);
+        assert_eq!(saved_sort(CATALOG, Sort::LoadOrder.key()), 0);
+        assert_eq!(SORTS[0][0].0, Sort::LoadOrder);
+        assert_eq!(SORTS[CATALOG][0].0, Sort::Downloads);
+    }
+
+    /// Where a tab lists `sort`.
+    fn sort_at(tab: usize, sort: Sort) -> usize {
+        SORTS[tab]
+            .iter()
+            .position(|(known, _)| *known == sort)
+            .unwrap()
     }
 
     fn catalog_ids(page: &Page) -> Vec<String> {
@@ -2441,18 +2509,18 @@ mod tests {
         uncounted.source = "https://github.com/me/DRH-Mod-Alone".to_string();
         page.index.as_mut().unwrap().entries.push(uncounted);
         let sorted = |page: &mut Page, sort: Sort| {
-            page.sort[CATALOG] = SORTS[CATALOG]
-                .iter()
-                .position(|(known, _)| *known == sort)
-                .unwrap();
+            page.sort[CATALOG] = sort_at(CATALOG, sort);
             catalog_ids(page)
         };
 
+        // The catalog starts with the most downloaded; a mod the index
+        // counts nothing for comes last.
+        assert_eq!(catalog_ids(&page), ["busy", "steady", "fresh", "alone"]);
+        assert_eq!(sort_of(&page, CATALOG), Sort::Downloads);
         assert_eq!(
             sorted(&mut page, Sort::Name),
             ["alone", "busy", "fresh", "steady"]
         );
-        // A mod the index counts nothing for comes last.
         assert_eq!(
             sorted(&mut page, Sort::Updated),
             ["busy", "fresh", "steady", "alone"]
@@ -2471,7 +2539,7 @@ mod tests {
         );
 
         // The card says the date it is sorted on, and its downloads.
-        page.sort[CATALOG] = 1;
+        page.sort[CATALOG] = sort_at(CATALOG, Sort::Updated);
         let rows = catalog_rows(&page, None);
         let (_, busy) = &rows[0];
         assert_eq!(busy.date, "Updated 2026-11-20");
@@ -2482,7 +2550,7 @@ mod tests {
         );
         let (_, alone) = &rows[3];
         assert_eq!((alone.date.as_str(), alone.downloads.as_str()), ("", ""));
-        page.sort[CATALOG] = 0;
+        page.sort[CATALOG] = sort_at(CATALOG, Sort::Name);
         assert_eq!(catalog_rows(&page, None)[1].1.date, "");
     }
 
@@ -2500,9 +2568,10 @@ mod tests {
         page.index.as_mut().unwrap().entries[2].source =
             "https://github.com/mapper/DRH-Mod-Other".to_string();
         page.search[CATALOG] = "Map".to_string();
+        page.sort[CATALOG] = sort_at(CATALOG, Sort::Name);
         assert_eq!(catalog_ids(&page), ["map", "dungeon_map", "other"]);
         // Another sort is the one asked for.
-        page.sort[CATALOG] = 3;
+        page.sort[CATALOG] = sort_at(CATALOG, Sort::Downloads);
         assert_eq!(catalog_ids(&page), ["dungeon_map", "other", "map"]);
     }
 
