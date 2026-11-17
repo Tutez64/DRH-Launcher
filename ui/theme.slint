@@ -11,11 +11,26 @@ export global Theme {
     out property <brush> surface-checked: #2a1c18;
     out property <brush> divider: #30231f;
     out property <brush> home-background: @linear-gradient(145deg, #171116 0%, #0f1014 48%, #141012 100%);
-    out property <brush> home-glow-hot: @radial-gradient(circle, #b8322366 0%, #71251b38 44%, #0f101400 76%);
-    out property <brush> home-glow-warm: @radial-gradient(circle, #f07a374d 0%, #7d351d2b 46%, #0f101400 78%);
+    // Slint 1.19 blends gradient stops in premultiplied alpha: a color no longer
+    // darkens toward a transparent stop, which made these glows stronger and
+    // wider. Each gradient that fades to transparent keeps the stops it was
+    // designed with, and the ones added between them follow the earlier blending.
+    out property <brush> home-glow-hot: @radial-gradient(circle,
+        #b8322366 0%, #a02e2057 14.7%, #89291e47 29.3%,
+        #71251b38 44%, #501e1925 54.7%, #30171613 65.3%,
+        #0f101400 76%);
+    out property <brush> home-glow-warm: @radial-gradient(circle,
+        #f07a374d 0%, #ca632e42 15.3%, #a34c2636 30.7%,
+        #7d351d2b 46%, #58291a1d 56.7%, #341c170e 67.3%,
+        #0f101400 78%);
     out property <brush> home-panel-background: @linear-gradient(145deg, #24191de8 0%, #171419f5 58%, #121217fa 100%);
-    out property <brush> home-panel-sheen: @linear-gradient(90deg, #f07a3700 0%, #f07a3780 48%, #c7332500 100%);
-    out property <brush> home-panel-decoration: @radial-gradient(circle, #b83b284d 0%, #5e211a26 48%, #17141900 74%);
+    out property <brush> home-panel-sheen: @linear-gradient(90deg,
+        #f07a3700 0%, #f07a3780 48%, #e2623155 65.3%,
+        #d54b2b2b 82.7%, #c7332500 100%);
+    out property <brush> home-panel-decoration: @radial-gradient(circle,
+        #b83b284d 0%, #9a322340 16%, #7c2a1f33 32%,
+        #5e211a26 48%, #461d1a19 56.7%, #2f18190d 65.3%,
+        #17141900 74%);
     out property <brush> home-panel-ring: #d15a333d;
     out property <brush> home-status-background: #120f12cc;
     out property <brush> home-icon-background: #1a1115cc;
