@@ -1351,6 +1351,50 @@ export component ModAuthor inherits Rectangle {
 }
 
 // A mod in the Catalog's grid.
+// What the index counts for a mod: its downloads, said in words on hover.
+component ModDownloads inherits Rectangle {
+    in property <string> text;
+    in property <string> tooltip;
+    property <bool> hovering: touch.has-hover;
+    callback show-tooltip(string, length, length);
+    callback hide-tooltip();
+
+    width: content.preferred-width;
+
+    content := HorizontalLayout {
+        spacing: 3px;
+
+        VerticalLayout {
+            alignment: center;
+
+            Image {
+                width: 11px;
+                height: 11px;
+                source: @image-url("icons/download.svg");
+                image-fit: contain;
+                colorize: Theme.text-support;
+            }
+        }
+
+        Text {
+            text: root.text;
+            color: Theme.text-support;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+
+    changed hovering => {
+        if (root.hovering && root.tooltip != "") {
+            root.show-tooltip(root.tooltip, root.absolute-position.x + root.width / 2, root.absolute-position.y);
+        } else {
+            root.hide-tooltip();
+        }
+    }
+
+    touch := TouchArea {}
+}
+
 export component ModCard inherits Rectangle {
     in property <string> name;
     in property <string> summary;
@@ -1359,6 +1403,9 @@ export component ModCard inherits Rectangle {
     in property <ModTagView> uses;
     in property <[ModTagView]> tags;
     in property <string> status;
+    in property <string> downloads;
+    in property <string> downloads-tip;
+    in property <string> date;
     callback clicked();
     callback show-tooltip(string, length, length);
     callback hide-tooltip();
@@ -1421,6 +1468,24 @@ export component ModCard inherits Rectangle {
                 horizontal-stretch: 1;
                 author: root.author;
                 owner: root.owner;
+            }
+
+            if root.date != "" : Text {
+                text: root.date;
+                color: Theme.text-support;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+
+            if root.downloads != "" : ModDownloads {
+                text: root.downloads;
+                tooltip: root.downloads-tip;
+                show-tooltip(text, x, y) => {
+                    root.show-tooltip(text, x, y);
+                }
+                hide-tooltip => {
+                    root.hide-tooltip();
+                }
             }
 
             for tag in root.tags: ModTag {

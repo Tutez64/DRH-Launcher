@@ -1,4 +1,4 @@
-import { ListView, ScrollView } from "std-widgets.slint";
+import { ComboBox, ListView, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import {
     AppLineEdit,
@@ -69,6 +69,11 @@ export struct ModCardView {
     uses: ModTagView,
     tags: [ModTagView],
     status: string,
+    // The index's counts, on a Catalog card: its downloads, what they are
+    // in words, and the date the list is sorted on.
+    downloads: string,
+    downloads-tip: string,
+    date: string,
     enabled: bool,
     orderable: bool,
     can-move-up: bool,
@@ -582,6 +587,9 @@ export component AppWindow inherits Window {
     in-out property <bool> mod-detail-open: false;
     in property <string> mod-list-empty-text;
     in-out property <string> mod-search;
+    // The tab's sorts, and the one its list is in.
+    in property <[string]> mod-sort-names;
+    in-out property <int> mod-sort;
     in property <bool> mods-busy: false;
     in property <string> mods-error;
     in property <string> mods-run-text;
@@ -604,6 +612,7 @@ export component AppWindow inherits Window {
     in property <string> selected-mod-description;
     in property <string> selected-mod-author;
     in property <string> selected-mod-owner;
+    in property <string> selected-mod-stats;
     in property <bool> selected-mod-folder-visible: false;
     in-out property <length> mod-list-scroll: 0px;
     in-out property <length> mod-detail-scroll: 0px;
@@ -751,6 +760,7 @@ export component AppWindow inherits Window {
     callback select-mods-page(int);
     callback select-mod(int);
     callback mod-search-edited(string);
+    callback mod-sort-selected(int);
     callback mod-primary-action();
     callback mod-update();
     callback mod-uninstall();
@@ -1938,6 +1948,23 @@ export component AppWindow inherits Window {
                             }
 
                             Text {
+                                text: "Sort";
+                                color: Theme.text-support;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+
+                            ComboBox {
+                                horizontal-stretch: 0;
+                                width: 230px;
+                                model: root.mod-sort-names;
+                                current-index <=> root.mod-sort;
+                                selected => {
+                                    root.mod-sort-selected(self.current-index);
+                                }
+                            }
+
+                            Text {
                                 text: root.mods-index-status;
                                 color: Theme.text-support;
                                 font-size: 12px;
@@ -1995,6 +2022,9 @@ export component AppWindow inherits Window {
                                     uses: entry.uses;
                                     tags: entry.tags;
                                     status: entry.status;
+                                    downloads: entry.downloads;
+                                    downloads-tip: entry.downloads-tip;
+                                    date: entry.date;
                                     clicked => {
                                         root.select-mod(index);
                                     }
@@ -2091,6 +2121,13 @@ export component AppWindow inherits Window {
                                     author: root.selected-mod-author;
                                     owner: root.selected-mod-owner;
                                     font-size: 12px;
+                                }
+
+                                if root.selected-mod-stats != "" : Text {
+                                    text: "  ·  " + root.selected-mod-stats;
+                                    color: Theme.text-support;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
                                 }
                             }
 

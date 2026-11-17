@@ -2,6 +2,7 @@
 //! `mods::library`.
 
 use std::cell::RefCell;
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -10,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use slint::{ComponentHandle, ModelRc, Timer, TimerMode, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 use crate::changelog_markdown::markdown_document;
 use crate::config::LauncherConfig;
@@ -36,6 +37,40 @@ const CATALOG: usize = 1;
 /// The window's Mods page.
 const MODS_PAGE: i32 = 3;
 
+/// How a tab orders its list.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Sort {
+    /// The order the game starts the mods in, which the user sets.
+    LoadOrder,
+    Name,
+    /// The mods with an update first.
+    Updates,
+    /// By when the offered version was published, the latest first.
+    Updated,
+    /// By when the first version was, the latest first.
+    Added,
+    /// By every version's downloads together.
+    Downloads,
+    /// By the offered version's downloads.
+    VersionDownloads,
+}
+
+/// Each tab's sorts as the list names them, the one it starts with first.
+const SORTS: [&[(Sort, &str)]; 2] = [
+    &[
+        (Sort::LoadOrder, "Load order"),
+        (Sort::Name, "Name"),
+        (Sort::Updates, "Updates first"),
+    ],
+    &[
+        (Sort::Name, "Name"),
+        (Sort::Updated, "Last updated"),
+        (Sort::Added, "Newest"),
+        (Sort::Downloads, "Downloads: all versions"),
+        (Sort::VersionDownloads, "Downloads: latest version"),
+    ],
+];
+
 const MOD_GUIDE_URL: &str = concat!(
     "https://github.com/Tutez64/Dungeon-Rampage-Haxe/blob/master/docs/making-a-mod.md",
     "?utm_source=drh_launcher&utm_medium=mods_page",
@@ -52,10 +87,11 @@ struct Page {
     enabled: Vec<String>,
     /// The ids the list shows, in order.
     rows: Vec<String>,
-    // Each tab as it was left: its search, whether a mod's page is open,
-    // and where the list and the page were scrolled.
+    // Each tab as it was left: its search, its sort in `SORTS`, whether a
+    // mod's page is open, and where the list and the page were scrolled.
     selected: [Option<String>; 2],
     search: [String; 2],
+    sort: [usize; 2],
     detail_open: [bool; 2],
     list_scroll: [f32; 2],
     detail_scroll: [f32; 2],
@@ -291,6 +327,27 @@ pub(crate) fn register(
             page.search[tab] = text.to_string();
         }
         // Other results: show them from the first one.
+        if let Some(ui) = view.ui.upgrade() {
+            ui.set_mod_list_scroll(0.0);
+        }
+        view.render();
+    });
+
+    let on = context.clone();
+    ui.on_mod_sort_selected(move |sort| {
+        let view = on.view();
+        let tab = view.tab();
+        {
+            let mut page = view.lock();
+            let Some(sort) = usize::try_from(sort)
+                .ok()
+                .filter(|sort| *sort < SORTS[tab].len() && *sort != page.sort[tab])
+            else {
+                return;
+            };
+            page.sort[tab] = sort;
+        }
+        // Another order: show it from its first mod.
         if let Some(ui) = view.ui.upgrade() {
             ui.set_mod_list_scroll(0.0);
         }
@@ -1010,6 +1067,12 @@ impl View {
         ui.set_mod_entries(ModelRc::new(VecModel::from(
             rows.into_iter().map(|(_, view)| view).collect::<Vec<_>>(),
         )));
+        // Only when they change: a list given again closes the one open.
+        let sorts = SORTS[tab].iter().map(|(_, name)| SharedString::from(*name));
+        if !ui.get_mod_sort_names().iter().eq(sorts.clone()) {
+            ui.set_mod_sort_names(ModelRc::new(VecModel::from(sorts.collect::<Vec<_>>())));
+        }
+        ui.set_mod_sort(page.sort[tab] as i32);
         ui.set_mods_error(page.error.clone().unwrap_or_default().into());
         let (run_text, run_warning) = run_summary(&page);
         ui.set_mods_run_text(run_text.into());
@@ -1055,6 +1118,7 @@ impl View {
         );
         ui.set_selected_mod_description(detail.description.into());
         ui.set_selected_mod_author(detail.author.into());
+        ui.set_selected_mod_stats(detail.stats.into());
         ui.set_selected_mod_owner(detail.owner.into());
         ui.set_selected_mod_folder_visible(detail.installed);
         ui.set_selected_mod_tags(ModelRc::new(VecModel::from(detail.tags)));
@@ -1075,6 +1139,8 @@ struct Detail {
     description: String,
     author: String,
     owner: String,
+    /// What the index counts for it.
+    stats: String,
     tags: Vec<ModTagView>,
     long_description: String,
     primary: String,
@@ -1120,6 +1186,9 @@ fn detail(page: &Page, id: &str, tag: Option<u32>) -> Detail {
     detail.description = description;
 
     (detail.author, detail.owner) = byline(&author, source.as_deref());
+    if let (Some(index), Some(entry)) = (&page.index, indexed) {
+        detail.stats = Stats::of(index, entry).line(&entry.version);
+    }
 
     let issues = match installed {
         Some(m) => issues(page, m, tag),
@@ -1269,15 +1338,23 @@ fn list_order(page: &Page) -> Vec<String> {
 fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
     let order = list_order(page);
     let search = &page.search[0];
+    let sort = sort_of(page, 0);
     // Moving swaps with the neighbour in the whole order, which a search may
-    // hide.
-    let reorderable = search.trim().is_empty();
+    // hide and another sort does not show.
+    let reorderable = search.trim().is_empty() && sort == Sort::LoadOrder;
     let mut mods: Vec<&InstalledMod> = page
         .mods
         .iter()
         .filter(|m| matches(search, &m.name, &m.id, source_of(page, &m.id).as_deref()))
         .collect();
     mods.sort_by_key(|m| order.iter().position(|id| *id == m.id));
+    match sort {
+        Sort::Name => {
+            mods.sort_by_cached_key(|m| (name_rank(search, &m.name), m.name.to_lowercase()));
+        }
+        Sort::Updates => mods.sort_by_key(|m| update_for(page, m).is_none()),
+        _ => {}
+    }
     mods.into_iter()
         .map(|m| {
             let official = is_official(page, &m.id);
@@ -1307,6 +1384,9 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                             .collect::<Vec<_>>(),
                     )),
                     status: status.into(),
+                    downloads: SharedString::new(),
+                    downloads_tip: SharedString::new(),
+                    date: SharedString::new(),
                     enabled: page.enabled.contains(&m.id),
                     orderable: !official && reorderable,
                     can_move_up: at > first_movable,
@@ -1321,6 +1401,8 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
     let Some(index) = &page.index else {
         return Vec::new();
     };
+    let search = &page.search[CATALOG];
+    let sort = sort_of(page, CATALOG);
     let mut ids: Vec<&str> = index
         .entries
         .iter()
@@ -1328,18 +1410,28 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
         .collect();
     ids.sort_unstable();
     ids.dedup();
-    let mut rows: Vec<(String, ModCardView)> = ids
+    let mut offered: Vec<(&Entry, Stats)> = ids
         .into_iter()
         .filter_map(|id| offered_entry(page, id))
-        .filter(|entry| {
-            matches(
-                &page.search[CATALOG],
-                &entry.name,
-                &entry.id,
-                Some(&entry.source),
-            )
-        })
-        .map(|entry| {
+        .filter(|entry| matches(search, &entry.name, &entry.id, Some(&entry.source)))
+        .map(|entry| (entry, Stats::of(index, entry)))
+        .collect();
+    // By name, then by what the sort is on: mods equal there stay by name.
+    offered.sort_by_cached_key(|(entry, _)| {
+        (name_rank(search, &entry.name), entry.name.to_lowercase())
+    });
+    match sort {
+        Sort::Updated => offered.sort_by(|(_, a), (_, b)| b.updated.cmp(&a.updated)),
+        Sort::Added => offered.sort_by(|(_, a), (_, b)| b.added.cmp(&a.added)),
+        Sort::Downloads => offered.sort_by_key(|(_, stats)| Reverse(stats.downloads)),
+        Sort::VersionDownloads => {
+            offered.sort_by_key(|(_, stats)| Reverse(stats.version_downloads));
+        }
+        _ => {}
+    }
+    offered
+        .into_iter()
+        .map(|(entry, stats)| {
             let installed = page.mods.iter().find(|m| m.id == entry.id);
             let status = match (&page.working, installed) {
                 (Some((id, doing)), _) if *id == entry.id => doing,
@@ -1351,6 +1443,21 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
             let issues: Vec<Issue> = drh_issue(entry.drh.as_deref(), &entry.uses, tag)
                 .into_iter()
                 .collect();
+            // The date the list is sorted on, which the card has no room
+            // for otherwise.
+            let date = match sort {
+                Sort::Updated => stats
+                    .updated
+                    .as_deref()
+                    .and_then(day)
+                    .map(|day| format!("Updated {day}")),
+                Sort::Added => stats
+                    .added
+                    .as_deref()
+                    .and_then(day)
+                    .map(|day| format!("Added {day}")),
+                _ => None,
+            };
             (
                 entry.id.clone(),
                 ModCardView {
@@ -1362,6 +1469,9 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                     uses: uses_tag(page, &entry.id, &entry.uses).unwrap_or_default(),
                     tags: ModelRc::new(VecModel::from(other_tags(None, &issues))),
                     status: status.into(),
+                    downloads: stats.counts().into(),
+                    downloads_tip: stats.downloads_text(&entry.version).into(),
+                    date: date.unwrap_or_default().into(),
                     enabled: installed.is_some_and(|m| page.enabled.contains(&m.id)),
                     orderable: false,
                     can_move_up: false,
@@ -1369,9 +1479,129 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                 },
             )
         })
-        .collect();
-    rows.sort_by_key(|(_, view)| view.name.to_lowercase());
-    rows
+        .collect()
+}
+
+/// The tab's sort.
+fn sort_of(page: &Page, tab: usize) -> Sort {
+    SORTS[tab]
+        .get(page.sort[tab])
+        .map_or(SORTS[tab][0].0, |(sort, _)| *sort)
+}
+
+/// Where a name stands for a search, by name: one that starts with it, one
+/// that has it, then a mod found by its id or its account.
+fn name_rank(search: &str, name: &str) -> u8 {
+    let search = search.trim().to_lowercase();
+    let name = name.to_lowercase();
+    if name.starts_with(&search) {
+        0
+    } else if name.contains(&search) {
+        1
+    } else {
+        2
+    }
+}
+
+/// What the index counts for a mod, from GitHub when it was generated.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Stats {
+    /// Every version's downloads together.
+    downloads: Option<u64>,
+    /// The offered version's.
+    version_downloads: Option<u64>,
+    /// When the offered version was published.
+    updated: Option<String>,
+    /// When the first version was.
+    added: Option<String>,
+}
+
+impl Stats {
+    /// Those of `offered`'s mod. GitHub writes every date the same way, so
+    /// they compare as text.
+    fn of(index: &Index, offered: &Entry) -> Self {
+        let versions = || index.entries.iter().filter(|entry| entry.id == offered.id);
+        Self {
+            downloads: versions()
+                .filter_map(|entry| entry.downloads)
+                .reduce(u64::saturating_add),
+            version_downloads: offered.downloads,
+            updated: offered.published.clone(),
+            added: versions().filter_map(|entry| entry.published.clone()).min(),
+        }
+    }
+
+    /// A card's counter: every version's downloads, then the offered one's.
+    fn counts(&self) -> String {
+        match (self.downloads, self.version_downloads) {
+            (Some(all), Some(version)) => format!("{} ({})", grouped(all), grouped(version)),
+            (Some(all), None) => grouped(all),
+            (None, _) => String::new(),
+        }
+    }
+
+    /// The counter in words.
+    fn downloads_text(&self, version: &str) -> String {
+        match (self.downloads, self.version_downloads) {
+            (Some(all), Some(of_version)) => format!(
+                "{} in all, {} of version {version}",
+                downloads(all),
+                grouped(of_version)
+            ),
+            (Some(all), None) => format!("{} in all", downloads(all)),
+            (None, _) => String::new(),
+        }
+    }
+
+    /// A mod's page says all of it.
+    fn line(&self, version: &str) -> String {
+        let updated = self.updated.as_deref().and_then(day);
+        let added = self.added.as_deref().and_then(day);
+        let dates = match (updated, added) {
+            (Some(updated), Some(added)) if updated != added => {
+                format!("Updated {updated}, added {added}")
+            }
+            (Some(day), _) | (None, Some(day)) => format!("Published {day}"),
+            (None, None) => String::new(),
+        };
+        [self.downloads_text(version), dates]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("  ·  ")
+    }
+}
+
+fn downloads(count_of: u64) -> String {
+    match count_of {
+        1 => "1 download".to_string(),
+        many => format!("{} downloads", grouped(many)),
+    }
+}
+
+/// `1,234,567`.
+fn grouped(number: u64) -> String {
+    let digits = number.to_string();
+    let mut text = String::new();
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            text.push(',');
+        }
+        text.push(digit);
+    }
+    text
+}
+
+/// The day of a date as GitHub writes it: `2026-11-16T23:26:40Z`.
+fn day(published: &str) -> Option<&str> {
+    let day = published.get(..10)?;
+    day.bytes()
+        .enumerate()
+        .all(|(at, byte)| match at {
+            4 | 7 => byte == b'-',
+            _ => byte.is_ascii_digit(),
+        })
+        .then_some(day)
 }
 
 /// What the mod is to the others: needed by an enabled mod, or installed as
@@ -2149,6 +2379,157 @@ mod tests {
         assert!(orderable(&page).iter().all(|(_, orderable)| *orderable));
         page.search[0] = "mine".to_string();
         assert_eq!(orderable(&page), [("mine".to_string(), false)]);
+    }
+
+    #[test]
+    fn hides_the_arrows_in_another_order_than_the_load_order() {
+        let mut page = library_page();
+        page.index = Some(Index {
+            entries: vec![entry("other", "1.0.0"), entry("other", "1.1.0")],
+        });
+        let rows = |page: &Page| {
+            installed_rows(page, None)
+                .iter()
+                .map(|(id, row)| (id.clone(), row.orderable))
+                .collect::<Vec<_>>()
+        };
+        let all = |ids: [&str; 3], orderable: bool| ids.map(|id| (id.to_string(), orderable));
+        assert_eq!(rows(&page), all(["lib", "mine", "other"], true));
+        // Updates first: `other` has one. The rest stays in the load order.
+        page.sort[0] = 2;
+        assert_eq!(rows(&page), all(["other", "lib", "mine"], false));
+        page.order = ["other", "mine", "lib"].map(String::from).to_vec();
+        page.sort[0] = 1;
+        assert_eq!(rows(&page), all(["lib", "mine", "other"], false));
+    }
+
+    /// A catalog of mods named after their id, each version with its
+    /// downloads and the day of November 2026 it was published.
+    fn counted_page(versions: &[(&str, &str, u64, u32)]) -> Page {
+        Page {
+            index: Some(Index {
+                entries: versions
+                    .iter()
+                    .map(|(id, version, downloads, day)| Entry {
+                        downloads: Some(*downloads),
+                        published: Some(format!("2026-11-{day:02}T10:00:00Z")),
+                        ..entry(id, version)
+                    })
+                    .collect(),
+            }),
+            ..Page::default()
+        }
+    }
+
+    fn catalog_ids(page: &Page) -> Vec<String> {
+        catalog_rows(page, None)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    #[test]
+    fn sorts_the_catalog_by_date_and_by_downloads() {
+        let mut page = counted_page(&[
+            ("busy", "1.0.0", 50, 1),
+            ("busy", "1.1.0", 40, 5),
+            ("busy", "1.2.0", 4, 20),
+            ("fresh", "1.0.0", 30, 12),
+            ("steady", "1.0.0", 60, 3),
+        ]);
+        let mut uncounted = entry("alone", "1.0.0");
+        uncounted.source = "https://github.com/me/DRH-Mod-Alone".to_string();
+        page.index.as_mut().unwrap().entries.push(uncounted);
+        let sorted = |page: &mut Page, sort: Sort| {
+            page.sort[CATALOG] = SORTS[CATALOG]
+                .iter()
+                .position(|(known, _)| *known == sort)
+                .unwrap();
+            catalog_ids(page)
+        };
+
+        assert_eq!(
+            sorted(&mut page, Sort::Name),
+            ["alone", "busy", "fresh", "steady"]
+        );
+        // A mod the index counts nothing for comes last.
+        assert_eq!(
+            sorted(&mut page, Sort::Updated),
+            ["busy", "fresh", "steady", "alone"]
+        );
+        assert_eq!(
+            sorted(&mut page, Sort::Added),
+            ["fresh", "steady", "busy", "alone"]
+        );
+        assert_eq!(
+            sorted(&mut page, Sort::Downloads),
+            ["busy", "steady", "fresh", "alone"]
+        );
+        assert_eq!(
+            sorted(&mut page, Sort::VersionDownloads),
+            ["steady", "fresh", "busy", "alone"]
+        );
+
+        // The card says the date it is sorted on, and its downloads.
+        page.sort[CATALOG] = 1;
+        let rows = catalog_rows(&page, None);
+        let (_, busy) = &rows[0];
+        assert_eq!(busy.date, "Updated 2026-11-20");
+        assert_eq!(busy.downloads, "94 (4)");
+        assert_eq!(
+            busy.downloads_tip,
+            "94 downloads in all, 4 of version 1.2.0"
+        );
+        let (_, alone) = &rows[3];
+        assert_eq!((alone.date.as_str(), alone.downloads.as_str()), ("", ""));
+        page.sort[CATALOG] = 0;
+        assert_eq!(catalog_rows(&page, None)[1].1.date, "");
+    }
+
+    #[test]
+    fn a_search_by_name_starts_with_the_names_closest_to_it() {
+        let mut page = counted_page(&[
+            ("dungeon_map", "1.0.0", 9, 1),
+            ("map", "1.0.0", 1, 2),
+            ("other", "1.0.0", 5, 3),
+        ]);
+        for entry in &mut page.index.as_mut().unwrap().entries {
+            entry.name = entry.id.replace('_', " ");
+        }
+        // Found by its account, not its name.
+        page.index.as_mut().unwrap().entries[2].source =
+            "https://github.com/mapper/DRH-Mod-Other".to_string();
+        page.search[CATALOG] = "Map".to_string();
+        assert_eq!(catalog_ids(&page), ["map", "dungeon_map", "other"]);
+        // Another sort is the one asked for.
+        page.sort[CATALOG] = 3;
+        assert_eq!(catalog_ids(&page), ["dungeon_map", "other", "map"]);
+    }
+
+    #[test]
+    fn says_what_the_index_counts_for_a_mod() {
+        let page = counted_page(&[
+            ("busy", "1.0.0", 1200, 1),
+            ("busy", "1.1.0", 34, 20),
+            ("fresh", "1.0.0", 1, 12),
+        ]);
+        let index = page.index.as_ref().unwrap();
+        let line = |id: &str| {
+            let entry = offered_entry(&page, id).unwrap();
+            Stats::of(index, entry).line(&entry.version)
+        };
+        assert_eq!(
+            line("busy"),
+            "1,234 downloads in all, 34 of version 1.1.0  ·  Updated 2026-11-20, added 2026-11-01"
+        );
+        assert_eq!(
+            line("fresh"),
+            "1 download in all, 1 of version 1.0.0  ·  Published 2026-11-12"
+        );
+        assert_eq!(Stats::default().line("1.0.0"), "");
+        assert_eq!(grouped(1_234_567), "1,234,567");
+        assert_eq!(day("2026-11-16T23:26:40Z"), Some("2026-11-16"));
+        assert_eq!(day("yesterday at noon"), None);
     }
 
     fn library_page() -> Page {
