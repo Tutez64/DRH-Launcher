@@ -1,7 +1,8 @@
-import { ComboBox, ListView, ScrollView } from "std-widgets.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import {
     AppLineEdit,
+    AppSelect,
     CompactCheck,
     CompactMetricBlock,
     DiscreteSlider,
@@ -1954,13 +1955,13 @@ export component AppWindow inherits Window {
                                 vertical-alignment: center;
                             }
 
-                            ComboBox {
+                            AppSelect {
                                 horizontal-stretch: 0;
                                 width: 230px;
                                 model: root.mod-sort-names;
                                 current-index <=> root.mod-sort;
-                                selected => {
-                                    root.mod-sort-selected(self.current-index);
+                                selected(index) => {
+                                    root.mod-sort-selected(index);
                                 }
                             }
 
