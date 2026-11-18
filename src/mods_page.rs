@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
@@ -26,7 +26,7 @@ use crate::mods::readme;
 use crate::mods::repository;
 use crate::mods::resolve::offered;
 use crate::mods::version::{Version, parse_tags, tag_number};
-use crate::{AppWindow, ModCardView, ModTagKind, ModTagView, log_for_config, paths};
+use crate::{AppWindow, ModCardView, ModTagKind, ModTagView, atomic_file, log_for_config, paths};
 
 /// The `api` the launcher builds on: shown without a `uses` label or warning.
 const OFFICIAL_API_SOURCE: &str = "https://github.com/Tutez64/DRH-Mod-API";
@@ -136,6 +136,14 @@ struct Page {
     /// The latest release of each mod installed from its repository, read
     /// with the index.
     releases: BTreeMap<String, Entry>,
+    /// The catalog's mods the user has had listed, kept in the install's
+    /// data, once `seen_read`. None: the catalog was never listed.
+    seen: Option<BTreeSet<String>>,
+    seen_read: bool,
+    /// Those that were new the last time the Catalog was opened on some:
+    /// marked from then on, for the user to find them in the list, until
+    /// newer ones take their place or the launcher closes.
+    new: BTreeSet<String>,
     /// Counts the reads of a link or zip, so a cancelled one is dropped.
     elsewhere: u64,
     /// What the last one gave.
@@ -1138,6 +1146,19 @@ impl View {
         let mut page = self.lock();
         let installed_tag = page.tag;
 
+        if let Some(dir) = &self.install_dir {
+            if !page.seen_read {
+                page.seen = read_seen(dir);
+                page.seen_read = true;
+            }
+            let listed = tab == CATALOG && ui.get_active_page() == MODS_PAGE;
+            if note_new(&mut page, listed)
+                && let Err(error) = write_seen(dir, page.seen.as_ref())
+            {
+                log(dir, LogLevel::Warn, &format!("Mods: {error}"));
+            }
+        }
+
         let rows: Vec<(String, ModCardView)> = if tab == CATALOG {
             catalog_rows(&page, installed_tag)
         } else {
@@ -1196,6 +1217,13 @@ impl View {
                 0 => "Installed".to_string(),
                 1 => "Installed · 1 update".to_string(),
                 count => format!("Installed · {count} updates"),
+            }
+            .into(),
+        );
+        ui.set_mods_catalog_tab_text(
+            match unseen(&page) {
+                0 => "Catalog".to_string(),
+                count => format!("Catalog · {count} new"),
             }
             .into(),
         );
@@ -1491,6 +1519,7 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                     downloads: SharedString::new(),
                     downloads_tip: SharedString::new(),
                     date: SharedString::new(),
+                    is_new: false,
                     enabled: page.enabled.contains(&m.id),
                     orderable: !official && reorderable,
                     can_move_up: at > first_movable,
@@ -1576,6 +1605,7 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                     downloads: stats.counts().into(),
                     downloads_tip: stats.downloads_text(&entry.version).into(),
                     date: date.unwrap_or_default().into(),
+                    is_new: page.new.contains(&entry.id),
                     enabled: installed.is_some_and(|m| page.enabled.contains(&m.id)),
                     orderable: false,
                     can_move_up: false,
@@ -1584,6 +1614,76 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
             )
         })
         .collect()
+}
+
+/// The ids the Catalog lists, whatever its search.
+fn catalog_ids(page: &Page) -> BTreeSet<String> {
+    page.index
+        .iter()
+        .flat_map(|index| &index.entries)
+        .map(|entry| entry.id.as_str())
+        .collect::<BTreeSet<&str>>()
+        .into_iter()
+        .filter(|id| offered_entry(page, id).is_some())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Marks the Catalog's mods added since the user last had it listed.
+/// `listed`: they have it now, which makes those seen, and the ones marked
+/// in place of any marked before: the tab's count is the marks to find.
+/// True when what they have seen changed, to write it. By what was listed
+/// rather than by date: a mod joins the index days after its release was
+/// published.
+fn note_new(page: &mut Page, listed: bool) -> bool {
+    if page.index.is_none() {
+        return false;
+    }
+    let ids = catalog_ids(page);
+    let Some(seen) = &mut page.seen else {
+        // The first time: all of it is what there was, none is new.
+        page.seen = Some(ids);
+        return true;
+    };
+    let added: BTreeSet<String> = ids.difference(seen).cloned().collect();
+    if !listed || added.is_empty() {
+        return false;
+    }
+    seen.extend(added.iter().cloned());
+    page.new = added;
+    true
+}
+
+/// How many of the Catalog's mods the user has not had listed yet.
+fn unseen(page: &Page) -> usize {
+    page.seen
+        .as_ref()
+        .map_or(0, |seen| catalog_ids(page).difference(seen).count())
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct SeenFile {
+    ids: BTreeSet<String>,
+}
+
+fn read_seen(install_dir: &Path) -> Option<BTreeSet<String>> {
+    let text = std::fs::read_to_string(paths::mod_catalog_seen_file(install_dir)).ok()?;
+    serde_json::from_str::<SeenFile>(&text)
+        .ok()
+        .map(|file| file.ids)
+}
+
+fn write_seen(install_dir: &Path, seen: Option<&BTreeSet<String>>) -> Result<(), String> {
+    let Some(ids) = seen else {
+        return Ok(());
+    };
+    let path = paths::mod_catalog_seen_file(install_dir);
+    let text = serde_json::to_string_pretty(&SeenFile { ids: ids.clone() })
+        .map_err(|error| error.to_string())?;
+    path.parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| atomic_file::write(&path, text.as_bytes()))
+        .map_err(|error| format!("Could not write {}: {error}", path.display()))
 }
 
 /// The tab's sort.
@@ -2680,6 +2780,78 @@ mod tests {
         assert_eq!((alone.date.as_str(), alone.downloads.as_str()), ("", ""));
         page.sort[CATALOG] = sort_at(CATALOG, Sort::Name);
         assert_eq!(catalog_rows(&page, None)[1].1.date, "");
+    }
+
+    #[test]
+    fn marks_the_mods_added_since_the_catalog_was_last_listed() {
+        let mut page = counted_page(&[("old", "1.0.0", 5, 1), ("older", "1.0.0", 9, 2)]);
+        let marked = |page: &Page| {
+            catalog_rows(page, None)
+                .into_iter()
+                .filter(|(_, row)| row.is_new)
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        };
+        // The first time, on whichever tab: all of it is what there was.
+        assert!(note_new(&mut page, false));
+        assert_eq!((unseen(&page), page.new.len()), (0, 0));
+
+        // Two mods join the index, one of them installed already; a new
+        // version of a known mod is not a new mod.
+        let entries = &mut page.index.as_mut().unwrap().entries;
+        entries.extend([
+            entry("fresh", "1.0.0"),
+            entry("mine", "1.0.0"),
+            entry("old", "1.1.0"),
+        ]);
+        page.mods = vec![installed("mine", "1.0.0", &[])];
+        assert!(!note_new(&mut page, false));
+        assert_eq!(unseen(&page), 2);
+
+        // Listed: seen from then on, and marked for as long as no other
+        // mod comes.
+        assert!(note_new(&mut page, true));
+        assert_eq!(unseen(&page), 0);
+        assert!(!note_new(&mut page, true));
+        assert!(!note_new(&mut page, false));
+        assert_eq!(marked(&page), ["fresh", "mine"]);
+        assert!(page.seen.as_ref().unwrap().contains("fresh"));
+
+        // Another one comes while the Installed list is shown: the tab
+        // counts it alone, and it alone is marked once the Catalog is.
+        let entries = &mut page.index.as_mut().unwrap().entries;
+        entries.push(entry("later", "1.0.0"));
+        assert!(!note_new(&mut page, false));
+        assert_eq!(unseen(&page), 1);
+        assert_eq!(marked(&page), ["fresh", "mine"]);
+        assert!(note_new(&mut page, true));
+        assert_eq!(unseen(&page), 0);
+        assert_eq!(marked(&page), ["later"]);
+
+        // The next time it starts: what was seen is read, nothing is new.
+        let mut next = Page {
+            index: page.index.clone(),
+            seen: page.seen.clone(),
+            ..Page::default()
+        };
+        assert!(!note_new(&mut next, false));
+        assert_eq!((unseen(&next), next.new.len()), (0, 0));
+
+        // Without an index, nothing is said to be seen.
+        let mut offline = Page::default();
+        assert!(!note_new(&mut offline, true));
+        assert!(offline.seen.is_none());
+    }
+
+    #[test]
+    fn keeps_what_was_seen_in_the_install() {
+        let install = tempfile::tempdir().unwrap();
+        assert_eq!(read_seen(install.path()), None);
+        let seen: BTreeSet<String> = ["api", "lib"].map(String::from).into();
+        write_seen(install.path(), Some(&seen)).unwrap();
+        assert_eq!(read_seen(install.path()), Some(seen));
+        std::fs::write(paths::mod_catalog_seen_file(install.path()), "not json").unwrap();
+        assert_eq!(read_seen(install.path()), None);
     }
 
     #[test]

@@ -75,6 +75,8 @@ export struct ModCardView {
     downloads: string,
     downloads-tip: string,
     date: string,
+    // A Catalog card's: it joined the catalog since it was last listed.
+    is-new: bool,
     enabled: bool,
     orderable: bool,
     can-move-up: bool,
@@ -584,6 +586,7 @@ export component AppWindow inherits Window {
     in property <[VersionEntryView]> drh-version-entries;
     in-out property <int> mods-page: 0;
     in property <string> mods-installed-tab-text: "Installed";
+    in property <string> mods-catalog-tab-text: "Catalog";
     in property <[ModCardView]> mod-entries;
     in-out property <bool> mod-detail-open: false;
     in property <string> mod-list-empty-text;
@@ -1862,7 +1865,7 @@ export component AppWindow inherits Window {
                             }
 
                             TabButton {
-                                text: "Catalog";
+                                text: root.mods-catalog-tab-text;
                                 active: root.mods-page == 1;
                                 clicked => {
                                     root.select-mods-page(1);
@@ -2041,6 +2044,7 @@ export component AppWindow inherits Window {
                                     downloads: entry.downloads;
                                     downloads-tip: entry.downloads-tip;
                                     date: entry.date;
+                                    is-new: entry.is-new;
                                     clicked => {
                                         root.select-mod(index);
                                     }

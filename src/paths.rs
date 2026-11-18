@@ -78,6 +78,12 @@ pub fn mod_index_cache_file(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("mod-index.json")
 }
 
+/// The catalog's mods the user has had listed, for the Mods page to mark
+/// those added since.
+pub fn mod_catalog_seen_file(install_dir: &std::path::Path) -> PathBuf {
+    data_dir(install_dir).join("mod-catalog-seen.json")
+}
+
 /// Mod versions downloaded before they replace the installed ones.
 pub fn mod_staging_dir(install_dir: &std::path::Path) -> PathBuf {
     data_dir(install_dir).join("mod-staging")
