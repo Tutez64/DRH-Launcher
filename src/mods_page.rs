@@ -116,6 +116,8 @@ struct Page {
     selected: [Option<String>; 2],
     search: [String; 2],
     sort: [usize; 2],
+    /// The Catalog lists only the mods that are not installed.
+    not_installed: bool,
     detail_open: [bool; 2],
     list_scroll: [f32; 2],
     detail_scroll: [f32; 2],
@@ -260,11 +262,15 @@ pub(crate) fn register(
         after_disclosure: Rc::default(),
     };
     {
-        let saved = &config.borrow().mods_sort;
-        context.view().lock().sort = [
+        let config = config.borrow();
+        let saved = &config.mods_sort;
+        let view = context.view();
+        let mut page = view.lock();
+        page.sort = [
             saved_sort(0, &saved.installed),
             saved_sort(CATALOG, &saved.catalog),
         ];
+        page.not_installed = config.mods_catalog_not_installed;
     }
 
     let on = context.clone();
@@ -403,6 +409,31 @@ pub(crate) fn register(
             }
         }
         // Another order: show it from its first mod.
+        if let Some(ui) = view.ui.upgrade() {
+            ui.set_mod_list_scroll(0.0);
+        }
+        view.render();
+    });
+
+    let on = context.clone();
+    ui.on_mods_not_installed_toggled(move |only| {
+        let view = on.view();
+        {
+            let mut page = view.lock();
+            if page.not_installed == only {
+                return;
+            }
+            page.not_installed = only;
+        }
+        // Kept for the next time the launcher starts.
+        {
+            let mut config = on.config.borrow_mut();
+            config.mods_catalog_not_installed = only;
+            if let Err(error) = config.save() {
+                log_for_config(&config, diagnostics::LogLevel::Error, &error.to_string());
+            }
+        }
+        // Another list: show it from its first mod.
         if let Some(ui) = view.ui.upgrade() {
             ui.set_mod_list_scroll(0.0);
         }
@@ -1165,10 +1196,12 @@ impl View {
             installed_rows(&page, installed_tag)
         };
         page.rows = rows.iter().map(|(id, _)| id.clone()).collect();
-        // A mod uninstalled from its page, or filtered out, closes it.
-        let selected = page.selected[tab]
-            .clone()
-            .filter(|id| page.rows.contains(id));
+        let shown = page.rows.len();
+        // A mod uninstalled from its page, or filtered out, closes it; not
+        // one installed from its page while the Catalog lists the others.
+        let selected = page.selected[tab].clone().filter(|id| {
+            page.rows.contains(id) || (tab == CATALOG && hidden_as_installed(&page, id))
+        });
         page.selected[tab] = selected.clone();
         if selected.is_none() {
             ui.set_mod_detail_open(false);
@@ -1183,11 +1216,16 @@ impl View {
                 "Loading the index..."
             } else if page.index.is_none() {
                 "The index could not be loaded: Refresh to try again, or see More mods."
+            } else if page.not_installed && page.search[CATALOG].trim().is_empty() {
+                "Every mod of the catalog is installed: untick Not installed to see them."
+            } else if page.not_installed {
+                "No mod matches among those not installed: untick Not installed to search them all."
             } else {
                 "No mod matches. Not in the catalog? See More mods."
             }
             .into(),
         );
+        ui.set_mods_not_installed(page.not_installed);
         ui.set_mod_entries(ModelRc::new(VecModel::from(
             rows.into_iter().map(|(_, view)| view).collect::<Vec<_>>(),
         )));
@@ -1229,7 +1267,7 @@ impl View {
         );
         ui.set_mods_index_status(
             if tab == CATALOG {
-                index_status(&page)
+                index_status(&page, shown)
             } else {
                 installed_status(&page)
             }
@@ -1547,6 +1585,7 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
         .into_iter()
         .filter_map(|id| offered_entry(page, id))
         .filter(|entry| matches(search, &entry.name, &entry.id, Some(&entry.source)))
+        .filter(|entry| !hidden_as_installed(page, &entry.id))
         .map(|entry| (entry, Stats::of(index, entry)))
         .collect();
     // By name, then by what the sort is on: mods equal there stay by name.
@@ -1614,6 +1653,12 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
             )
         })
         .collect()
+}
+
+/// Whether the Catalog leaves `id` out as installed, listing only the mods
+/// that are not.
+fn hidden_as_installed(page: &Page, id: &str) -> bool {
+    page.not_installed && page.mods.iter().any(|m| m.id == id)
 }
 
 /// The ids the Catalog lists, whatever its search.
@@ -2068,7 +2113,8 @@ fn readme_text(folder: &Path) -> String {
     readme::shown(&text).unwrap_or(text)
 }
 
-fn index_status(page: &Page) -> String {
+/// The index's mods, and how many of them the list shows when not all.
+fn index_status(page: &Page, shown: usize) -> String {
     let mods = page.index.as_ref().map(|index| {
         let mut ids: Vec<&str> = index
             .entries
@@ -2079,11 +2125,18 @@ fn index_status(page: &Page) -> String {
         ids.dedup();
         ids.len()
     });
+    let listed = |mods: usize| {
+        if shown < mods {
+            format!("{shown} of {}", count(mods, "mod"))
+        } else {
+            count(mods, "mod")
+        }
+    };
     match (page.fetching, &page.index_error, mods) {
         (true, _, _) => "Loading the index...".to_string(),
-        (false, Some(_), Some(mods)) => format!("{}, offline copy", count(mods, "mod")),
+        (false, Some(_), Some(mods)) => format!("{}, offline copy", listed(mods)),
         (false, Some(_), None) => "Index unavailable".to_string(),
-        (false, None, Some(mods)) => count(mods, "mod"),
+        (false, None, Some(mods)) => listed(mods),
         (false, None, None) => String::new(),
     }
 }
@@ -2855,6 +2908,26 @@ mod tests {
     }
 
     #[test]
+    fn the_catalog_can_list_only_the_mods_not_installed() {
+        let mut page = counted_page(&[
+            ("have", "1.0.0", 9, 1),
+            ("miss", "1.0.0", 5, 2),
+            ("want", "1.0.0", 1, 3),
+        ]);
+        page.mods = vec![installed("have", "1.0.0", &[])];
+        assert_eq!(catalog_ids(&page), ["have", "miss", "want"]);
+        page.not_installed = true;
+        assert_eq!(catalog_ids(&page), ["miss", "want"]);
+        assert!(hidden_as_installed(&page, "have"));
+        assert!(!hidden_as_installed(&page, "miss"));
+        // With the search.
+        page.search[CATALOG] = "wan".to_string();
+        assert_eq!(catalog_ids(&page), ["want"]);
+        // The new mods are counted whatever the list leaves out.
+        assert_eq!(super::catalog_ids(&page).len(), 3);
+    }
+
+    #[test]
     fn a_search_by_name_starts_with_the_names_closest_to_it() {
         let mut page = counted_page(&[
             ("dungeon_map", "1.0.0", 9, 1),
@@ -3076,10 +3149,11 @@ mod tests {
             }),
             ..Page::default()
         };
-        assert_eq!(index_status(&page), "2 mods");
+        assert_eq!(index_status(&page, 2), "2 mods");
+        assert_eq!(index_status(&page, 1), "1 of 2 mods");
         assert_eq!(installed_status(&page), "");
         page.index_error = Some("offline".to_string());
-        assert_eq!(index_status(&page), "2 mods, offline copy");
+        assert_eq!(index_status(&page, 2), "2 mods, offline copy");
         page.mods = vec![
             installed("lib", "1.0.0", &[]),
             installed("mine", "1.0.0", &[]),

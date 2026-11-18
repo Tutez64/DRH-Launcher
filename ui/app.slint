@@ -591,6 +591,8 @@ export component AppWindow inherits Window {
     in-out property <bool> mod-detail-open: false;
     in property <string> mod-list-empty-text;
     in-out property <string> mod-search;
+    // The Catalog lists only the mods that are not installed.
+    in property <bool> mods-not-installed;
     // The tab's sorts, and the one its list is in.
     in property <[string]> mod-sort-names;
     in-out property <int> mod-sort;
@@ -767,6 +769,7 @@ export component AppWindow inherits Window {
     callback select-mod(int);
     callback mod-search-edited(string);
     callback mod-sort-selected(int);
+    callback mods-not-installed-toggled(bool);
     callback mod-primary-action();
     callback mod-update();
     callback mods-update-all();
@@ -1951,6 +1954,16 @@ export component AppWindow inherits Window {
                                 value <=> root.mod-search;
                                 changed value => {
                                     root.mod-search-edited(self.value);
+                                }
+                            }
+
+                            // As high as the search.
+                            if root.mods-page == 1 : CompactCheck {
+                                vertical-padding: 7px;
+                                text: "Not installed";
+                                checked: root.mods-not-installed;
+                                toggled(checked) => {
+                                    root.mods-not-installed-toggled(checked);
                                 }
                             }
 

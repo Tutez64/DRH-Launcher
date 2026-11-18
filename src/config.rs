@@ -28,6 +28,9 @@ pub struct LauncherConfig {
     pub mods_disclosure_confirmed: bool,
     #[serde(default)]
     pub mods_sort: ModsSort,
+    /// The Catalog lists only the mods that are not installed.
+    #[serde(default)]
+    pub mods_catalog_not_installed: bool,
 }
 
 /// The sort last chosen for each list of the Mods page, as that page names
@@ -55,6 +58,7 @@ impl Default for LauncherConfig {
             hide_haxe_iteratee_log_lines: default_hide_haxe_iteratee_log_lines(),
             mods_disclosure_confirmed: false,
             mods_sort: ModsSort::default(),
+            mods_catalog_not_installed: false,
         }
     }
 }
@@ -302,6 +306,7 @@ mod tests {
         let read: LauncherConfig = serde_json::from_str(&saved).unwrap();
         assert_eq!(read.mods_sort.catalog, "added");
         assert_eq!(read.mods_sort.installed, "");
+        assert!(!read.mods_catalog_not_installed);
 
         let mut older: serde_json::Value = serde_json::from_str(&saved).unwrap();
         older.as_object_mut().unwrap().remove("mods_sort");

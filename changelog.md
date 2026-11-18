@@ -5,6 +5,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 - The Mods lists can be sorted, and keep the sort last chosen. Catalog: by downloads (of every version, which it starts with, or of the latest one), newest, last update, or name. Installed: by load order, name, or updates first.
 - **Update all**, in the Installed list when a mod has an update: it lists each mod with its installed and its new version, then updates them one after the other.
+- **Not installed**, in the Catalog, lists only the mods you do not have.
 - The mods that joined the catalog since it was last opened are marked: the Catalog tab says how many, and their cards carry a **NEW** mark by their name.
 - Catalog cards and a mod's page show its downloads, and its page when it was published and last updated. These come from the mod index once it is generated with this version.
 
@@ -19,6 +20,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 - `--new-mod` asks for the mod's name and takes its id from it (`Cool Mod` gives `cool_mod`), asking for one only when the name gives none.
 - `--check-mod` and the index's check note an id that is not the one its name gives, without refusing it.
 - Searching the Mods lists by name shows first the names that start with the search.
+- The Catalog's count says how many mods a search leaves (`3 of 26 mods`).
 
 ### Internal
 

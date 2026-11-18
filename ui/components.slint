@@ -1018,16 +1018,18 @@ export component SegmentedButton inherits Rectangle {
 export component CompactCheck inherits Rectangle {
     in property <string> text;
     in property <bool> checked;
+    // Above and below its box: less next to a lower control.
+    in property <length> vertical-padding: 10px;
     callback toggled(bool);
 
-    height: 38px;
+    height: 18px + 2 * root.vertical-padding;
     width: layout.preferred-width;
 
     layout := HorizontalLayout {
         spacing: 8px;
         alignment: start;
-        padding-top: 10px;
-        padding-bottom: 10px;
+        padding-top: root.vertical-padding;
+        padding-bottom: root.vertical-padding;
 
         Rectangle {
             width: 18px;
