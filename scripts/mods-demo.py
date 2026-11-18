@@ -29,6 +29,9 @@ What the lists have to try their sorts, searches and Update all on:
   one its entry describes, so it fails and the others are still updated.
   API has no update: Wants New API needs a version the index does not have.
 - The sort of each list is kept in the demo's config: --keep finds it again.
+- Not installed, in the Catalog: seven of the fourteen mods are left.
+  Install one from its page: the page stays open, and the mod has left the
+  list once back on it.
 - New mods: Map Markers and Quick Restart joined the index since the Catalog
   was last listed. Installed opens first, its neighbour reading
   `Catalog · 2 new`; both cards are marked NEW until the launcher closes,
@@ -229,7 +232,9 @@ def zip_bytes(files):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         for path in sorted(files):
-            archive.writestr(path, files[path])
+            # A fixed date: written again when a mod joins the index, a zip
+            # is still the one an index read earlier describes.
+            archive.writestr(zipfile.ZipInfo(path, date_time=(2026, 1, 1, 0, 0, 0)), files[path])
     return buffer.getvalue()
 
 
