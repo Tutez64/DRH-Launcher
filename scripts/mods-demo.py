@@ -29,6 +29,12 @@ What the lists have to try their sorts, searches and Update all on:
   one its entry describes, so it fails and the others are still updated.
   API has no update: Wants New API needs a version the index does not have.
 - The sort of each list is kept in the demo's config: --keep finds it again.
+- New mods: Map Markers and Quick Restart joined the index since the Catalog
+  was last listed. Installed opens first, its neighbour reading
+  `Catalog · 2 new`; both cards are marked NEW until the launcher closes,
+  and --keep no longer marks them. Late Arrival joins the index half a
+  minute after the demo starts, which the terminal says: Refresh from
+  Installed then reads `Catalog · 1 new`, and it alone is marked.
 """
 
 import hashlib
@@ -149,7 +155,14 @@ INDEXED = [
     ("quick_restart", "Quick Restart", "0.2.0", "Nox", "nox",
      "Restart the dungeon you just finished, without going back to town.",
      "0.1", None, [], {}, None, "Restarts a dungeon."),
+    ("late_arrival", "Late Arrival", "1.0.0", "Mira", "mira-mods",
+     "A mod that joins the index half a minute after the demo starts.",
+     "0.1", None, [], {}, None, "Refresh to see it arrive."),
 ]
+
+# Mods that join the index a while after the demo starts.
+LATE = {"late_arrival"}
+LATE_AFTER = 30
 
 # What GitHub counts for each version: when its release was published, and
 # its zip's downloads. Loot Filter has none, as when GitHub did not answer.
@@ -174,6 +187,7 @@ STATS = {
     ("map_markers", "0.5.0"): ("2026-11-17T15:00:00Z", 4),
     ("dungeon_map", "1.4.2"): ("2026-10-30T09:30:00Z", 520),
     ("quick_restart", "0.2.0"): ("2026-10-15T18:00:00Z", 1890),
+    ("late_arrival", "1.0.0"): ("2026-11-18T09:00:00Z", 0),
 }
 
 # Versions whose entry describes another zip than the one served.
@@ -225,13 +239,17 @@ def source_of(id, name, owner):
     return f"https://github.com/{owner}/DRH-Mod-{name.replace(' ', '-')}"
 
 
-def write_index(base):
-    """The index and its zips, whose URLs name the server's port."""
-    shutil.rmtree(INDEX, ignore_errors=True)
-    os.makedirs(INDEX)
+def write_index(base, late=False):
+    """The index and its zips, whose URLs name the server's port. `late`:
+    with the mods that join it after the start."""
+    if not late:
+        shutil.rmtree(INDEX, ignore_errors=True)
+        os.makedirs(INDEX)
     entries = []
     for (id, name, version, author, owner, description, api, drh, uses, deps, yanked,
          long) in INDEXED:
+        if id in LATE and not late:
+            continue
         files = mod_files(id, name, version, author, description, api, drh, uses, deps, long)
         data = zip_bytes(files)
         zip_name = f"{id}-{version}.zip"
@@ -255,9 +273,12 @@ def write_index(base):
         if (id, version) in STATS:
             entry["published"], entry["downloads"] = STATS[(id, version)]
         entries.append(entry)
-    with open(os.path.join(INDEX, "index.json"), "w") as file:
+    # Written aside then moved, for the launcher never to read half of it.
+    path = os.path.join(INDEX, "index.json")
+    with open(path + ".new", "w") as file:
         json.dump({"format": 1, "generated": "2026-11-18T00:00:00Z", "entries": entries},
                   file, indent=2)
+    os.replace(path + ".new", path)
 
 
 def write_install():
@@ -367,6 +388,10 @@ def write_install():
     os.makedirs(os.path.join(INSTALL, "data"))
     with open(os.path.join(INSTALL, "data", "mods.json"), "w") as file:
         json.dump(state, file, indent=2)
+    # The catalog as the user last had it listed: two mods came since.
+    seen = sorted({row[0] for row in INDEXED} - {"map_markers", "quick_restart"} - LATE)
+    with open(os.path.join(INSTALL, "data", "mod-catalog-seen.json"), "w") as file:
+        json.dump({"ids": seen}, file, indent=2)
 
     # DRH V13: what the launcher records, and a stand-in executable.
     installed = {"active": {
@@ -401,6 +426,14 @@ def main():
     base = f"http://127.0.0.1:{server.server_address[1]}"
     write_index(base)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def arrive():
+        write_index(base, late=True)
+        print("Late Arrival joined the index: Refresh to see it.", flush=True)
+
+    late = threading.Timer(LATE_AFTER, arrive)
+    late.daemon = True
+    late.start()
 
     subprocess.run(["cargo", "build", "--quiet", "--bin", "DRH-Launcher"], cwd=REPO,
                    check=True)
