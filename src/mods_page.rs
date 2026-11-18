@@ -162,6 +162,8 @@ type Deferred = Box<dyn FnOnce()>;
 enum Action {
     Install(Entry),
     Update(Entry),
+    /// Every update the Installed list offers, in its order.
+    UpdateAll(Vec<Entry>),
     Enable(String),
     Disable(String),
     Uninstall(String),
@@ -406,6 +408,15 @@ pub(crate) fn register(
     ui.on_mod_update(move || {
         if let Some(entry) = on.view().selected_update() {
             on.ask(Action::Update(entry));
+        }
+    });
+
+    let on = context.clone();
+    ui.on_mods_update_all(move || {
+        let view = on.view();
+        let updates = updates(&view.lock());
+        if !updates.is_empty() {
+            on.ask(Action::UpdateAll(updates));
         }
     });
 
@@ -816,6 +827,53 @@ impl Context {
                     ))
                 },
             ),
+            Action::UpdateAll(entries) => {
+                let Some(first) = entries.first().map(|entry| entry.id.clone()) else {
+                    return;
+                };
+                let shown = self.view();
+                let config = self.config.borrow().clone();
+                let app_shutting_down = Arc::clone(&self.app_shutting_down);
+                self.in_background((first, "Updating..."), move |library, index, tag| {
+                    let (mut updated, mut warnings, mut failed) =
+                        (Vec::new(), Vec::new(), Vec::new());
+                    for entry in entries {
+                        // An earlier one may have brought it, as what it needs.
+                        let installed = library
+                            .scan()?
+                            .into_iter()
+                            .find(|m| m.id == entry.id)
+                            .and_then(|m| Version::parse(&m.version));
+                        if installed >= entry.parsed_version() {
+                            updated.push(format!("{} to {}", entry.name, entry.version));
+                            continue;
+                        }
+                        shown.lock().working = Some((entry.id.clone(), "Updating..."));
+                        let list = shown.clone();
+                        crate::invoke_on_event_loop(&config, &app_shutting_down, move || {
+                            list.render();
+                        });
+                        // One that fails does not keep the others waiting.
+                        match library.update(&index, &entry, tag) {
+                            Ok(more) => {
+                                updated.push(format!("{} to {}", entry.name, entry.version));
+                                warnings.extend(more);
+                            }
+                            Err(error) => failed.push(format!("{}: {error}", entry.name)),
+                        }
+                    }
+                    let done = if updated.is_empty() {
+                        "No mod updated.".to_string()
+                    } else {
+                        format!("Updated {}.", updated.join(", "))
+                    };
+                    if failed.is_empty() {
+                        Ok((done, warnings))
+                    } else {
+                        Err(format!("{done} Not updated: {}", failed.join("; ")))
+                    }
+                });
+            }
             Action::Enable(id) => {
                 let name = names(&view.lock(), std::slice::from_ref(&id));
                 self.in_background((id.clone(), "Enabling..."), move |library, index, tag| {
@@ -1132,6 +1190,7 @@ impl View {
             .iter()
             .filter(|m| update_for(&page, m).is_some())
             .count();
+        ui.set_mods_updates(updates as i32);
         ui.set_mods_installed_tab_text(
             match updates {
                 0 => "Installed".to_string(),
@@ -1964,6 +2023,9 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Conse
             .cloned()
             .collect()
     };
+    if let Action::UpdateAll(entries) = action {
+        return consequences_of_all(page, library, index, entries);
+    }
     let plan = match action {
         Action::Install(entry) => Some((&entry.id, library.plan_install(index, entry, page.tag)?)),
         Action::Update(entry) => Some((&entry.id, library.plan_update(index, entry, page.tag)?)),
@@ -1974,11 +2036,11 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Conse
         Action::InstallFrom(Elsewhere::Zip(staged)) => {
             Some((&staged.id, library.plan_staged(index, staged, page.tag)?))
         }
-        Action::Disable(_) | Action::Uninstall(_) => None,
+        Action::Disable(_) | Action::Uninstall(_) | Action::UpdateAll(_) => None,
     };
     let also = plan
         .as_ref()
-        .map(|(id, plan)| others_changed(page, id, plan))
+        .map(|(id, plan)| others_changed(page, id, &[], plan))
         .unwrap_or_default();
     let (mut mods, enabled) = match (action, plan) {
         (_, Some((_, plan))) => planned(page, plan),
@@ -1986,13 +2048,59 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Conse
             page.mods.iter().filter(|m| m.id != *id).cloned().collect(),
             without(id),
         ),
-        // Disable.
-        (_, None) => (page.mods.clone(), without(id_of(action))),
+        (Action::Disable(id), None) => (page.mods.clone(), without(id)),
+        (_, None) => (page.mods.clone(), page.enabled.clone()),
     };
     if let Action::InstallFrom(Elsewhere::Zip(staged)) = action {
         mods.retain(|m| m.id != staged.id);
         mods.push(staged.clone());
     }
+    Ok(Consequences {
+        also,
+        problems: problems_after(page, mods, enabled),
+    })
+}
+
+/// What updating every one of `entries` in turn would change besides them,
+/// and the problems it would leave. Each is planned on what is installed
+/// now: what an earlier one brings may spare a later one something.
+fn consequences_of_all(
+    page: &Page,
+    library: &Library,
+    index: &Index,
+    entries: &[Entry],
+) -> Result<Consequences, String> {
+    let ids: Vec<&str> = entries.iter().map(|entry| entry.id.as_str()).collect();
+    let mut also: Vec<String> = Vec::new();
+    let mut after = Page {
+        mods: page.mods.clone(),
+        enabled: page.enabled.clone(),
+        ..Page::default()
+    };
+    for entry in entries {
+        let plan = library.plan_update(index, entry, page.tag)?;
+        for change in others_changed(page, &entry.id, &ids, &plan) {
+            if !also.contains(&change) {
+                also.push(change);
+            }
+        }
+        let (mods, enabled) = planned(&after, plan);
+        after.mods = mods;
+        for id in enabled {
+            if !after.enabled.contains(&id) {
+                after.enabled.push(id);
+            }
+        }
+    }
+    Ok(Consequences {
+        also,
+        problems: problems_after(page, after.mods, after.enabled),
+    })
+}
+
+/// The issues the mods would have with `mods` installed and `enabled`
+/// enabled, which they do not have now, by label.
+fn problems_after(page: &Page, mods: Vec<InstalledMod>, enabled: Vec<String>) -> Vec<String> {
     let after = Page {
         index: page.index.clone(),
         mods,
@@ -2000,7 +2108,7 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Conse
         tag: page.tag,
         ..Page::default()
     };
-    let problems = after
+    after
         .mods
         .iter()
         .flat_map(|m| {
@@ -2020,25 +2128,30 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Conse
                 .filter(move |issue| !known.contains(&issue.label))
                 .map(move |issue| format!("{}: {}", m.name, issue.message))
         })
-        .collect();
-    Ok(Consequences { also, problems })
+        .collect()
 }
 
-fn id_of(action: &Action) -> &str {
-    match action {
-        Action::Install(entry) | Action::Update(entry) => &entry.id,
-        Action::Enable(id) | Action::Disable(id) | Action::Uninstall(id) => id,
-        Action::InstallFrom(found) => found.id(),
-    }
+/// Every update the Installed list offers, in the load order.
+fn updates(page: &Page) -> Vec<Entry> {
+    list_order(page)
+        .iter()
+        .filter_map(|id| page.mods.iter().find(|m| m.id == *id))
+        .filter_map(|m| update_for(page, m).cloned())
+        .collect()
 }
 
 /// The mods `plan` installs, updates or enables besides `id`, but the
-/// official `api`, which every mod needs.
-fn others_changed(page: &Page, id: &str, plan: &Plan) -> Vec<String> {
+/// official `api`, which every mod needs. `listed`: the mods whose update is
+/// said already; one of them that the plan enables is still named.
+fn others_changed(page: &Page, id: &str, listed: &[&str], plan: &Plan) -> Vec<String> {
     let mut also: Vec<String> = plan
         .entries
         .iter()
-        .filter(|(entry, _)| entry.id != id && entry.source != OFFICIAL_API_SOURCE)
+        .filter(|(entry, _)| {
+            entry.id != id
+                && !listed.contains(&entry.id.as_str())
+                && entry.source != OFFICIAL_API_SOURCE
+        })
         .map(
             |(entry, _)| match page.mods.iter().find(|m| m.id == entry.id) {
                 Some(m) => format!("updates {} to {}", m.name, entry.version),
@@ -2071,14 +2184,15 @@ fn planned(page: &Page, plan: Plan) -> (Vec<InstalledMod>, Vec<String>) {
     (mods, plan.enabled)
 }
 
-/// What to ask before `action`: always before an uninstall or installing a
-/// mod from elsewhere, else only when it changes other mods or adds
-/// problems.
+/// What to ask before `action`: always before an uninstall, installing a
+/// mod from elsewhere or updating them all, which the click alone does not
+/// list, else only when it changes other mods or adds problems.
 fn confirmation(page: &Page, action: &Action, consequences: &Consequences) -> Option<Confirm> {
     let Consequences { also, problems } = consequences;
     let uninstall = matches!(action, Action::Uninstall(_));
     let elsewhere = matches!(action, Action::InstallFrom(_));
-    if also.is_empty() && problems.is_empty() && !uninstall && !elsewhere {
+    let all = matches!(action, Action::UpdateAll(_));
+    if also.is_empty() && problems.is_empty() && !uninstall && !elsewhere && !all {
         return None;
     }
     let (title, verb) = match action {
@@ -2087,6 +2201,9 @@ fn confirmation(page: &Page, action: &Action, consequences: &Consequences) -> Op
             format!("Update {} to {}?", entry.name, entry.version),
             "Update",
         ),
+        Action::UpdateAll(entries) => {
+            (format!("Update {}?", count(entries.len(), "mod")), "Update")
+        }
         Action::Enable(id) => (
             format!("Enable {}?", names(page, std::slice::from_ref(id))),
             "Enable",
@@ -2103,6 +2220,18 @@ fn confirmation(page: &Page, action: &Action, consequences: &Consequences) -> Op
     };
     let mut text = match action {
         Action::Uninstall(_) => "Its folder is deleted from the mods folder.".to_string(),
+        Action::UpdateAll(entries) => entries
+            .iter()
+            .map(|entry| {
+                let installed = page
+                    .mods
+                    .iter()
+                    .find(|m| m.id == entry.id)
+                    .map_or("", |m| m.version.as_str());
+                format!("• {}  {installed} → {}", entry.name, entry.version)
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         Action::InstallFrom(found) => {
             let mut text =
                 "No one has reviewed its code: only install it if you trust where it comes from."
@@ -2630,6 +2759,61 @@ mod tests {
         assert!(none.problems.is_empty());
         assert!(confirmation(&page, &Action::Disable("other".to_string()), &none).is_none());
         assert!(confirmation(&page, &Action::Uninstall("other".to_string()), &none).is_some());
+    }
+
+    #[test]
+    fn asks_before_updating_them_all_and_lists_them() {
+        let mut page = library_page();
+        page.index = Some(Index {
+            entries: vec![
+                entry("other", "1.0.0"),
+                entry("other", "1.1.0"),
+                entry("lib", "0.1.0"),
+                entry("lib", "0.1.2"),
+                entry("mine", "1.0.0"),
+            ],
+        });
+        page.order = ["other", "lib", "mine"].map(String::from).to_vec();
+        let all = updates(&page);
+        let listed: Vec<String> = all
+            .iter()
+            .map(|entry| format!("{} {}", entry.id, entry.version))
+            .collect();
+        // In the load order; `mine` has none.
+        assert_eq!(listed, ["other 1.1.0", "lib 0.1.2"]);
+
+        // Nothing installed there: the plans only read the folder.
+        let library = Library::new(Path::new("no-such-install"));
+        let action = Action::UpdateAll(all);
+        let found = consequences(&page, &library, &action).unwrap();
+        // Each is in the list: none is something the others also change.
+        assert!(found.also.is_empty(), "{:?}", found.also);
+        assert!(found.problems.is_empty(), "{:?}", found.problems);
+        let asked = confirmation(&page, &action, &found).unwrap();
+        assert_eq!(asked.title, "Update 2 mods?");
+        assert_eq!(asked.text, "• other  1.0.0 → 1.1.0\n• lib  0.1.0 → 0.1.2");
+        assert_eq!(asked.button, "Update");
+
+        // One alone is still not asked about.
+        let one = Action::Update(entry("other", "1.1.0"));
+        let found = consequences(&page, &library, &one).unwrap();
+        assert!(confirmation(&page, &one, &found).is_none());
+
+        // A listed mod's update is not said twice, but that another one
+        // enables it is: `other` 1.2.0 needs `lib`, which is disabled.
+        page.enabled.retain(|id| id != "lib" && id != "mine");
+        page.index.as_mut().unwrap().entries.push(Entry {
+            dependencies: [("lib".to_string(), "0.1".to_string())].into(),
+            ..entry("other", "1.2.0")
+        });
+        let action = Action::UpdateAll(updates(&page));
+        let found = consequences(&page, &library, &action).unwrap();
+        assert_eq!(found.also, ["enables lib"]);
+        let asked = confirmation(&page, &action, &found).unwrap();
+        assert_eq!(
+            asked.text,
+            "• other  1.0.0 → 1.2.0\n• lib  0.1.0 → 0.1.2\n\nThis also:\n• enables lib"
+        );
     }
 
     #[test]

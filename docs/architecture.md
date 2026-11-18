@@ -821,7 +821,14 @@ store.
   for a mod installed from a repository link, when that repository's
   latest release is newer (checked with the index, one GitHub API call
   per such mod). An update keeps a disabled mod disabled: its folder
-  alone is replaced, and what it needs is settled when it is enabled
+  alone is replaced, and what it needs is settled when it is enabled.
+  **Update all**, in Installed while a mod has an update, updates them
+  one after the other in the load order; it always asks first, listing
+  each mod with its installed and its new version, since the click alone
+  does not say which they are, then what the updates change besides and
+  the problems they would add, as any action. One that fails does not
+  stop the others; the line above the list then says which were updated
+  and which were not
 - open the mods folder. **More mods** links to Discord to share a mod
   idea and to the game repository's `docs/making-a-mod.md`, then, set
   apart, installs from a local zip or from a GitHub repository link. A mod installed either

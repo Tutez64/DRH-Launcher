@@ -609,6 +609,8 @@ export component AppWindow inherits Window {
     in-out property <string> mod-elsewhere-working;
     in-out property <string> mod-elsewhere-error;
     in property <string> mods-index-status;
+    // How many installed mods have an update.
+    in property <int> mods-updates;
     in property <string> selected-mod-title: "No mod selected";
     in property <string> selected-mod-description;
     in property <string> selected-mod-author;
@@ -764,6 +766,7 @@ export component AppWindow inherits Window {
     callback mod-sort-selected(int);
     callback mod-primary-action();
     callback mod-update();
+    callback mods-update-all();
     callback mod-uninstall();
     callback open-mod-folder();
     callback mod-confirm-accepted();
@@ -1970,6 +1973,18 @@ export component AppWindow inherits Window {
                                 color: Theme.text-support;
                                 font-size: 12px;
                                 vertical-alignment: center;
+                            }
+
+                            // As high as the search, for the row to keep
+                            // its height with and without it.
+                            if root.mods-page == 0 && root.mods-updates > 0 : SecondaryButton {
+                                horizontal-stretch: 0;
+                                min-height: 32px;
+                                text: "Update all (" + root.mods-updates + ")";
+                                enabled: !root.mods-busy;
+                                clicked => {
+                                    root.mods-update-all();
+                                }
                             }
                         }
 
@@ -3221,11 +3236,23 @@ export component AppWindow inherits Window {
                     wrap: word-wrap;
                 }
 
-                Text {
-                    text: root.mod-confirm-text;
-                    color: Theme.text-body;
-                    font-size: 14px;
-                    wrap: word-wrap;
+                // Scrolled when it is long, as the list of an Update all
+                // can be, for the buttons to stay in the window.
+                ScrollView {
+                    height: min(mod-confirm-body.preferred-height, max(80px, root.height - 240px));
+                    content-width: self.width;
+                    content-height: mod-confirm-body.preferred-height;
+
+                    mod-confirm-body := VerticalLayout {
+                        width: parent.width;
+
+                        Text {
+                            text: root.mod-confirm-text;
+                            color: Theme.text-body;
+                            font-size: 14px;
+                            wrap: word-wrap;
+                        }
+                    }
                 }
 
                 HorizontalLayout {
