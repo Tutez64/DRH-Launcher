@@ -11,6 +11,24 @@ Everything lives in target/mods-demo/; your own install is not touched. The
 index is served on a free local port; the zips install for real. DRH is a
 stand-in V13: Play starts nothing, and shows a game that stopped before
 loading the mods.
+
+What the lists have to try their sorts, searches and Update all on:
+
+- Catalog, by downloads: API leads with 12,480 (7,270); HUD Tweaks has many
+  in all and few for its latest version; Damage Meter counts the version
+  offered on DRH 13, not its newest; A Mod With A Very Long Name has 1; Loot
+  Filter has no count and no date, as when GitHub did not answer, and comes
+  last in every sort but Name.
+- Catalog, by date: Map Markers is the newest mod, HUD Tweaks the last
+  updated, and Party Board is old but updated lately.
+- Search `map`, by Name: Map Markers, which starts with it, comes before
+  Dungeon Map. Search while scrolled down: the results show from the first.
+- Update all, in Installed: five mods. Text Lib is disabled, and its own
+  update leaves it so (try Update on its page), but HUD Tweaks 1.3.0 now
+  needs it, so the list says it enables it; Broken Update's zip is not the
+  one its entry describes, so it fails and the others are still updated.
+  API has no update: Wants New API needs a version the index does not have.
+- The sort of each list is kept in the demo's config: --keep finds it again.
 """
 
 import hashlib
@@ -109,7 +127,57 @@ INDEXED = [
     ("damage_meter", "Damage Meter", "2.1.0", "Kael", "kael-dev",
      "Shows the party's damage per second.",
      "0.1", "14", ["extends"], {}, None, "Only for DRH 14: the Catalog offers 2.0.1 on DRH 13."),
+    ("hud_tweaks", "HUD Tweaks", "1.3.0", "Mira", "mira-mods",
+     "Moves and resizes parts of the HUD: health, cooldowns, minimap.",
+     "0.1", "13", ["extends"], {"text_lib": "0.2"}, None,
+     LONG + "\nNew in 1.3: needs Text Lib, which updating it enables."),
+    ("text_lib", "Text Lib", "0.2.4", "Nox", "nox",
+     "Text helpers other mods use: formatting, colors, wrapping.",
+     "0.1", None, [], {}, None, "A library: install a mod that needs it."),
+    ("broken_update", "Broken Update", "1.0.0", "Someone", "someone",
+     "A mod whose update fails: its zip is not the one the index describes.",
+     "0.1", None, [], {}, None, "The installed version."),
+    ("broken_update", "Broken Update", "1.0.1", "Someone", "someone",
+     "A mod whose update fails: its zip is not the one the index describes.",
+     "0.1", None, [], {}, None, "The version that cannot be installed."),
+    ("map_markers", "Map Markers", "0.5.0", "Mira", "mira-mods",
+     "Pin notes on the dungeon map.",
+     "0.1", None, [], {}, None, "The newest mod of the index."),
+    ("dungeon_map", "Dungeon Map", "1.4.2", "Kael", "kael-dev",
+     "A map of the floor, with its rooms and exits.",
+     "0.1", "13-14", ["extends"], {}, None, "A map."),
+    ("quick_restart", "Quick Restart", "0.2.0", "Nox", "nox",
+     "Restart the dungeon you just finished, without going back to town.",
+     "0.1", None, [], {}, None, "Restarts a dungeon."),
 ]
+
+# What GitHub counts for each version: when its release was published, and
+# its zip's downloads. Loot Filter has none, as when GitHub did not answer.
+STATS = {
+    ("api", "0.1.0"): ("2026-09-01T10:00:00Z", 5210),
+    ("api", "0.1.1"): ("2026-10-20T18:30:00Z", 7270),
+    ("party_board", "0.1.0"): ("2026-09-05T09:00:00Z", 900),
+    ("party_board", "0.2.0"): ("2026-11-10T21:15:00Z", 310),
+    ("hud_tweaks", "1.2.0"): ("2026-09-20T14:00:00Z", 640),
+    ("hud_tweaks", "1.3.0"): ("2026-11-15T08:45:00Z", 12),
+    ("boss_rework", "0.3.0"): ("2026-10-02T12:00:00Z", 85),
+    ("text_lib", "0.2.3"): ("2026-09-12T16:20:00Z", 410),
+    ("text_lib", "0.2.4"): ("2026-11-01T11:00:00Z", 95),
+    ("chat_macros", "1.0.0"): ("2026-10-25T19:00:00Z", 60),
+    ("old_mod", "1.0.0"): ("2026-09-08T07:30:00Z", 230),
+    ("old_mod", "1.1.0"): ("2026-09-30T22:10:00Z", 140),
+    ("very_long_named_mod", "10.20.30"): ("2026-10-10T13:00:00Z", 1),
+    ("damage_meter", "2.0.1"): ("2026-09-15T17:00:00Z", 2300),
+    ("damage_meter", "2.1.0"): ("2026-11-12T20:00:00Z", 480),
+    ("broken_update", "1.0.0"): ("2026-10-05T10:00:00Z", 33),
+    ("broken_update", "1.0.1"): ("2026-11-16T10:00:00Z", 0),
+    ("map_markers", "0.5.0"): ("2026-11-17T15:00:00Z", 4),
+    ("dungeon_map", "1.4.2"): ("2026-10-30T09:30:00Z", 520),
+    ("quick_restart", "0.2.0"): ("2026-10-15T18:00:00Z", 1890),
+}
+
+# Versions whose entry describes another zip than the one served.
+BROKEN = {("broken_update", "1.0.1")}
 
 
 def mod_json(id, name, version, author, description, api, drh, uses, deps):
@@ -178,14 +246,17 @@ def write_index(base):
         entry["uses"] = uses
         if deps:
             entry["dependencies"] = deps
+        described = b"another zip" if (id, version) in BROKEN else data
         entry.update({"url": f"{base}/{zip_name}", "size": len(data),
-                      "sha256": hashlib.sha256(data).hexdigest(),
+                      "sha256": hashlib.sha256(described).hexdigest(),
                       "source": source_of(id, name, owner)})
         if yanked:
             entry["yanked"] = yanked
+        if (id, version) in STATS:
+            entry["published"], entry["downloads"] = STATS[(id, version)]
         entries.append(entry)
     with open(os.path.join(INDEX, "index.json"), "w") as file:
-        json.dump({"format": 1, "generated": "2026-10-18T00:00:00Z", "entries": entries},
+        json.dump({"format": 1, "generated": "2026-11-18T00:00:00Z", "entries": entries},
                   file, indent=2)
 
 
@@ -220,6 +291,7 @@ def write_install():
     indexed("boss_rework", "0.3.0")
     indexed("text_lib", "0.2.3")
     indexed("hud_tweaks", "1.2.0")
+    indexed("broken_update", "1.0.0")
     # Was a dependency of a mod since uninstalled, and is no longer listed.
     write_folder(os.path.join(MODS, "orphan_lib"), mod_files(
         "orphan_lib", "Orphan Lib", "0.1.0", "Nox", "A library nothing needs any more.",
@@ -242,7 +314,7 @@ def write_install():
 
     enabled = ["api", "party_board", "old_mod", "boss_rework", "needs_ghost", "needs_text",
                "wants_new_api", "from_zip", "from_repo", "broken_json", "orphan_lib",
-               "hud_tweaks"]
+               "hud_tweaks", "broken_update"]
     with open(os.path.join(MODS, "enabled.json"), "w") as file:
         json.dump({"mods": [{"id": id} for id in enabled]}, file, indent=2)
 
@@ -268,6 +340,7 @@ def write_install():
             run("broken_json", "1.0.0", "failed", error="mod.json: api must be a version"),
             run("orphan_lib", "0.1.0"),
             run("hud_tweaks", "1.2.0"),
+            run("broken_update", "1.0.0"),
         ]}, file, indent=2)
 
     sources = {row[0]: source_of(row[0], row[1], row[4]) for row in INDEXED}
@@ -278,6 +351,7 @@ def write_install():
             "old_mod": {"from": "index"},
             "boss_rework": {"from": "index"},
             "hud_tweaks": {"from": "index"},
+            "broken_update": {"from": "index"},
             "text_lib": {"from": "index", "dependency": True},
             "orphan_lib": {"from": "index", "dependency": True},
             "from_zip": {"from": "zip"},
