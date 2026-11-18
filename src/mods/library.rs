@@ -195,6 +195,28 @@ impl Library {
         self.settle(index, Some(Added::Entry(entry)), installed_tag)
     }
 
+    /// Updates an installed mod to `entry`. Enabled, as `install` does: what
+    /// it needs is installed and enabled with it. Disabled, its folder alone
+    /// is replaced and it stays so: enabling it settles what it needs then.
+    pub fn update(
+        &self,
+        index: &Index,
+        entry: &Entry,
+        installed_tag: Option<u32>,
+    ) -> Result<Vec<String>, String> {
+        if !self.is_disabled(&entry.id)? {
+            return self.install(index, entry, installed_tag);
+        }
+        self.put(&self.scan()?, &[(entry, false)])?;
+        Ok(Vec::new())
+    }
+
+    /// Installed, and not enabled.
+    fn is_disabled(&self, id: &str) -> Result<bool, String> {
+        Ok(self.scan()?.iter().any(|m| m.id == id)
+            && !self.enabled().iter().any(|known| known == id))
+    }
+
     /// Installs `entry`, from its repository's latest release, as `install`
     /// does; the launcher then updates it from that repository.
     pub fn install_from_repository(
@@ -378,6 +400,23 @@ impl Library {
         installed_tag: Option<u32>,
     ) -> Result<Plan, String> {
         self.plan(index, Some(Added::Entry(entry)), installed_tag)
+    }
+
+    /// What `update` would do, without doing it.
+    pub fn plan_update(
+        &self,
+        index: &Index,
+        entry: &Entry,
+        installed_tag: Option<u32>,
+    ) -> Result<Plan, String> {
+        if !self.is_disabled(&entry.id)? {
+            return self.plan_install(index, entry, installed_tag);
+        }
+        Ok(Plan {
+            entries: vec![(entry.clone(), false)],
+            enabled: self.enabled(),
+            warnings: Vec::new(),
+        })
     }
 
     /// What `install_staged` would do, without doing it.
@@ -1025,6 +1064,55 @@ mod tests {
         );
         assert!(!library.needs_refresh(Some(14)));
         assert!(library.needs_refresh(Some(15)));
+    }
+
+    #[test]
+    fn an_update_keeps_a_disabled_mod_disabled() {
+        let install = tempfile::tempdir().unwrap();
+        let library = Library::new(install.path());
+        let api_zip = zip_of(&manifest("api", "0.1.0", None));
+        let old_zip = zip_of(&manifest("lib", "0.1.0", Some("0.1")));
+        let new_zip = zip_of(&manifest("lib", "0.1.1", Some("0.1")));
+        let base = serve(vec![
+            ("/api-0.1.0.zip".to_string(), api_zip.clone()),
+            ("/lib-0.1.0.zip".to_string(), old_zip.clone()),
+            ("/lib-0.1.1.zip".to_string(), new_zip.clone()),
+        ]);
+        let old = entry(&base, "lib", "0.1.0", Some("0.1"), &old_zip);
+        let new = entry(&base, "lib", "0.1.1", Some("0.1"), &new_zip);
+        let index = Index {
+            entries: vec![
+                entry(&base, "api", "0.1.0", None, &api_zip),
+                old.clone(),
+                new.clone(),
+            ],
+        };
+        let version = |library: &Library| {
+            let found = library.scan().unwrap();
+            found
+                .iter()
+                .find(|m| m.id == "lib")
+                .unwrap()
+                .version
+                .clone()
+        };
+
+        library.install(&index, &old, Some(14)).unwrap();
+        library.disable("lib").unwrap();
+        let plan = library.plan_update(&index, &new, Some(14)).unwrap();
+        assert_eq!(plan.entries.len(), 1);
+        assert_eq!(plan.enabled, ["api"]);
+        library.update(&index, &new, Some(14)).unwrap();
+        assert_eq!(version(&library), "0.1.1");
+        assert_eq!(library.enabled(), ["api"]);
+        assert_eq!(library.scan().unwrap()[1].origin, Some(Origin::Index));
+
+        // Enabled, it is updated as it is installed, and stays enabled.
+        library.install(&index, &old, Some(14)).unwrap();
+        assert_eq!(library.enabled(), ["api", "lib"]);
+        library.update(&index, &new, Some(14)).unwrap();
+        assert_eq!(version(&library), "0.1.1");
+        assert_eq!(library.enabled(), ["api", "lib"]);
     }
 
     #[test]

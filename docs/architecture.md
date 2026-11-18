@@ -820,7 +820,8 @@ store.
 - offer updates when the index has a newer artifact for the same `id`;
   for a mod installed from a repository link, when that repository's
   latest release is newer (checked with the index, one GitHub API call
-  per such mod)
+  per such mod). An update keeps a disabled mod disabled: its folder
+  alone is replaced, and what it needs is settled when it is enabled
 - open the mods folder. **More mods** links to Discord to share a mod
   idea and to the game repository's `docs/making-a-mod.md`, then, set
   apart, installs from a local zip or from a GitHub repository link. A mod installed either

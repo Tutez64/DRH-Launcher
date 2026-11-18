@@ -9,6 +9,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 ### Fixed
 
 - Searching the Mods lists while scrolled down shows the results from the first one, instead of an empty area below them.
+- Updating a disabled mod no longer enables it.
 - A Mods list that gets shorter than where it was scrolled to (a mod uninstalled, a taller window) no longer leaves an empty area.
 
 ### Improved

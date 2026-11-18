@@ -809,7 +809,7 @@ impl Context {
             Action::Update(entry) => self.in_background(
                 (entry.id.clone(), "Updating..."),
                 move |library, index, tag| {
-                    let warnings = library.install(&index, &entry, tag)?;
+                    let warnings = library.update(&index, &entry, tag)?;
                     Ok((
                         format!("Updated {} to {}.", entry.name, entry.version),
                         warnings,
@@ -1965,9 +1965,8 @@ fn consequences(page: &Page, library: &Library, action: &Action) -> Result<Conse
             .collect()
     };
     let plan = match action {
-        Action::Install(entry) | Action::Update(entry) => {
-            Some((&entry.id, library.plan_install(index, entry, page.tag)?))
-        }
+        Action::Install(entry) => Some((&entry.id, library.plan_install(index, entry, page.tag)?)),
+        Action::Update(entry) => Some((&entry.id, library.plan_update(index, entry, page.tag)?)),
         Action::Enable(id) => Some((id, library.plan_enable(index, id, page.tag)?)),
         Action::InstallFrom(Elsewhere::Release(entry)) => {
             Some((&entry.id, library.plan_install(index, entry, page.tag)?))
