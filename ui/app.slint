@@ -591,8 +591,10 @@ export component AppWindow inherits Window {
     in-out property <bool> mod-detail-open: false;
     in property <string> mod-list-empty-text;
     in-out property <string> mod-search;
-    // The Catalog lists only the mods that are not installed.
-    in property <bool> mods-not-installed;
+    // The Catalog leaves out the mods that are installed.
+    in property <bool> mods-hide-installed;
+    // The Installed list leaves out the disabled mods.
+    in property <bool> mods-hide-disabled;
     // The tab's sorts, and the one its list is in.
     in property <[string]> mod-sort-names;
     in-out property <int> mod-sort;
@@ -769,7 +771,8 @@ export component AppWindow inherits Window {
     callback select-mod(int);
     callback mod-search-edited(string);
     callback mod-sort-selected(int);
-    callback mods-not-installed-toggled(bool);
+    callback mods-hide-installed-toggled(bool);
+    callback mods-hide-disabled-toggled(bool);
     callback mod-primary-action();
     callback mod-update();
     callback mods-update-all();
@@ -1958,12 +1961,21 @@ export component AppWindow inherits Window {
                             }
 
                             // As high as the search.
+                            if root.mods-page == 0 : CompactCheck {
+                                vertical-padding: 7px;
+                                text: "Hide disabled";
+                                checked: root.mods-hide-disabled;
+                                toggled(checked) => {
+                                    root.mods-hide-disabled-toggled(checked);
+                                }
+                            }
+
                             if root.mods-page == 1 : CompactCheck {
                                 vertical-padding: 7px;
-                                text: "Not installed";
-                                checked: root.mods-not-installed;
+                                text: "Hide installed";
+                                checked: root.mods-hide-installed;
                                 toggled(checked) => {
-                                    root.mods-not-installed-toggled(checked);
+                                    root.mods-hide-installed-toggled(checked);
                                 }
                             }
 

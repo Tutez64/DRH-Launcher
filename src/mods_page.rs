@@ -116,8 +116,13 @@ struct Page {
     selected: [Option<String>; 2],
     search: [String; 2],
     sort: [usize; 2],
-    /// The Catalog lists only the mods that are not installed.
-    not_installed: bool,
+    /// The Catalog leaves out the mods that are installed.
+    hide_installed: bool,
+    /// The Installed list leaves out the disabled mods.
+    hide_disabled: bool,
+    /// The mods disabled while it did: still listed until the list is left,
+    /// for a row not to vanish under the click that disables it.
+    kept: BTreeSet<String>,
     detail_open: [bool; 2],
     list_scroll: [f32; 2],
     detail_scroll: [f32; 2],
@@ -270,12 +275,14 @@ pub(crate) fn register(
             saved_sort(0, &saved.installed),
             saved_sort(CATALOG, &saved.catalog),
         ];
-        page.not_installed = config.mods_catalog_not_installed;
+        page.hide_installed = config.mods_catalog_hide_installed;
+        page.hide_disabled = config.mods_installed_hide_disabled;
     }
 
     let on = context.clone();
     ui.on_ensure_mods(move || {
         let view = on.view();
+        view.lock().kept.clear();
         view.rescan();
         // Nothing installed yet: the Catalog is where to start.
         if view.lock().mods.is_empty()
@@ -322,6 +329,7 @@ pub(crate) fn register(
             page.detail_open[old] = ui.get_mod_detail_open();
             page.list_scroll[old] = ui.get_mod_list_scroll();
             page.detail_scroll[old] = ui.get_mod_detail_scroll();
+            page.kept.clear();
         }
         ui.set_mods_page(tab);
         let page = view.lock();
@@ -416,19 +424,45 @@ pub(crate) fn register(
     });
 
     let on = context.clone();
-    ui.on_mods_not_installed_toggled(move |only| {
+    ui.on_mods_hide_installed_toggled(move |hide| {
         let view = on.view();
         {
             let mut page = view.lock();
-            if page.not_installed == only {
+            if page.hide_installed == hide {
                 return;
             }
-            page.not_installed = only;
+            page.hide_installed = hide;
         }
         // Kept for the next time the launcher starts.
         {
             let mut config = on.config.borrow_mut();
-            config.mods_catalog_not_installed = only;
+            config.mods_catalog_hide_installed = hide;
+            if let Err(error) = config.save() {
+                log_for_config(&config, diagnostics::LogLevel::Error, &error.to_string());
+            }
+        }
+        // Another list: show it from its first mod.
+        if let Some(ui) = view.ui.upgrade() {
+            ui.set_mod_list_scroll(0.0);
+        }
+        view.render();
+    });
+
+    let on = context.clone();
+    ui.on_mods_hide_disabled_toggled(move |hide| {
+        let view = on.view();
+        {
+            let mut page = view.lock();
+            if page.hide_disabled == hide {
+                return;
+            }
+            page.hide_disabled = hide;
+            page.kept.clear();
+        }
+        // Kept for the next time the launcher starts.
+        {
+            let mut config = on.config.borrow_mut();
+            config.mods_installed_hide_disabled = hide;
             if let Err(error) = config.save() {
                 log_for_config(&config, diagnostics::LogLevel::Error, &error.to_string());
             }
@@ -1109,7 +1143,13 @@ impl View {
         };
         let name = names(&self.lock(), &[id.to_string()]);
         match Library::new(dir).disable(id) {
-            Ok(warnings) => self.succeed(&format!("Disabled {name}."), &warnings),
+            Ok(warnings) => {
+                self.succeed(&format!("Disabled {name}."), &warnings);
+                let mut page = self.lock();
+                if page.hide_disabled {
+                    page.kept.insert(id.to_string());
+                }
+            }
             Err(error) => self.fail(error),
         }
         self.rescan();
@@ -1152,10 +1192,7 @@ impl View {
             let Some(at) = order.iter().position(|known| *known == id) else {
                 return;
             };
-            let Some(to) = at
-                .checked_add_signed(delta as isize)
-                .filter(|to| *to < order.len() && !is_official(&page, &order[*to]))
-            else {
+            let Some(to) = move_target(&page, &order, at, delta) else {
                 return;
             };
             order.swap(at, to);
@@ -1210,22 +1247,27 @@ impl View {
         ui.set_mod_list_empty_text(
             if tab != CATALOG && page.mods.is_empty() {
                 "No mod installed: find some in Catalog, or under More mods."
+            } else if tab != CATALOG && page.hide_disabled && page.search[0].trim().is_empty() {
+                "No mod is enabled: untick Hide disabled to see the others."
+            } else if tab != CATALOG && page.hide_disabled {
+                "No mod matches among those enabled: untick Hide disabled to search them all."
             } else if tab != CATALOG {
                 "No mod matches."
             } else if page.fetching && page.index.is_none() {
                 "Loading the index..."
             } else if page.index.is_none() {
                 "The index could not be loaded: Refresh to try again, or see More mods."
-            } else if page.not_installed && page.search[CATALOG].trim().is_empty() {
-                "Every mod of the catalog is installed: untick Not installed to see them."
-            } else if page.not_installed {
-                "No mod matches among those not installed: untick Not installed to search them all."
+            } else if page.hide_installed && page.search[CATALOG].trim().is_empty() {
+                "Every mod of the catalog is installed: untick Hide installed to see them."
+            } else if page.hide_installed {
+                "No mod matches among those not installed: untick Hide installed to search them all."
             } else {
                 "No mod matches. Not in the catalog? See More mods."
             }
             .into(),
         );
-        ui.set_mods_not_installed(page.not_installed);
+        ui.set_mods_hide_installed(page.hide_installed);
+        ui.set_mods_hide_disabled(page.hide_disabled);
         ui.set_mod_entries(ModelRc::new(VecModel::from(
             rows.into_iter().map(|(_, view)| view).collect::<Vec<_>>(),
         )));
@@ -1509,13 +1551,15 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
     let order = list_order(page);
     let search = &page.search[0];
     let sort = sort_of(page, 0);
-    // Moving swaps with the neighbour in the whole order, which a search may
-    // hide and another sort does not show.
+    // Moving swaps with the neighbour in the order, which a search may hide
+    // and another sort does not show. With only the enabled mods listed, the
+    // neighbour is the one listed: see `move_target`.
     let reorderable = search.trim().is_empty() && sort == Sort::LoadOrder;
     let mut mods: Vec<&InstalledMod> = page
         .mods
         .iter()
         .filter(|m| matches(search, &m.name, &m.id, source_of(page, &m.id).as_deref()))
+        .filter(|m| !hidden_as_disabled(page, &m.id))
         .collect();
     mods.sort_by_key(|m| order.iter().position(|id| *id == m.id));
     match sort {
@@ -1531,7 +1575,8 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
             let issues = issues(page, m, tag);
             let (author, owner) = byline(&m.author, source_of(page, &m.id).as_deref());
             let at = order.iter().position(|id| *id == m.id);
-            let first_movable = order.iter().position(|id| !is_official(page, id));
+            let movable =
+                |delta| at.is_some_and(|at| move_target(page, &order, at, delta).is_some());
             let status = match &page.working {
                 Some((id, doing)) if *id == m.id => doing,
                 _ if update_for(page, m).is_some() => "Update available",
@@ -1560,8 +1605,8 @@ fn installed_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
                     is_new: false,
                     enabled: page.enabled.contains(&m.id),
                     orderable: !official && reorderable,
-                    can_move_up: at > first_movable,
-                    can_move_down: at.is_some_and(|at| at + 1 < order.len()),
+                    can_move_up: movable(-1),
+                    can_move_down: movable(1),
                 },
             )
         })
@@ -1655,10 +1700,28 @@ fn catalog_rows(page: &Page, tag: Option<u32>) -> Vec<(String, ModCardView)> {
         .collect()
 }
 
+/// Whether the Installed list leaves `id` out as disabled, showing only the
+/// enabled mods and those disabled since it does.
+fn hidden_as_disabled(page: &Page, id: &str) -> bool {
+    page.hide_disabled && !page.enabled.iter().any(|known| known == id) && !page.kept.contains(id)
+}
+
+/// Where the mod at `at` goes when moved up (-1) or down (1): the place of
+/// the nearest mod the list shows that way, so that with only the enabled
+/// mods listed a move still changes the order seen; the mods not listed keep
+/// their places. None at an end, and above the official `api`.
+fn move_target(page: &Page, order: &[String], at: usize, delta: i32) -> Option<usize> {
+    let mut to = at.checked_add_signed(delta as isize)?;
+    while hidden_as_disabled(page, order.get(to)?) {
+        to = to.checked_add_signed(delta as isize)?;
+    }
+    (!is_official(page, &order[to])).then_some(to)
+}
+
 /// Whether the Catalog leaves `id` out as installed, listing only the mods
 /// that are not.
 fn hidden_as_installed(page: &Page, id: &str) -> bool {
-    page.not_installed && page.mods.iter().any(|m| m.id == id)
+    page.hide_installed && page.mods.iter().any(|m| m.id == id)
 }
 
 /// The ids the Catalog lists, whatever its search.
@@ -2708,6 +2771,53 @@ mod tests {
     }
 
     #[test]
+    fn the_installed_list_can_show_only_the_enabled_mods() {
+        let mut page = library_page();
+        page.enabled.retain(|id| id != "mine");
+        let order = list_order(&page);
+        assert_eq!(order, ["lib", "mine", "other"]);
+        // Each row: its id, and whether it can go up, then down.
+        let rows = |page: &Page| {
+            installed_rows(page, None)
+                .into_iter()
+                .map(|(id, row)| {
+                    assert!(row.orderable);
+                    (id, row.can_move_up, row.can_move_down)
+                })
+                .collect::<Vec<_>>()
+        };
+        let row = |id: &str, up, down| (id.to_string(), up, down);
+        assert_eq!(
+            rows(&page),
+            [
+                row("lib", false, true),
+                row("mine", true, true),
+                row("other", true, false)
+            ]
+        );
+
+        // A move goes past the mod that is not listed, which keeps its place.
+        page.hide_disabled = true;
+        assert_eq!(
+            rows(&page),
+            [row("lib", false, true), row("other", true, false)]
+        );
+        assert_eq!(move_target(&page, &order, 0, 1), Some(2));
+        assert_eq!(move_target(&page, &order, 2, -1), Some(0));
+        assert_eq!(move_target(&page, &order, 2, 1), None);
+
+        // One disabled from this list stays in it until the list is left.
+        page.enabled.retain(|id| id != "other");
+        page.kept.insert("other".to_string());
+        assert_eq!(
+            rows(&page),
+            [row("lib", false, true), row("other", true, false)]
+        );
+        page.kept.clear();
+        assert_eq!(rows(&page), [row("lib", false, false)]);
+    }
+
+    #[test]
     fn hides_the_arrows_in_another_order_than_the_load_order() {
         let mut page = library_page();
         page.index = Some(Index {
@@ -2916,7 +3026,7 @@ mod tests {
         ]);
         page.mods = vec![installed("have", "1.0.0", &[])];
         assert_eq!(catalog_ids(&page), ["have", "miss", "want"]);
-        page.not_installed = true;
+        page.hide_installed = true;
         assert_eq!(catalog_ids(&page), ["miss", "want"]);
         assert!(hidden_as_installed(&page, "have"));
         assert!(!hidden_as_installed(&page, "miss"));

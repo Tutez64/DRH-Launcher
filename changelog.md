@@ -5,7 +5,8 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 - The Mods lists can be sorted, and keep the sort last chosen. Catalog: by downloads (of every version, which it starts with, or of the latest one), newest, last update, or name. Installed: by load order, name, or updates first.
 - **Update all**, in the Installed list when a mod has an update: it lists each mod with its installed and its new version, then updates them one after the other.
-- **Not installed**, in the Catalog, lists only the mods you do not have.
+- **Hide disabled**, in the Installed list, shows only the enabled mods.
+- **Hide installed**, in the Catalog, lists only the mods you do not have.
 - The mods that joined the catalog since it was last opened are marked: the Catalog tab says how many, and their cards carry a **NEW** mark by their name.
 - Catalog cards and a mod's page show its downloads, and its page when it was published and last updated. These come from the mod index once it is generated with this version.
 
