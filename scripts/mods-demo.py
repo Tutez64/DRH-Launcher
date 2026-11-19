@@ -29,7 +29,10 @@ What the lists have to try their sorts, searches and Update all on:
   one its entry describes, so it fails and the others are still updated.
   API has no update: Wants New API needs a version the index does not have.
 - The sort of each list is kept in the demo's config: --keep finds it again.
-- Not installed, in the Catalog: seven of the fourteen mods are left.
+- Hide disabled, in Installed: Plain Disabled and Text Lib leave the list.
+  Disable a mod from it: its row stays until the tab is left. The arrows
+  still change the order, past the mods not listed.
+- Hide installed, in the Catalog: seven of the fourteen mods are left.
   Install one from its page: the page stays open, and the mod has left the
   list once back on it.
 - New mods: Map Markers and Quick Restart joined the index since the Catalog
