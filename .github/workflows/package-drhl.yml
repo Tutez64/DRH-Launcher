@@ -235,9 +235,27 @@ jobs:
           test "${#artifacts[@]}" -eq 1
           cargo packager signer sign "${artifacts[0]}"
 
+      # The console script goes where `resources` in Cargo.toml takes it from:
+      # `bin\` beside the launcher, as once installed.
       - name: Build Windows package
         if: inputs.platform == 'windows'
-        run: cargo build --release --locked
+        run: |
+          cargo build --release --locked
+          New-Item -ItemType Directory -Force target/release/bin | Out-Null
+          Copy-Item packaging/windows/DRH-Launcher.cmd target/release/bin/
+
+      # A modder command with wrong arguments prints its usage and exits with 2.
+      - name: Check the Windows console script
+        if: inputs.platform == 'windows'
+        shell: cmd
+        run: |
+          call target\release\bin\DRH-Launcher.cmd --check-mod > "%RUNNER_TEMP%\console-script.txt" 2>&1
+          if not "%ERRORLEVEL%"=="2" (
+            echo Expected exit code 2, got %ERRORLEVEL%
+            type "%RUNNER_TEMP%\console-script.txt"
+            exit /b 1
+          )
+          findstr /b /c:"usage:" "%RUNNER_TEMP%\console-script.txt"
 
       - name: Package Windows
         if: inputs.platform == 'windows'

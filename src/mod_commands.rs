@@ -156,14 +156,30 @@ fn run(command: Command) -> Result<(), String> {
 }
 
 /// A release build is a GUI program on Windows: it has no console of its
-/// own. Started from `DRH-Launcher.com` (the console front), it writes to that
-/// one.
+/// own. Started from a console (through `bin\DRH-Launcher.cmd`), it writes to
+/// that one.
 #[cfg(windows)]
 fn attach_console() {
-    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_DISK, FILE_TYPE_PIPE, GetFileType};
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE,
+        STD_OUTPUT_HANDLE, SetStdHandle,
+    };
 
+    // Attaching points the three standard handles at the console, the ones
+    // the shell redirected to a file or a pipe included: those are put back.
     unsafe {
+        let handles = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].map(|id| {
+            let handle = GetStdHandle(id);
+            let kind = GetFileType(handle);
+            (id, handle, kind == FILE_TYPE_DISK || kind == FILE_TYPE_PIPE)
+        });
         AttachConsole(ATTACH_PARENT_PROCESS);
+        for (id, handle, redirected) in handles {
+            if redirected {
+                SetStdHandle(id, handle);
+            }
+        }
     }
 }
 

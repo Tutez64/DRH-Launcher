@@ -13,11 +13,6 @@ repository = "https://github.com/Tutez64/DRH-Launcher"
 name = "DRH-Launcher"
 path = "src/main.rs"
 
-# Packaged on Windows only, as `DRH-Launcher.com` (see `resources` below).
-[[bin]]
-name = "DRH-Launcher-console"
-path = "src/bin/console.rs"
-
 [dependencies]
 cargo-packager-updater = "0.2.3"
 directories = "6.0.0"
@@ -93,9 +88,10 @@ icons = ["assets/icons/app-icon-256.png"]
 license-file = "LICENSE"
 long-description = "DRH Launcher installs, updates, configures, and launches Dungeon Rampage Haxe."
 binaries = [{ path = "DRH-Launcher", main = true }]
-# The console front for the modder commands. Only the Windows build has it:
+# The script the modder commands are run through on Windows, a copy of
+# `packaging/windows/DRH-Launcher.cmd`. Only the Windows build makes that copy:
 # a missing source is skipped, so the AppImage and the .app carry nothing.
-resources = [{ src = "target/release/DRH-Launcher-console.exe", target = "DRH-Launcher.com" }]
+resources = [{ src = "target/release/bin/DRH-Launcher.cmd", target = "bin/DRH-Launcher.cmd" }]
 
 [package.metadata.packager.appimage]
 # winit opens these with dlopen, so linuxdeploy does not bundle them on its own,
@@ -113,6 +109,13 @@ libs = ["libxkbcommon.so.0", "libxkbcommon-x11.so.0"]
 installer-mode = "currentUser"
 installer-icon = "assets/icons/app-icon.ico"
 languages = ["English"]
+# 0.4.0 to 0.4.2 installed a console program there, which antivirus products
+# report: an update removes it.
+preinstall-section = '''
+Section RemoveConsoleProgram
+  Delete "$INSTDIR\DRH-Launcher.com"
+SectionEnd
+'''
 
 [package.metadata.packager.macos]
 signing-identity = "-"

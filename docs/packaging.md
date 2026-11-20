@@ -142,6 +142,10 @@ Replace `appimage` with `nsis` on Windows or `app,dmg` on macOS. Local packages
 are not updater-signed unless the two `CARGO_PACKAGER_SIGN_*` environment
 variables are set.
 
+On Windows, copy `packaging/windows/DRH-Launcher.cmd` to
+`target/release/bin/` before packaging, as the workflow does: the installer
+takes the console script from there, and leaves it out when it is missing.
+
 ## GitHub Test Packages
 
 Use the manual `Test Packages` workflow to generate packages for all platforms without 
