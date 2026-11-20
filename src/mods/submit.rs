@@ -1,5 +1,6 @@
-//! `--submit-mod`: the index entry of a published release, on a branch of
-//! the author's fork of the index, ready for a pull request.
+//! `--submit-mod`: the index entry of a published release, checked as the
+//! index CI will, on a branch of the author's fork of the index, ready for a
+//! pull request.
 
 use std::fs;
 use std::path::Path;
@@ -9,7 +10,9 @@ use reqwest::StatusCode;
 use reqwest::header::USER_AGENT;
 
 use super::index::{Entry, http_client};
+use super::index_ci::EntryReport;
 use super::manifest::Manifest;
+use super::release_zip::check_zip;
 use super::repository::{self, git};
 
 use crate::error_chain::with_sources;
@@ -42,6 +45,8 @@ pub fn submit_mod(dir: &Path, fork_owner: Option<&str>) -> Result<(), String> {
             entry.id, entry.version, entry.source, manifest.id
         ));
     }
+
+    check_release(&entry)?;
 
     let fork = format!("https://github.com/{owner}/DRH-Mods-Index");
     if !page_exists(&fork)? {
@@ -76,6 +81,30 @@ pub fn submit_mod(dir: &Path, fork_owner: Option<&str>) -> Result<(), String> {
         println!("warning: could not open the browser: {error}");
     }
     Ok(())
+}
+
+/// The release's zip, checked as the index CI will check it: its notes are
+/// printed, a problem stops the submission.
+fn check_release(entry: &Entry) -> Result<(), String> {
+    let folder =
+        std::env::temp_dir().join(format!("drhl-submit-{}-{}-zip", entry.id, entry.version));
+    let mut report = EntryReport::default();
+    check_zip(entry, &folder, &mut report);
+    let _ = fs::remove_dir_all(&folder);
+    for note in &report.notes {
+        println!("note: {note}");
+    }
+    if report.problems.is_empty() {
+        return Ok(());
+    }
+    for problem in &report.problems {
+        println!("error: {problem}");
+    }
+    Err(format!(
+        "{} problem(s) in the release v{}: the index would refuse it. Fix them, redo the release, then run this again.",
+        report.problems.len(),
+        entry.version
+    ))
 }
 
 /// Clones the index, adds the entry on a new branch, and pushes it to the

@@ -11,6 +11,7 @@ pub mod manifest;
 pub mod new;
 pub mod pack;
 pub mod readme;
+pub mod release_zip;
 pub mod repository;
 pub mod resolve;
 pub mod run;

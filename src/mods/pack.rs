@@ -101,9 +101,14 @@ pub fn entry_for(checked: &CheckedMod, source: &str, size: u64, sha256: String) 
     }
 }
 
-/// Sorted entries and fixed times, so the same sources give the same zip.
-fn write_zip(dir: &Path, zip: &Path) -> Result<(), String> {
-    let mut files: Vec<String> = FILES.iter().map(|name| name.to_string()).collect();
+/// What a release's zip holds from `dir`, sorted: the files and folders of
+/// the fixed list that it has.
+pub(super) fn packed_files(dir: &Path) -> Result<Vec<String>, String> {
+    let mut files: Vec<String> = FILES
+        .iter()
+        .filter(|name| dir.join(name).is_file())
+        .map(|name| name.to_string())
+        .collect();
     for folder in FOLDERS {
         let root = dir.join(folder);
         if root.is_dir() {
@@ -111,6 +116,12 @@ fn write_zip(dir: &Path, zip: &Path) -> Result<(), String> {
         }
     }
     files.sort();
+    Ok(files)
+}
+
+/// Sorted entries and fixed times, so the same sources give the same zip.
+fn write_zip(dir: &Path, zip: &Path) -> Result<(), String> {
+    let files = packed_files(dir)?;
 
     let file = File::create(zip)
         .map_err(|error| format!("Could not create {}: {error}", zip.display()))?;

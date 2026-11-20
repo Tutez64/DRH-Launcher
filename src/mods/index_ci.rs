@@ -9,11 +9,10 @@ use std::time::SystemTime;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::check::check_mod;
 use super::index::{Entry, FORMAT, Index};
 use super::install::download_and_extract;
 use super::manifest::{API_ID, valid_id};
-use super::pack::entry_for;
+use super::release_zip::check_zip;
 use super::repository::{
     GITHUB_API, ReleaseAssets, check_mod_repository, normalize, release_assets_from,
 };
@@ -69,23 +68,7 @@ pub fn check_entry(entry_path: &Path, base: &Path, work: &Path, takeover: bool) 
     };
     let previous = check_against_index(&entry, &indexed, takeover, &mut report);
 
-    let new = work.join("new");
-    let _ = fs::remove_dir_all(&new);
-    match download_and_extract(&entry, &new) {
-        Ok(()) => match check_mod(&new) {
-            Ok(checked) => {
-                let expected = entry_for(&checked, &entry.source, entry.size, entry.sha256.clone());
-                report.problems.extend(differences(&expected, &entry));
-                report.notes.extend(checked.notes);
-            }
-            Err(problems) => report.problems.extend(
-                problems
-                    .into_iter()
-                    .map(|problem| format!("zip: {problem}")),
-            ),
-        },
-        Err(problem) => report.problems.push(problem),
-    }
+    check_zip(&entry, &work.join("new"), &mut report);
 
     if let Some(previous) = previous {
         let folder = work.join("previous");
@@ -244,7 +227,7 @@ fn at_its_path(path: &Path, entry: &Entry) -> bool {
 }
 
 /// The fields where the entry says something else than its zip.
-fn differences(expected: &Entry, entry: &Entry) -> Vec<String> {
+pub(super) fn differences(expected: &Entry, entry: &Entry) -> Vec<String> {
     let (Ok(Value::Object(expected)), Ok(Value::Object(actual))) =
         (serde_json::to_value(expected), serde_json::to_value(entry))
     else {
@@ -400,6 +383,8 @@ fn add_release_stats(entries: &mut [Entry], api: &str, token: Option<&str>) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mods::check::check_mod;
+    use crate::mods::pack::entry_for;
     use crate::mods::test_server::serve;
 
     fn entry(id: &str, version: &str) -> Entry {
