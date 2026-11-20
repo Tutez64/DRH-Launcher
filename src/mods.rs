@@ -14,6 +14,7 @@ pub mod readme;
 pub mod repository;
 pub mod resolve;
 pub mod run;
+pub mod sources;
 pub mod submit;
 #[cfg(test)]
 mod test_server;

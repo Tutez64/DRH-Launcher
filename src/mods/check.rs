@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::manifest::{Manifest, id_from_name};
 use super::readme;
+use super::sources;
 
 /// Values `DRH-Mods-Template` ships with, which a mod must replace.
 const TEMPLATE_ID: &str = "my_mod";
@@ -71,13 +72,14 @@ pub fn check_mod(dir: &Path) -> Result<CheckedMod, Vec<String>> {
         Err(error) => problems.push(format!("LICENSE: cannot be read: {error}")),
     }
 
+    let mut code_notes = Vec::new();
     if let Some(manifest) = &manifest {
-        check_sources(dir, manifest, &mut problems);
+        check_sources(dir, manifest, &mut problems, &mut code_notes);
     }
 
     match manifest {
         Some(manifest) if problems.is_empty() => {
-            let notes = id_note(&manifest).into_iter().collect();
+            let notes = id_note(&manifest).into_iter().chain(code_notes).collect();
             Ok(CheckedMod {
                 manifest,
                 shown_readme,
@@ -117,8 +119,14 @@ fn check_template_values(text: &str, problems: &mut Vec<String>) {
 }
 
 /// Every `.hx` under `src/` declares the package of its folder, there is no
-/// `import.hx`, and the entry's module exists.
-fn check_sources(dir: &Path, manifest: &Manifest, problems: &mut Vec<String>) {
+/// `import.hx`, and the entry's module exists; then what the code says
+/// ([`sources::scan`]).
+fn check_sources(
+    dir: &Path,
+    manifest: &Manifest,
+    problems: &mut Vec<String>,
+    notes: &mut Vec<String>,
+) {
     let src = dir.join("src");
     let entry = src.join(format!("{}.hx", manifest.entry));
     if !entry.is_file() {
@@ -132,6 +140,7 @@ fn check_sources(dir: &Path, manifest: &Manifest, problems: &mut Vec<String>) {
         problems.push(format!("src: cannot be read: {error}"));
         return;
     }
+    let mut read = Vec::new();
     for file in files {
         let relative = file.strip_prefix(dir).unwrap_or(&file);
         let shown = relative.to_string_lossy().replace('\\', "/");
@@ -163,16 +172,22 @@ fn check_sources(dir: &Path, manifest: &Manifest, problems: &mut Vec<String>) {
             .collect::<Vec<_>>()
             .join(".");
         match fs::read_to_string(&file) {
-            Ok(text) => match declared_package(&text) {
-                Some(package) if package == expected => {}
-                Some(package) => problems.push(format!(
-                    "{shown}: declares package {package}, its folder is {expected}"
-                )),
-                None => problems.push(format!("{shown}: must start with package {expected};")),
-            },
+            Ok(text) => {
+                match declared_package(&text) {
+                    Some(package) if package == expected => {}
+                    Some(package) => problems.push(format!(
+                        "{shown}: declares package {package}, its folder is {expected}"
+                    )),
+                    None => problems.push(format!("{shown}: must start with package {expected};")),
+                }
+                read.push((shown, text));
+            }
             Err(error) => problems.push(format!("{shown}: cannot be read: {error}")),
         }
     }
+    let scan = sources::scan(&read, manifest);
+    problems.extend(scan.problems);
+    notes.extend(scan.notes);
 }
 
 fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {

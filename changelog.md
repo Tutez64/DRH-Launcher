@@ -20,6 +20,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 - `--new-mod` asks for the mod's name and takes its id from it (`Cool Mod` gives `cool_mod`), asking for one only when the name gives none.
 - `--check-mod` and the index's check note an id that is not the one its name gives, without refusing it.
+- `--check-mod` reads the mod's code. It refuses `mods.api._internal`, the `api`'s own code, and notes, without refusing, code that reaches the core without `"uses": ["extends"]`, names another mod that `dependencies` does not list (in an `import`, in `context.isActive`, or by its classes, where it points to `context.isActive`), or has empty `catch` blocks. The index CI shows these notes to the reviewer.
 - Searching the Mods lists by name shows first the names that start with the search.
 - The Catalog's count says how many mods a search leaves (`3 of 26 mods`).
 
