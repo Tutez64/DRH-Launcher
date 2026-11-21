@@ -74,7 +74,7 @@ pub fn submit_mod(dir: &Path, fork_owner: Option<&str>) -> Result<(), String> {
     );
     if replaced {
         println!(
-            "Replaced {branch} on {fork}: an open pull request from it now shows {} {}. If it is closed or was never opened, open one: {compare}",
+            "Replaced {branch} on {fork}: an open pull request from it now shows {} {}. If a review asked for changes, click Re-request review on that pull request, for the reviewer to know it is ready again. If it is closed or was never opened, open one: {compare}",
             entry.id, entry.version
         );
     } else {
