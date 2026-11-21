@@ -74,7 +74,8 @@ pub fn submit_mod(dir: &Path, fork_owner: Option<&str>) -> Result<(), String> {
     );
     if replaced {
         println!(
-            "Replaced {branch} on {fork}: an open pull request from it now shows the new entry. If it is closed or was never opened, open one: {compare}"
+            "Replaced {branch} on {fork}: an open pull request from it now shows {} {}. If it is closed or was never opened, open one: {compare}",
+            entry.id, entry.version
         );
     } else {
         println!("Pushed {branch} to {fork}. Open the pull request: {compare}");
@@ -119,10 +120,10 @@ fn clone_index(work: &Path, upstream: &str) -> Result<String, String> {
     git(Some(work), &["symbolic-ref", "--short", "HEAD"])
 }
 
-/// Adds the entry on a new branch of the index cloned in `work`, and pushes
-/// it to the fork; the index's default branch, the new one, and whether it
-/// replaced a branch of that name, such as the one of a pull request for a
-/// release redone before its merge.
+/// Adds the entry on a new branch of the index cloned in `work`, named after
+/// the mod, and pushes it to the fork; the index's default branch, the new
+/// one, and whether it replaced a branch of that name, such as the one of a
+/// pull request for a new version or a release redone before its merge.
 fn commit_and_push(
     work: &Path,
     base: &str,
@@ -137,7 +138,15 @@ fn commit_and_push(
             entry.id, entry.version
         ));
     }
-    let branch = format!("{}-{}", entry.id, entry.version);
+    // One branch a mod: its open pull request gets each version until merged,
+    // and holds only the last, the branch being made again from the index.
+    let branch = entry.id.clone();
+    // A title without the version: GitHub keeps the first one.
+    let title = if work.join("mods").join(&entry.id).is_dir() {
+        format!("Update {}", entry.id)
+    } else {
+        format!("Add {}", entry.id)
+    };
     git(Some(work), &["checkout", "--quiet", "-b", &branch])?;
     fs::create_dir_all(path.parent().expect("an entry path has a folder"))
         .map_err(|error| format!("Could not create {}: {error}", path.display()))?;
@@ -150,7 +159,9 @@ fn commit_and_push(
             "commit",
             "--quiet",
             "-m",
-            &format!("Add {} {}", entry.id, entry.version),
+            &title,
+            "-m",
+            &format!("{} {}", entry.id, entry.version),
         ],
     )?;
 
@@ -278,16 +289,12 @@ mod tests {
         let (base, branch, replaced) = submit(&entry()).unwrap();
         assert_eq!(
             (base.as_str(), branch.as_str(), replaced),
-            ("master", "cool_hud-0.2.0", false)
+            ("master", "cool_hud", false)
         );
-        let pushed = || {
-            git(
-                Some(&fork),
-                &["show", "cool_hud-0.2.0:mods/cool_hud/0.2.0.json"],
-            )
-            .unwrap()
-        };
+        let pushed = || git(Some(&fork), &["show", "cool_hud:mods/cool_hud/0.2.0.json"]).unwrap();
         assert_eq!(pushed() + "\n", entry().to_file_text());
+        let message = || git(Some(&fork), &["log", "-1", "--format=%s|%b", "cool_hud"]).unwrap();
+        assert_eq!(message(), "Add cool_hud|cool_hud 0.2.0");
 
         // A release redone before its merge replaces the branch of its pull request.
         fs::remove_dir_all(&work).unwrap();
@@ -300,10 +307,25 @@ mod tests {
         fs::remove_dir_all(&work).unwrap();
         git(
             Some(&upstream),
-            &["fetch", "--quiet", &text(&fork), "cool_hud-0.2.0:master"],
+            &["fetch", "--quiet", &text(&fork), "cool_hud:master"],
         )
         .unwrap();
         let error = submit(&entry()).unwrap_err();
         assert_eq!(error, "cool_hud 0.2.0 is already in the index");
+
+        // The next version, once 0.2.0 is indexed: the same branch, holding
+        // only it, and a title that stays true as versions follow.
+        fs::remove_dir_all(&work).unwrap();
+        let mut next = entry();
+        next.version = "0.3.0".to_string();
+        let (_, branch, replaced) = submit(&next).unwrap();
+        assert_eq!((branch.as_str(), replaced), ("cool_hud", true));
+        assert_eq!(message(), "Update cool_hud|cool_hud 0.3.0");
+        let files = git(
+            Some(&fork),
+            &["diff", "--name-only", "cool_hud~1", "cool_hud"],
+        )
+        .unwrap();
+        assert_eq!(files, "mods/cool_hud/0.3.0.json");
     }
 }
