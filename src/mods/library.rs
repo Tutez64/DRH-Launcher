@@ -1234,14 +1234,28 @@ mod tests {
         let install = tempfile::tempdir().unwrap();
         let library = Library::new(install.path());
         let mut index = served_index();
-        index.entries[0].sha256 = "00".repeat(32);
+        let sha256 = std::mem::replace(&mut index.entries[0].sha256, "00".repeat(32));
 
         let error = library
             .install(&index, &index.entries[1].clone(), Some(14))
             .unwrap_err();
-        assert_eq!(error, "api 0.1.0: SHA-256 does not match its entry");
+        assert_eq!(
+            error,
+            "api 0.1.0: its zip is not the one the index checked (another SHA-256). \
+             Its author has to put back the zip the index checked, or publish a new version."
+        );
         assert!(library.scan().unwrap().is_empty());
         assert!(library.enabled().is_empty());
+
+        index.entries[0].sha256 = sha256;
+        let mut gone = index.entries[1].clone();
+        gone.url = format!("{}.gone", gone.url);
+        let error = library.install(&index, &gone, Some(14)).unwrap_err();
+        assert!(
+            error.contains(": its zip is not on GitHub, where the index points."),
+            "{error}"
+        );
+        assert!(library.scan().unwrap().is_empty());
     }
 
     #[test]

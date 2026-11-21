@@ -26,13 +26,17 @@ What the lists have to try their sorts, searches and Update all on:
 - Update all, in Installed: five mods. Text Lib is disabled, and its own
   update leaves it so (try Update on its page), but HUD Tweaks 1.3.0 now
   needs it, so the list says it enables it; Broken Update's zip is not the
-  one its entry describes, so it fails and the others are still updated.
-  API has no update: Wants New API needs a version the index does not have.
+  one its entry describes, so it fails and the others are still updated,
+  saying that its author has to fix it. API has no update: Wants New API
+  needs a version the index does not have.
+- Install, from the Catalog: Vanished Mod's zip is not where its entry
+  points, as when a release was deleted, so installing it fails, saying its
+  author has to fix it, and installs nothing.
 - The sort of each list is kept in the demo's config: --keep finds it again.
 - Hide disabled, in Installed: Plain Disabled and Text Lib leave the list.
   Disable a mod from it: its row stays until the tab is left. The arrows
   still change the order, past the mods not listed.
-- Hide installed, in the Catalog: seven of the fourteen mods are left.
+- Hide installed, in the Catalog: eight of the fifteen mods are left.
   Install one from its page: the page stays open, and the mod has left the
   list once back on it.
 - New mods: Map Markers and Quick Restart joined the index since the Catalog
@@ -152,6 +156,9 @@ INDEXED = [
     ("broken_update", "Broken Update", "1.0.1", "Someone", "someone",
      "A mod whose update fails: its zip is not the one the index describes.",
      "0.1", None, [], {}, None, "The version that cannot be installed."),
+    ("vanished_mod", "Vanished Mod", "1.0.0", "Someone", "someone",
+     "A mod that cannot be installed: its zip is no longer where the index points.",
+     "0.1", None, [], {}, None, "Its release was deleted."),
     ("map_markers", "Map Markers", "0.5.0", "Mira", "mira-mods",
      "Pin notes on the dungeon map.",
      "0.1", None, [], {}, None, "The newest mod of the index."),
@@ -190,6 +197,7 @@ STATS = {
     ("damage_meter", "2.1.0"): ("2026-11-12T20:00:00Z", 480),
     ("broken_update", "1.0.0"): ("2026-10-05T10:00:00Z", 33),
     ("broken_update", "1.0.1"): ("2026-11-16T10:00:00Z", 0),
+    ("vanished_mod", "1.0.0"): ("2026-10-08T12:00:00Z", 150),
     ("map_markers", "0.5.0"): ("2026-11-17T15:00:00Z", 4),
     ("dungeon_map", "1.4.2"): ("2026-10-30T09:30:00Z", 520),
     ("quick_restart", "0.2.0"): ("2026-10-15T18:00:00Z", 1890),
@@ -198,6 +206,8 @@ STATS = {
 
 # Versions whose entry describes another zip than the one served.
 BROKEN = {("broken_update", "1.0.1")}
+# Versions whose zip is not served at all.
+MISSING = {("vanished_mod", "1.0.0")}
 
 
 def mod_json(id, name, version, author, description, api, drh, uses, deps):
@@ -261,8 +271,9 @@ def write_index(base, late=False):
         files = mod_files(id, name, version, author, description, api, drh, uses, deps, long)
         data = zip_bytes(files)
         zip_name = f"{id}-{version}.zip"
-        with open(os.path.join(INDEX, zip_name), "wb") as file:
-            file.write(data)
+        if (id, version) not in MISSING:
+            with open(os.path.join(INDEX, zip_name), "wb") as file:
+                file.write(data)
         entry = {"id": id, "name": name, "version": version, "author": author,
                  "description": description, "longDescription": long}
         if api is not None:

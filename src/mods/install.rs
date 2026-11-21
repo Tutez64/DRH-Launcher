@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use reqwest::StatusCode;
 use reqwest::header::USER_AGENT;
 use sha2::{Digest, Sha256};
 
@@ -55,14 +56,29 @@ pub fn download_and_extract(entry: &Entry, folder: &Path) -> Result<(), String> 
     extracted
 }
 
+/// What a player is told of an indexed version whose zip is gone or changed:
+/// nothing on their side can fix it.
+const AUTHOR_FIXES: &str =
+    "Its author has to put back the zip the index checked, or publish a new version.";
+
 fn download_verified(entry: &Entry, path: &Path) -> Result<(), String> {
-    let label = format!("{} {}", entry.id, entry.version);
-    let mut response = http_client()?
+    let label = format!("{} {}", entry.name, entry.version);
+    let response = http_client()?
         .get(&entry.url)
         .header(USER_AGENT, "DRH-Launcher")
         .send()
-        .and_then(|response| response.error_for_status())
         .map_err(|error| format!("Could not download {label}: {}", with_sources(&error)))?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Err(format!(
+            "{label}: its zip is not on GitHub, where the index points. {AUTHOR_FIXES}"
+        ));
+    }
+    let mut response = response
+        .error_for_status()
+        .map_err(|error| format!("Could not download {label}: {}", with_sources(&error)))?;
+    let changed = |detail: String| {
+        format!("{label}: its zip is not the one the index checked ({detail}). {AUTHOR_FIXES}")
+    };
     let result = (|| {
         let mut file = File::create(path)
             .map_err(|error| format!("Could not create {}: {error}", path.display()))?;
@@ -78,17 +94,14 @@ fn download_verified(entry: &Entry, path: &Path) -> Result<(), String> {
             }
             size += read as u64;
             if size > entry.size {
-                return Err(format!("{label}: larger than its {} bytes", entry.size));
+                return Err(changed(format!("larger than {} bytes", entry.size)));
             }
             hasher.update(&buffer[..read]);
             file.write_all(&buffer[..read])
                 .map_err(|error| format!("Could not write {}: {error}", path.display()))?;
         }
         if size != entry.size {
-            return Err(format!(
-                "{label}: {size} bytes, its entry says {}",
-                entry.size
-            ));
+            return Err(changed(format!("{size} bytes, not {}", entry.size)));
         }
         let sha256: String = hasher
             .finalize()
@@ -96,7 +109,7 @@ fn download_verified(entry: &Entry, path: &Path) -> Result<(), String> {
             .map(|byte| format!("{byte:02x}"))
             .collect();
         if sha256 != entry.sha256.to_ascii_lowercase() {
-            return Err(format!("{label}: SHA-256 does not match its entry"));
+            return Err(changed("another SHA-256".to_string()));
         }
         Ok(())
     })();

@@ -14,6 +14,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 - Searching the Mods lists while scrolled down shows the results from the first one, instead of an empty area below them.
 - Updating a disabled mod no longer enables it.
+- Installing or updating a mod whose zip is gone, or is no longer the one the index checked, says so and that its author has to fix it, in place of a download or SHA-256 error.
 - A Mods list that gets shorter than where it was scrolled to (a mod uninstalled, a taller window) no longer leaves an empty area.
 
 ### Improved
