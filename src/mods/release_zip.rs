@@ -127,7 +127,7 @@ impl Comparison {
     }
 }
 
-fn named(paths: &[String]) -> String {
+pub(super) fn named(paths: &[String]) -> String {
     let shown = paths
         .iter()
         .take(NAMED_PATHS)

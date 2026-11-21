@@ -12,13 +12,15 @@ use serde_json::Value;
 use super::index::{Entry, FORMAT, Index};
 use super::install::download_and_extract;
 use super::manifest::{API_ID, valid_id};
-use super::release_zip::check_zip;
+use super::release_zip::{check_zip, named};
 use super::repository::{
     GITHUB_API, ReleaseAssets, check_mod_repository, normalize, release_assets_from,
 };
 use super::resolve::resolve;
-use super::version::Requirement;
+use super::version::{Requirement, parse_tags, tag_number};
 use crate::diagnostics::format_system_time_utc;
+use crate::github_releases::discover_repository_release_history;
+use crate::release_source::ReleaseSource;
 
 const FIELDS: [&str; 15] = [
     "id",
@@ -72,6 +74,7 @@ pub fn check_entry(entry_path: &Path, base: &Path, work: &Path, takeover: bool) 
         Takeover::Refused
     };
     let previous = check_against_index(&entry, &indexed, takeover, &mut report);
+    check_drh_online(&entry, &mut report);
 
     check_zip(&entry, &work.join("new"), &indexed, &mut report);
 
@@ -86,6 +89,72 @@ pub fn check_entry(entry_path: &Path, base: &Path, work: &Path, takeover: bool) 
         }
     }
     report
+}
+
+/// The DRH releases a `drh` may name: every published one, and the latest
+/// that is not a pre-release.
+#[derive(Debug)]
+pub(super) struct DrhReleases {
+    pub tags: Vec<u32>,
+    pub latest: Option<u32>,
+}
+
+fn drh_releases() -> Result<DrhReleases, String> {
+    let releases = discover_repository_release_history(&ReleaseSource::drh())?;
+    Ok(DrhReleases {
+        tags: releases
+            .iter()
+            .filter_map(|release| tag_number(&release.version))
+            .collect(),
+        latest: releases
+            .iter()
+            .filter(|release| !release.prerelease)
+            .filter_map(|release| tag_number(&release.version))
+            .max(),
+    })
+}
+
+/// `drh` names only DRH releases: a tag not released yet would keep the
+/// launcher from warning the players of that DRH. Leaving out the latest is
+/// a note: the launcher warns its players, which is what `drh` is for.
+pub(super) fn check_drh(entry: &Entry, releases: &DrhReleases, report: &mut EntryReport) {
+    let Some(drh) = &entry.drh else {
+        return;
+    };
+    // Its syntax is the manifest's to refuse.
+    let Some(tags) = parse_tags(drh) else {
+        return;
+    };
+    let unreleased: Vec<String> = tags
+        .iter()
+        .filter(|tag| !releases.tags.contains(tag))
+        .map(|tag| format!("V{tag}"))
+        .collect();
+    if !unreleased.is_empty() {
+        report.problems.push(format!(
+            "drh {drh} names {}, which DRH has not released: name only the DRH it was tested on",
+            named(&unreleased)
+        ));
+    }
+    if let Some(latest) = releases.latest
+        && !tags.contains(&latest)
+    {
+        report.notes.push(format!(
+            "drh {drh} does not name the latest DRH, V{latest}: the launcher warns its players on V{latest}"
+        ));
+    }
+}
+
+/// [`check_drh`] against GitHub's list of DRH releases; a note when GitHub
+/// does not answer.
+pub(super) fn check_drh_online(entry: &Entry, report: &mut EntryReport) {
+    if entry.drh.is_none() {
+        return;
+    }
+    match drh_releases() {
+        Ok(releases) => check_drh(entry, &releases, report),
+        Err(error) => report.notes.push(format!("drh not checked: {error}")),
+    }
 }
 
 /// An entry whose id belongs to another `source`.
@@ -503,6 +572,42 @@ mod tests {
         fs::write(&path, bad.to_file_text()).unwrap();
         let problems = read_new_entry(&path).unwrap_err();
         assert_eq!(problems.len(), 3, "{problems:?}");
+    }
+
+    #[test]
+    fn drh_names_only_released_tags_and_is_told_of_the_latest() {
+        let releases = DrhReleases {
+            tags: (1..=19).collect(),
+            latest: Some(18),
+        };
+        let check = |drh: Option<&str>| {
+            let mut entry = entry("hud", "0.1.0");
+            entry.drh = drh.map(str::to_string);
+            let mut report = EntryReport::default();
+            check_drh(&entry, &releases, &mut report);
+            (report.problems, report.notes)
+        };
+        assert_eq!(check(None), (vec![], vec![]));
+        assert_eq!(check(Some("16-18")), (vec![], vec![]));
+        // V19 is a pre-release: it exists, it is not the latest.
+        assert_eq!(check(Some("18,19")), (vec![], vec![]));
+        assert_eq!(
+            check(Some("17")),
+            (
+                vec![],
+                vec![
+                    "drh 17 does not name the latest DRH, V18: the launcher warns its players on V18"
+                        .to_string()
+                ]
+            )
+        );
+        assert_eq!(
+            check(Some("18-27")).0,
+            [
+                "drh 18-27 names V20, V21, V22, V23, V24 and 3 more, which DRH has not released: \
+              name only the DRH it was tested on"
+            ]
+        );
     }
 
     #[test]

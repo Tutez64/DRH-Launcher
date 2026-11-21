@@ -24,6 +24,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 - `--check-mod` reads the mod's code. It refuses `mods.api._internal`, the `api`'s own code, and notes, without refusing, code that reaches the core without `"uses": ["extends"]`, names another mod that `dependencies` does not list (in an `import`, in `context.isActive`, or by its classes, where it points to `context.isActive`), or has empty `catch` blocks. The index CI shows these notes to the reviewer.
 - `--submit-mod` checks the release as the index CI will before proposing it, its zip and its place in the index (a version not indexed yet, dependencies, the id's repository): it prints the notes, and stops on a problem the index would refuse.
 - `--submit-mod` and the index's check note a zip that does not hold the files of its tag, such as a release made by hand from other sources, and a mod its code names that the index does not have.
+- `--submit-mod` and the index's check refuse a `drh` that names a DRH not released yet, which would keep the launcher from warning its players, and note one that leaves out the latest DRH.
 - Searching the Mods lists by name shows first the names that start with the search.
 - The Catalog's count says how many mods a search leaves (`3 of 26 mods`).
 

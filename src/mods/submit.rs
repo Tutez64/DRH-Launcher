@@ -10,7 +10,9 @@ use reqwest::StatusCode;
 use reqwest::header::USER_AGENT;
 
 use super::index::{Entry, http_client};
-use super::index_ci::{EntryReport, Takeover, check_against_index, read_index_dir};
+use super::index_ci::{
+    EntryReport, Takeover, check_against_index, check_drh_online, read_index_dir,
+};
 use super::manifest::Manifest;
 use super::release_zip::check_zip;
 use super::repository::{self, git};
@@ -89,6 +91,7 @@ fn check_release(entry: &Entry, index: &Path) -> Result<(), String> {
     let indexed = read_index_dir(index)?;
     let mut report = EntryReport::default();
     check_against_index(entry, &indexed, Takeover::ToReview, &mut report);
+    check_drh_online(entry, &mut report);
     let folder =
         std::env::temp_dir().join(format!("drhl-submit-{}-{}-zip", entry.id, entry.version));
     check_zip(entry, &folder, &indexed, &mut report);
