@@ -29,5 +29,5 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 ### Internal
 
-- `--build-index` adds to each version its release date and download count, read from GitHub (`GITHUB_TOKEN` or `GH_TOKEN` when set). It notes a zip GitHub no longer has, or whose digest is no longer the entry's `sha256`.
+- `--build-index` adds to each version its release date and download count, read from GitHub (`GITHUB_TOKEN` or `GH_TOKEN` when set). It notes a zip GitHub no longer has, or whose digest is no longer the entry's `sha256`, and, given a third argument, writes these versions to that file as JSON, with the repositories GitHub did not answer for: the index CI opens an issue for each.
 - Slint 1.19, on its edition 1.19, and the other dependencies are updated. The Home glows get gradient stops that keep their look under Slint 1.19.

@@ -312,6 +312,33 @@ fn files_under(dir: &Path) -> Result<Vec<PathBuf>, String> {
 pub struct BuiltIndex {
     pub entries: usize,
     pub notes: Vec<String>,
+    pub broken: BrokenReleases,
+}
+
+/// The versions that no longer install, which the index CI opens an issue
+/// for, and the repositories GitHub did not answer for, of which nothing is
+/// known: their issues stay as they are.
+#[derive(Debug, Default, PartialEq, Serialize)]
+pub struct BrokenReleases {
+    pub broken: Vec<BrokenVersion>,
+    pub unread: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct BrokenVersion {
+    pub id: String,
+    pub version: String,
+    pub source: String,
+    pub tag: String,
+    pub zip: String,
+    /// `gone`: no such file in a release of that tag. `changed`: its
+    /// digest is not the entry's `sha256`.
+    pub problem: &'static str,
+    /// The entry's.
+    pub sha256: String,
+    /// GitHub's, when `changed`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub found: Option<String>,
 }
 
 /// The file the launcher reads: every entry, sorted by id then version, each
@@ -336,7 +363,7 @@ fn build_index_from(
     entries.sort_by(|a, b| {
         (a.id.as_str(), a.parsed_version()).cmp(&(b.id.as_str(), b.parsed_version()))
     });
-    let notes = add_release_stats(&mut entries, api, token);
+    let (notes, broken) = add_release_stats(&mut entries, api, token);
     let generated = format_system_time_utc(SystemTime::now())
         .replace(" UTC", "Z")
         .replacen(' ', "T", 1);
@@ -361,23 +388,33 @@ fn build_index_from(
     Ok(BuiltIndex {
         entries: entries.len(),
         notes,
+        broken,
     })
 }
 
 /// Sets each entry's `published` and `downloads` from its repository's
 /// releases, read once a repository. An entry GitHub says nothing of gets
 /// neither, and a note: the index is still worth deploying without them. A
-/// zip that is no longer the one indexed is a note too: the launcher refuses
-/// it, so the version no longer installs.
-fn add_release_stats(entries: &mut [Entry], api: &str, token: Option<&str>) -> Vec<String> {
+/// zip gone or no longer the one indexed is a note too, and a broken version:
+/// the launcher refuses it, so the version no longer installs, unless it is
+/// withdrawn.
+fn add_release_stats(
+    entries: &mut [Entry],
+    api: &str,
+    token: Option<&str>,
+) -> (Vec<String>, BrokenReleases) {
     let mut notes = Vec::new();
+    let mut broken = BrokenReleases::default();
     let mut by_source: BTreeMap<String, Option<ReleaseAssets>> = BTreeMap::new();
     for entry in entries {
         entry.published = None;
         entry.downloads = None;
         if !by_source.contains_key(&entry.source) {
             let assets = release_assets_from(api, &entry.source, token)
-                .map_err(|error| notes.push(error))
+                .map_err(|error| {
+                    notes.push(error);
+                    broken.unread.push(entry.source.clone());
+                })
                 .ok();
             by_source.insert(entry.source.clone(), assets);
         }
@@ -387,26 +424,45 @@ fn add_release_stats(entries: &mut [Entry], api: &str, token: Option<&str>) -> V
         // By tag and name, not `url`: a renamed repository keeps both.
         let tag = format!("v{}", entry.version);
         let zip = format!("{}-{}.zip", entry.id, entry.version);
+        let mut broke = |problem, found: Option<&String>| {
+            broken.broken.push(BrokenVersion {
+                id: entry.id.clone(),
+                version: entry.version.clone(),
+                source: entry.source.clone(),
+                tag: tag.clone(),
+                zip: zip.clone(),
+                problem,
+                sha256: entry.sha256.clone(),
+                found: found.cloned(),
+            })
+        };
         match assets.get(&(tag.clone(), zip.clone())) {
             Some(stats) => {
                 entry.published = stats.published.clone();
                 entry.downloads = Some(stats.downloads);
                 if let Some(sha256) = &stats.sha256
                     && !sha256.eq_ignore_ascii_case(&entry.sha256)
+                    && entry.yanked.is_none()
                 {
                     notes.push(format!(
                         "{} {}: {zip} in release {tag} of {} is no longer the indexed one (sha256 {sha256}, indexed {}): the launcher refuses to install it",
                         entry.id, entry.version, entry.source, entry.sha256
                     ));
+                    broke("changed", Some(sha256));
                 }
             }
-            None => notes.push(format!(
-                "{} has no {zip} in a release {tag}: {} {} gets no date and no download count, and no longer installs",
-                entry.source, entry.id, entry.version
-            )),
+            // A withdrawn version needs no zip: withdrawing it is the fix.
+            None if entry.yanked.is_some() => {}
+            None => {
+                notes.push(format!(
+                    "{} has no {zip} in a release {tag}: {} {} gets no date and no download count, and no longer installs",
+                    entry.source, entry.id, entry.version
+                ));
+                broke("gone", None);
+            }
         }
     }
-    notes
+    (notes, broken)
 }
 
 #[cfg(test)]
@@ -563,6 +619,13 @@ mod tests {
             entry.downloads = Some(1_000_000);
             write_entry(dir.path(), &entry);
         }
+        let mut withdrawn = entry("lib", "0.8.0");
+        withdrawn.yanked = Some("gone".to_string());
+        write_entry(dir.path(), &withdrawn);
+        // A repository GitHub does not answer for.
+        let mut elsewhere = entry("zed", "1.0.0");
+        elsewhere.source = "https://github.com/other/DRH-Mod-Zed".to_string();
+        write_entry(dir.path(), &elsewhere);
         let release = |version: &str, published: &str, downloads: u64, digest: Option<&str>| {
             serde_json::json!({
                 "tag_name": format!("v{version}"), "published_at": published,
@@ -585,14 +648,33 @@ mod tests {
         )]);
         let out = dir.path().join("site/index.json");
         let built = build_index_from(dir.path(), &out, &api, None).unwrap();
+        assert!(
+            built.notes[2]
+                .starts_with("Could not read the releases of https://github.com/other/DRH-Mod-Zed"),
+            "{:?}",
+            built.notes
+        );
         assert_eq!(
-            built.notes,
+            built.notes[..2],
             [
                 "lib 0.10.0: lib-0.10.0.zip in release v0.10.0 of https://github.com/me/DRH-Mod-M \
               is no longer the indexed one (sha256 ff, indexed 00): the launcher refuses to install it",
                 "https://github.com/me/DRH-Mod-M has no lib-0.11.0.zip in a release v0.11.0: \
               lib 0.11.0 gets no date and no download count, and no longer installs",
             ]
+        );
+        assert_eq!(
+            serde_json::to_value(&built.broken).unwrap(),
+            serde_json::json!({
+                "broken": [
+                    { "id": "lib", "version": "0.10.0", "source": "https://github.com/me/DRH-Mod-M",
+                      "tag": "v0.10.0", "zip": "lib-0.10.0.zip", "problem": "changed",
+                      "sha256": "00", "found": "ff" },
+                    { "id": "lib", "version": "0.11.0", "source": "https://github.com/me/DRH-Mod-M",
+                      "tag": "v0.11.0", "zip": "lib-0.11.0.zip", "problem": "gone", "sha256": "00" },
+                ],
+                "unread": ["https://github.com/other/DRH-Mod-Zed"],
+            })
         );
         let index = Index::parse(&fs::read_to_string(&out).unwrap()).unwrap();
         let stats: Vec<(Option<&str>, Option<u64>)> = index
@@ -603,8 +685,10 @@ mod tests {
         assert_eq!(
             stats,
             [
+                (None, None),
                 (Some("2026-10-20T08:30:00Z"), Some(40)),
                 (Some("2026-11-02T10:00:00Z"), Some(7)),
+                (None, None),
                 (None, None),
             ]
         );

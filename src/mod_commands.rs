@@ -2,6 +2,7 @@
 //! print to the console, and exit with 0 on success.
 
 use std::ffi::OsString;
+use std::fs;
 use std::path::PathBuf;
 
 use crate::mods::check::check_mod;
@@ -25,8 +26,9 @@ pub enum Command {
     /// Index CI: an added entry, the index it joins, a work folder, and
     /// whether a reviewer accepted a takeover.
     CheckEntry(PathBuf, PathBuf, PathBuf, bool),
-    /// Index CI: the index checkout and the file to write.
-    BuildIndex(PathBuf, PathBuf),
+    /// Index CI: the index checkout, the file to write, and where to write
+    /// the versions that no longer install.
+    BuildIndex(PathBuf, PathBuf, Option<PathBuf>),
 }
 
 const USAGE: &str = "usage:
@@ -37,7 +39,7 @@ const USAGE: &str = "usage:
   DRH-Launcher --submit-mod <dir> [<fork-owner>]
 index CI:
   DRH-Launcher --check-entry <entry.json> <base-index-dir> <work-dir> [--takeover]
-  DRH-Launcher --build-index <index-dir> <out-file>";
+  DRH-Launcher --build-index <index-dir> <out-file> [<broken-file>]";
 
 const NAMES: [&str; 7] = [
     "--new-mod",
@@ -73,7 +75,10 @@ pub fn from_args(args: &[OsString]) -> Option<Result<Command, String>> {
         ("--check-entry", [entry, base, work, flag]) if flag.as_os_str() == "--takeover" => {
             Command::CheckEntry(entry.clone(), base.clone(), work.clone(), true)
         }
-        ("--build-index", [dir, out]) => Command::BuildIndex(dir.clone(), out.clone()),
+        ("--build-index", [dir, out]) => Command::BuildIndex(dir.clone(), out.clone(), None),
+        ("--build-index", [dir, out, broken]) => {
+            Command::BuildIndex(dir.clone(), out.clone(), Some(broken.clone()))
+        }
         _ => return Some(Err(USAGE.to_string())),
     };
     Some(Ok(command))
@@ -150,10 +155,16 @@ fn run(command: Command) -> Result<(), String> {
                 ))
             }
         }
-        Command::BuildIndex(dir, out) => {
+        Command::BuildIndex(dir, out, broken) => {
             let built = build_index(&dir, &out)?;
             for note in &built.notes {
                 println!("note: {note}");
+            }
+            if let Some(broken) = broken {
+                let text = serde_json::to_string_pretty(&built.broken)
+                    .map_err(|error| format!("Could not write {}: {error}", broken.display()))?;
+                fs::write(&broken, format!("{text}\n"))
+                    .map_err(|error| format!("Could not write {}: {error}", broken.display()))?;
             }
             println!("{}: {} entries", out.display(), built.entries);
             Ok(())
