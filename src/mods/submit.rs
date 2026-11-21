@@ -10,7 +10,7 @@ use reqwest::StatusCode;
 use reqwest::header::USER_AGENT;
 
 use super::index::{Entry, http_client};
-use super::index_ci::EntryReport;
+use super::index_ci::{EntryReport, Takeover, check_against_index, read_index_dir};
 use super::manifest::Manifest;
 use super::release_zip::check_zip;
 use super::repository::{self, git};
@@ -46,24 +46,24 @@ pub fn submit_mod(dir: &Path, fork_owner: Option<&str>) -> Result<(), String> {
         ));
     }
 
-    check_release(&entry)?;
-
-    let fork = format!("https://github.com/{owner}/DRH-Mods-Index");
-    if !page_exists(&fork)? {
-        let fork_page = format!("https://github.com/{INDEX_REPOSITORY}/fork");
-        let _ = crate::open_url(&fork_page);
-        return Err(format!(
-            "No fork of the index at {fork}: fork it ({fork_page}, opened in your browser), then run this again."
-        ));
-    }
-
     let work = std::env::temp_dir().join(format!("drhl-submit-{}-{version}", manifest.id));
     if work.exists() {
         fs::remove_dir_all(&work)
             .map_err(|error| format!("Could not clear {}: {error}", work.display()))?;
     }
     let upstream = format!("https://github.com/{INDEX_REPOSITORY}");
-    let result = commit_and_push(&work, &entry, &upstream, &fork);
+    let fork = format!("https://github.com/{owner}/DRH-Mods-Index");
+    let result = clone_index(&work, &upstream).and_then(|base| {
+        check_release(&entry, &work)?;
+        if !page_exists(&fork)? {
+            let fork_page = format!("https://github.com/{INDEX_REPOSITORY}/fork");
+            let _ = crate::open_url(&fork_page);
+            return Err(format!(
+                "No fork of the index at {fork}: fork it ({fork_page}, opened in your browser), then run this again."
+            ));
+        }
+        commit_and_push(&work, &base, &entry, &fork)
+    });
     let _ = fs::remove_dir_all(&work);
     let (base, branch, replaced) = result?;
 
@@ -83,13 +83,15 @@ pub fn submit_mod(dir: &Path, fork_owner: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// The release's zip, checked as the index CI will check it: its notes are
-/// printed, a problem stops the submission.
-fn check_release(entry: &Entry) -> Result<(), String> {
+/// The release, checked as the index CI will check it against the index
+/// cloned in `index`: its notes are printed, a problem stops the submission.
+fn check_release(entry: &Entry, index: &Path) -> Result<(), String> {
+    let indexed = read_index_dir(index)?;
+    let mut report = EntryReport::default();
+    check_against_index(entry, &indexed, Takeover::ToReview, &mut report);
     let folder =
         std::env::temp_dir().join(format!("drhl-submit-{}-{}-zip", entry.id, entry.version));
-    let mut report = EntryReport::default();
-    check_zip(entry, &folder, &mut report);
+    check_zip(entry, &folder, &indexed, &mut report);
     let _ = fs::remove_dir_all(&folder);
     for note in &report.notes {
         println!("note: {note}");
@@ -107,20 +109,23 @@ fn check_release(entry: &Entry) -> Result<(), String> {
     ))
 }
 
-/// Clones the index, adds the entry on a new branch, and pushes it to the
-/// fork; the index's default branch, the new one, and whether it replaced a
-/// branch of that name, such as the one of a pull request for a release
-/// redone before its merge.
-fn commit_and_push(
-    work: &Path,
-    entry: &Entry,
-    upstream: &str,
-    fork: &str,
-) -> Result<(String, String, bool), String> {
+/// Clones the index into `work`; its default branch.
+fn clone_index(work: &Path, upstream: &str) -> Result<String, String> {
     let work_text = work.to_string_lossy().into_owned();
     git(None, &["clone", "--quiet", upstream, &work_text])?;
-    let base = git(Some(work), &["symbolic-ref", "--short", "HEAD"])?;
+    git(Some(work), &["symbolic-ref", "--short", "HEAD"])
+}
 
+/// Adds the entry on a new branch of the index cloned in `work`, and pushes
+/// it to the fork; the index's default branch, the new one, and whether it
+/// replaced a branch of that name, such as the one of a pull request for a
+/// release redone before its merge.
+fn commit_and_push(
+    work: &Path,
+    base: &str,
+    entry: &Entry,
+    fork: &str,
+) -> Result<(String, String, bool), String> {
     let file = format!("mods/{}/{}.json", entry.id, entry.version);
     let path = work.join(&file);
     if path.exists() {
@@ -172,7 +177,7 @@ fn commit_and_push(
     if !pushed.success() {
         return Err(format!("Could not push {branch} to {fork}"));
     }
-    Ok((base, branch, !existing.is_empty()))
+    Ok((base.to_string(), branch, !existing.is_empty()))
 }
 
 fn fetch_entry(url: &str) -> Result<Entry, String> {
@@ -263,8 +268,11 @@ mod tests {
             std::env::set_var("GIT_COMMITTER_NAME", "t");
             std::env::set_var("GIT_COMMITTER_EMAIL", "t@t");
         }
-        let (base, branch, replaced) =
-            commit_and_push(&work, &entry(), &text(&upstream), &text(&fork)).unwrap();
+        let submit = |entry: &Entry| {
+            clone_index(&work, &text(&upstream))
+                .and_then(|base| commit_and_push(&work, &base, entry, &text(&fork)))
+        };
+        let (base, branch, replaced) = submit(&entry()).unwrap();
         assert_eq!(
             (base.as_str(), branch.as_str(), replaced),
             ("master", "cool_hud-0.2.0", false)
@@ -282,8 +290,7 @@ mod tests {
         fs::remove_dir_all(&work).unwrap();
         let mut redone = entry();
         redone.description = "redone".to_string();
-        let (_, _, replaced) =
-            commit_and_push(&work, &redone, &text(&upstream), &text(&fork)).unwrap();
+        let (_, _, replaced) = submit(&redone).unwrap();
         assert!(replaced);
         assert_eq!(pushed() + "\n", redone.to_file_text());
 
@@ -293,7 +300,7 @@ mod tests {
             &["fetch", "--quiet", &text(&fork), "cool_hud-0.2.0:master"],
         )
         .unwrap();
-        let error = commit_and_push(&work, &entry(), &text(&upstream), &text(&fork)).unwrap_err();
+        let error = submit(&entry()).unwrap_err();
         assert_eq!(error, "cool_hud 0.2.0 is already in the index");
     }
 }

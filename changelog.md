@@ -21,12 +21,12 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 - `--new-mod` asks for the mod's name and takes its id from it (`Cool Mod` gives `cool_mod`), asking for one only when the name gives none.
 - `--check-mod` and the index's check note an id that is not the one its name gives, without refusing it.
 - `--check-mod` reads the mod's code. It refuses `mods.api._internal`, the `api`'s own code, and notes, without refusing, code that reaches the core without `"uses": ["extends"]`, names another mod that `dependencies` does not list (in an `import`, in `context.isActive`, or by its classes, where it points to `context.isActive`), or has empty `catch` blocks. The index CI shows these notes to the reviewer.
-- `--submit-mod` checks the release's zip as the index CI will before proposing it: it prints the notes, and stops on a problem the index would refuse.
-- `--submit-mod` and the index's check note a zip that does not hold the files of its tag, such as a release made by hand from other sources.
+- `--submit-mod` checks the release as the index CI will before proposing it, its zip and its place in the index (a version not indexed yet, dependencies, the id's repository): it prints the notes, and stops on a problem the index would refuse.
+- `--submit-mod` and the index's check note a zip that does not hold the files of its tag, such as a release made by hand from other sources, and a mod its code names that the index does not have.
 - Searching the Mods lists by name shows first the names that start with the search.
 - The Catalog's count says how many mods a search leaves (`3 of 26 mods`).
 
 ### Internal
 
-- `--build-index` adds to each version its release date and download count, read from GitHub (`GITHUB_TOKEN` or `GH_TOKEN` when set).
+- `--build-index` adds to each version its release date and download count, read from GitHub (`GITHUB_TOKEN` or `GH_TOKEN` when set). It notes a zip GitHub no longer has, or whose digest is no longer the entry's `sha256`.
 - Slint 1.19, on its edition 1.19, and the other dependencies are updated. The Home glows get gradient stops that keep their look under Slint 1.19.

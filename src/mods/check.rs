@@ -21,6 +21,8 @@ pub struct CheckedMod {
     pub manifest: Manifest,
     pub shown_readme: String,
     pub notes: Vec<String>,
+    /// The other mods its code names that `dependencies` does not list.
+    pub named_mods: Vec<String>,
 }
 
 pub fn check_mod(dir: &Path) -> Result<CheckedMod, Vec<String>> {
@@ -73,8 +75,9 @@ pub fn check_mod(dir: &Path) -> Result<CheckedMod, Vec<String>> {
     }
 
     let mut code_notes = Vec::new();
+    let mut named_mods = Vec::new();
     if let Some(manifest) = &manifest {
-        check_sources(dir, manifest, &mut problems, &mut code_notes);
+        named_mods = check_sources(dir, manifest, &mut problems, &mut code_notes);
     }
 
     match manifest {
@@ -84,6 +87,7 @@ pub fn check_mod(dir: &Path) -> Result<CheckedMod, Vec<String>> {
                 manifest,
                 shown_readme,
                 notes,
+                named_mods,
             })
         }
         _ => Err(problems),
@@ -120,13 +124,14 @@ fn check_template_values(text: &str, problems: &mut Vec<String>) {
 
 /// Every `.hx` under `src/` declares the package of its folder, there is no
 /// `import.hx`, and the entry's module exists; then what the code says
-/// ([`sources::scan`]).
+/// ([`sources::scan`]). Returns the other mods it names outside
+/// `dependencies`.
 fn check_sources(
     dir: &Path,
     manifest: &Manifest,
     problems: &mut Vec<String>,
     notes: &mut Vec<String>,
-) {
+) -> Vec<String> {
     let src = dir.join("src");
     let entry = src.join(format!("{}.hx", manifest.entry));
     if !entry.is_file() {
@@ -138,7 +143,7 @@ fn check_sources(
     let mut files = Vec::new();
     if let Err(error) = collect_files(&src, &mut files) {
         problems.push(format!("src: cannot be read: {error}"));
-        return;
+        return Vec::new();
     }
     let mut read = Vec::new();
     for file in files {
@@ -188,6 +193,7 @@ fn check_sources(
     let scan = sources::scan(&read, manifest);
     problems.extend(scan.problems);
     notes.extend(scan.notes);
+    scan.named_mods
 }
 
 fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {

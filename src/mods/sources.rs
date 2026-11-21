@@ -12,6 +12,8 @@ const INTERNAL: &str = "mods.api._internal";
 pub struct Scan {
     pub problems: Vec<String>,
     pub notes: Vec<String>,
+    /// The other mods the code names that `dependencies` does not list.
+    pub named_mods: Vec<String>,
 }
 
 /// `files`: each `.hx` under `src/`, as shown (`src/Main.hx`) and its text.
@@ -66,6 +68,7 @@ pub fn scan(files: &[(String, String)], manifest: &Manifest) -> Scan {
             }
         }
     }
+    scan.named_mods = named.keys().cloned().collect();
     let mut named: Vec<_> = named.into_iter().collect();
     named.sort_by_key(|(_, (_, shown, line))| (*shown, *line));
     for (other, (naming, shown, line)) in named {
@@ -412,6 +415,10 @@ mod tests {
     #[test]
     fn notes_other_mods_not_in_dependencies() {
         let text = "package mods.some_mod;\nimport mods.some_mod.ui.Panel;\nimport mods.api.Mod;\nimport mods.needed.Thing;\nvar a = mods.push(x);\nvar c = Type.resolveClass(\"mods.other_mod.Main\");\nvar d = Type.resolveClass(\"mods.other_mod.Api\");\nimport mods.missing.Thing;\nif (context.isActive(\"needed\") || context.isActive( 'optional' )) {}\nif (context.isActive(\"bridged\")) Type.resolveClass(\"mods.bridged.Api\");\nvar n = context.isActive(name);\n";
+        assert_eq!(
+            scan_one(text, &manifest("some_mod", &[], &["needed"])).named_mods,
+            ["bridged", "missing", "optional", "other_mod"]
+        );
         assert_eq!(
             scan_one(text, &manifest("some_mod", &[], &["needed"])).notes,
             [

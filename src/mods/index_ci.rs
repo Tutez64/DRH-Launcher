@@ -66,9 +66,14 @@ pub fn check_entry(entry_path: &Path, base: &Path, work: &Path, takeover: bool) 
             return report;
         }
     };
+    let takeover = if takeover {
+        Takeover::Accepted
+    } else {
+        Takeover::Refused
+    };
     let previous = check_against_index(&entry, &indexed, takeover, &mut report);
 
-    check_zip(&entry, &work.join("new"), &mut report);
+    check_zip(&entry, &work.join("new"), &indexed, &mut report);
 
     if let Some(previous) = previous {
         let folder = work.join("previous");
@@ -83,13 +88,24 @@ pub fn check_entry(entry_path: &Path, base: &Path, work: &Path, takeover: bool) 
     report
 }
 
+/// An entry whose id belongs to another `source`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Takeover {
+    /// The index CI, without the takeover label: a problem.
+    Refused,
+    /// The index CI, with the label a reviewer added.
+    Accepted,
+    /// `--submit-mod`: a note, the reviewer decides.
+    ToReview,
+}
+
 /// The checks against the index the entry would join: not indexed yet, the
 /// id's `source`, dependencies that resolve. Returns the last indexed
 /// version, for the reviewer's diff.
-fn check_against_index<'a>(
+pub(super) fn check_against_index<'a>(
     entry: &Entry,
     indexed: &'a [Entry],
-    takeover: bool,
+    takeover: Takeover,
     report: &mut EntryReport,
 ) -> Option<&'a Entry> {
     let label = format!("{} {}", entry.id, entry.version);
@@ -112,16 +128,19 @@ fn check_against_index<'a>(
     if let Some(owner) = same_id.last()
         && owner.source != entry.source
     {
-        if takeover {
-            report.notes.push(format!(
+        match takeover {
+            Takeover::Accepted => report.notes.push(format!(
                 "takeover accepted: {} moves from {} to {}",
                 entry.id, owner.source, entry.source
-            ));
-        } else {
-            report.problems.push(format!(
+            )),
+            Takeover::Refused => report.problems.push(format!(
                 "{} belongs to {}, not {}: a reviewer accepts a takeover with the takeover label",
                 entry.id, owner.source, entry.source
-            ));
+            )),
+            Takeover::ToReview => report.notes.push(format!(
+                "{} belongs to {}, not {}: a reviewer has to accept the takeover",
+                entry.id, owner.source, entry.source
+            )),
         }
     }
 
@@ -347,7 +366,9 @@ fn build_index_from(
 
 /// Sets each entry's `published` and `downloads` from its repository's
 /// releases, read once a repository. An entry GitHub says nothing of gets
-/// neither, and a note: the index is still worth deploying without them.
+/// neither, and a note: the index is still worth deploying without them. A
+/// zip that is no longer the one indexed is a note too: the launcher refuses
+/// it, so the version no longer installs.
 fn add_release_stats(entries: &mut [Entry], api: &str, token: Option<&str>) -> Vec<String> {
     let mut notes = Vec::new();
     let mut by_source: BTreeMap<String, Option<ReleaseAssets>> = BTreeMap::new();
@@ -370,9 +391,17 @@ fn add_release_stats(entries: &mut [Entry], api: &str, token: Option<&str>) -> V
             Some(stats) => {
                 entry.published = stats.published.clone();
                 entry.downloads = Some(stats.downloads);
+                if let Some(sha256) = &stats.sha256
+                    && !sha256.eq_ignore_ascii_case(&entry.sha256)
+                {
+                    notes.push(format!(
+                        "{} {}: {zip} in release {tag} of {} is no longer the indexed one (sha256 {sha256}, indexed {}): the launcher refuses to install it",
+                        entry.id, entry.version, entry.source, entry.sha256
+                    ));
+                }
             }
             None => notes.push(format!(
-                "{} has no {zip} in a release {tag}: {} {} gets no date and no download count",
+                "{} has no {zip} in a release {tag}: {} {} gets no date and no download count, and no longer installs",
                 entry.source, entry.id, entry.version
             )),
         }
@@ -432,7 +461,7 @@ mod tests {
         moved.api = Some("2.0".to_string());
 
         let mut report = EntryReport::default();
-        let previous = check_against_index(&moved, &indexed, false, &mut report);
+        let previous = check_against_index(&moved, &indexed, Takeover::Refused, &mut report);
         assert_eq!(previous.map(|entry| entry.version.as_str()), Some("0.1.0"));
         assert!(
             report.problems[0].starts_with("cool_hud belongs to https://github.com/me/DRH-Mod-M")
@@ -444,11 +473,24 @@ mod tests {
         assert_eq!(report.notes, ["author changed since 0.1.0: me -> other"]);
 
         let mut report = EntryReport::default();
-        check_against_index(&moved, &indexed, true, &mut report);
+        check_against_index(&moved, &indexed, Takeover::Accepted, &mut report);
         assert!(report.notes[0].starts_with("takeover accepted"));
 
         let mut report = EntryReport::default();
-        check_against_index(&entry("cool_hud", "0.1.0"), &indexed, false, &mut report);
+        check_against_index(&moved, &indexed, Takeover::ToReview, &mut report);
+        assert_eq!(
+            report.notes[0],
+            "cool_hud belongs to https://github.com/me/DRH-Mod-M, not https://github.com/other/DRH-Mod-M: a reviewer has to accept the takeover"
+        );
+        assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
+
+        let mut report = EntryReport::default();
+        check_against_index(
+            &entry("cool_hud", "0.1.0"),
+            &indexed,
+            Takeover::Refused,
+            &mut report,
+        );
         assert_eq!(report.problems, ["cool_hud 0.1.0 is already in the index"]);
     }
 
@@ -521,18 +563,18 @@ mod tests {
             entry.downloads = Some(1_000_000);
             write_entry(dir.path(), &entry);
         }
-        let release = |version: &str, published: &str, downloads: u64| {
+        let release = |version: &str, published: &str, downloads: u64, digest: Option<&str>| {
             serde_json::json!({
                 "tag_name": format!("v{version}"), "published_at": published,
                 "assets": [
                     { "name": format!("lib-{version}.json"), "download_count": 1 },
-                    { "name": format!("lib-{version}.zip"), "download_count": downloads },
+                    { "name": format!("lib-{version}.zip"), "download_count": downloads, "digest": digest },
                 ]
             })
         };
         let releases = serde_json::json!([
-            release("0.10.0", "2026-11-02T10:00:00Z", 7),
-            release("0.9.0", "2026-10-20T08:30:00Z", 40),
+            release("0.10.0", "2026-11-02T10:00:00Z", 7, Some("sha256:ff")),
+            release("0.9.0", "2026-10-20T08:30:00Z", 40, None),
             { "tag_name": "v0.11.0", "draft": true, "published_at": null, "assets": [
                 { "name": "lib-0.11.0.zip", "download_count": 3 }
             ]},
@@ -546,8 +588,10 @@ mod tests {
         assert_eq!(
             built.notes,
             [
+                "lib 0.10.0: lib-0.10.0.zip in release v0.10.0 of https://github.com/me/DRH-Mod-M \
+              is no longer the indexed one (sha256 ff, indexed 00): the launcher refuses to install it",
                 "https://github.com/me/DRH-Mod-M has no lib-0.11.0.zip in a release v0.11.0: \
-              lib 0.11.0 gets no date and no download count"
+              lib 0.11.0 gets no date and no download count, and no longer installs",
             ]
         );
         let index = Index::parse(&fs::read_to_string(&out).unwrap()).unwrap();

@@ -175,6 +175,9 @@ pub struct AssetStats {
     /// When its release was published.
     pub published: Option<String>,
     pub downloads: u64,
+    /// Its SHA-256, in hex, when GitHub gives it (files uploaded since
+    /// June 2025).
+    pub sha256: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -190,6 +193,9 @@ struct CountedRelease {
 struct CountedAsset {
     name: String,
     download_count: u64,
+    /// `sha256:<hex>`.
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 /// A repository's release files, by release tag and file name.
@@ -238,6 +244,11 @@ pub(crate) fn release_assets_from(
                     AssetStats {
                         published: release.published_at.clone(),
                         downloads: asset.download_count,
+                        sha256: asset
+                            .digest
+                            .as_deref()
+                            .and_then(|digest| digest.strip_prefix("sha256:"))
+                            .map(str::to_string),
                     },
                 );
             }

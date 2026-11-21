@@ -20,8 +20,9 @@ use crate::error_chain::with_sources;
 const NAMED_PATHS: usize = 5;
 
 /// Downloads the release's zip of `entry`, extracts it into `folder`, and
-/// adds to `report` what it finds.
-pub fn check_zip(entry: &Entry, folder: &Path, report: &mut EntryReport) {
+/// adds to `report` what it finds. `indexed`: the index it would join, where
+/// the other mods its code names should be.
+pub fn check_zip(entry: &Entry, folder: &Path, indexed: &[Entry], report: &mut EntryReport) {
     let _ = fs::remove_dir_all(folder);
     if let Err(problem) = download_and_extract(entry, folder) {
         report.problems.push(problem);
@@ -32,6 +33,13 @@ pub fn check_zip(entry: &Entry, folder: &Path, report: &mut EntryReport) {
             let expected = entry_for(&checked, &entry.source, entry.size, entry.sha256.clone());
             report.problems.extend(differences(&expected, entry));
             report.notes.extend(checked.notes);
+            for other in &checked.named_mods {
+                if !indexed.iter().any(|indexed| &indexed.id == other) {
+                    report.notes.push(format!(
+                        "the code names mod {other}, which is not in the index"
+                    ));
+                }
+            }
         }
         Err(problems) => report.problems.extend(
             problems
