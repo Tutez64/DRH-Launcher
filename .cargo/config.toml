@@ -1,16 +1,16 @@
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=x86-64-v2"]
+# Windows and Linux stay on the baseline x86-64: `target-cpu=x86-64-v2` needs
+# SSSE3, SSE4.1, SSE4.2 and POPCNT, which processors that still run Windows 10
+# lack (Intel before Nehalem, such as the Pentium E5500, AMD before Bulldozer).
+# On these the launcher died at startup with 0xC000001D, an illegal instruction.
 
 [target.x86_64-apple-darwin]
+# Every Intel Mac that runs macOS 11, the oldest supported, has SSE4.2.
 rustflags = ["-C", "target-cpu=x86-64-v2"]
 
 [target.x86_64-pc-windows-msvc]
 # Increase default stack size to avoid running out of stack
 # space in debug builds. The size matches Linux's default.
-rustflags = [
-    "-C", "link-arg=/STACK:8000000",
-    "-C", "target-cpu=x86-64-v2"
-]
+rustflags = ["-C", "link-arg=/STACK:8000000"]
 
 [target.aarch64-pc-windows-msvc]
 # Increase default stack size to avoid running out of stack
