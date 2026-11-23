@@ -571,6 +571,8 @@ export component AppWindow inherits Window {
     in property <int> home-notice-count;
     in property <int> home-notice-index;
     in property <bool> home-notice-dismissible;
+    in property <string> home-notice-dismiss-label: "Hide";
+    in property <string> home-notice-action-label;
     in property <bool> home-notice-has-link;
     in property <string> home-notice-link-prefix;
     in property <string> home-notice-link-label;
@@ -673,9 +675,12 @@ export component AppWindow inherits Window {
     in-out property <string> download-cache-limit-error;
     in-out property <bool> hide-official-ownership-notice: false;
     in-out property <bool> saved-hide-official-ownership-notice: false;
+    in-out property <bool> start-steam-with-launcher: false;
+    in-out property <bool> saved-start-steam-with-launcher: false;
     property <bool> download-cache-limit-dirty: root.download-cache-limit != root.saved-download-cache-limit;
     property <bool> ownership-notice-dirty: root.hide-official-ownership-notice != root.saved-hide-official-ownership-notice;
-    property <bool> general-settings-dirty: root.download-cache-limit-dirty || root.ownership-notice-dirty;
+    property <bool> start-steam-dirty: root.start-steam-with-launcher != root.saved-start-steam-with-launcher;
+    property <bool> general-settings-dirty: root.download-cache-limit-dirty || root.ownership-notice-dirty || root.start-steam-dirty;
     in-out property <string> pre-launch-command;
     in property <bool> frame-rate-controls-visible: false;
     in property <bool> frame-rate-supported: false;
@@ -839,6 +844,7 @@ export component AppWindow inherits Window {
     callback confirm-close();
     callback select-home-notice(int);
     callback dismiss-home-notice();
+    callback run-home-notice-action();
     callback open-home-notice-link(string);
 
     changed download-cache-limit => {
@@ -1252,6 +1258,8 @@ export component AppWindow inherits Window {
                             count: root.home-notice-count;
                             index: root.home-notice-index;
                             dismissible: root.home-notice-dismissible;
+                            dismiss-label: root.home-notice-dismiss-label;
+                            action-label: root.home-notice-action-label;
                             has-link: root.home-notice-has-link;
                             link-prefix: root.home-notice-link-prefix;
                             link-label: root.home-notice-link-label;
@@ -1262,6 +1270,9 @@ export component AppWindow inherits Window {
                             }
                             dismiss => {
                                 root.dismiss-home-notice();
+                            }
+                            action => {
+                                root.run-home-notice-action();
                             }
                             open-link(url) => {
                                 root.open-home-notice-link(url);
@@ -2467,6 +2478,19 @@ export component AppWindow inherits Window {
                                                 clicked => {
                                                     root.open-install-folder();
                                                 }
+                                            }
+                                        }
+                                    }
+
+                                    SettingsCard {
+                                        title: "Steam";
+                                        description: "DRH connects to the official servers via Steam, which has to be running. The launcher can start it in the background each time it opens. Home also offers to start it when it is not running.";
+
+                                        LaunchOptionToggle {
+                                            text: "Start Steam when the launcher opens";
+                                            checked: root.start-steam-with-launcher;
+                                            toggled(checked) => {
+                                                root.start-steam-with-launcher = checked;
                                             }
                                         }
                                     }

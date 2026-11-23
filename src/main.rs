@@ -34,6 +34,7 @@ mod release_manifest;
 mod release_source;
 mod steam_buildid;
 mod steam_players;
+mod steam_start;
 mod steam_status;
 mod version_history;
 
@@ -874,6 +875,12 @@ fn run(startup_notice: Option<String>, confirm_mods: bool) -> Result<(), slint::
             let mut config = config.borrow_mut();
             config.download_cache_limit = limit;
             config.hide_official_ownership_notice = ui.get_hide_official_ownership_notice();
+            config.start_steam_with_launcher = ui.get_start_steam_with_launcher();
+            if config.start_steam_with_launcher {
+                // Chosen here: Home has nothing left to offer.
+                config.start_steam_offer_answered = true;
+                home_notices::withdraw_steam_auto_start_offer();
+            }
             match config.save() {
                 Ok(()) => {
                     log_for_config(
@@ -1864,6 +1871,29 @@ fn run(startup_notice: Option<String>, confirm_mods: bool) -> Result<(), slint::
     {
         let ui = ui.as_weak();
         let config = Rc::clone(&config);
+        let app_shutting_down = Arc::clone(&app_shutting_down);
+        ui.unwrap().on_run_home_notice_action(move || {
+            let Some(ui) = ui.upgrade() else {
+                return;
+            };
+            let mut config = config.borrow_mut();
+            match home_notices::current_home_notice_action(&config) {
+                Some(home_notices::HomeNoticeAction::StartSteam) => {
+                    home_notices::offer_steam_auto_start(&config);
+                    start_steam(&ui, config.clone(), Arc::clone(&app_shutting_down));
+                }
+                Some(home_notices::HomeNoticeAction::EnableSteamAutoStart) => {
+                    home_notices::answer_steam_auto_start_offer(&mut config, true, &ui);
+                    refresh_settings_view(&ui, &config, "Save");
+                }
+                None => {}
+            }
+        });
+    }
+
+    {
+        let ui = ui.as_weak();
+        let config = Rc::clone(&config);
         ui.unwrap().on_open_home_notice_link(move |url| {
             let Some(ui) = ui.upgrade() else {
                 return;
@@ -2607,7 +2637,7 @@ fn start_steam_local_timer(
         let config = Rc::clone(&config);
         let app_shutting_down = Arc::clone(&app_shutting_down);
         Timer::single_shot(Duration::ZERO, move || {
-            start_steam_status_check(ui, config.borrow().clone(), app_shutting_down);
+            start_steam_status_check(ui, config.borrow().clone(), app_shutting_down, true);
         });
     }
     timer.start(TimerMode::Repeated, Duration::from_secs(10), move || {
@@ -2615,26 +2645,99 @@ fn start_steam_local_timer(
             ui.clone(),
             config.borrow().clone(),
             Arc::clone(&app_shutting_down),
+            false,
         );
     });
 }
 
+/// `launcher_opening` is the first check of this run: the one after which
+/// Steam is started, for the players who asked for it in Settings.
 fn start_steam_status_check(
     ui: slint::Weak<AppWindow>,
     config: LauncherConfig,
     app_shutting_down: Arc<AtomicBool>,
+    launcher_opening: bool,
 ) {
     thread::spawn(move || {
-        if steam_status::try_refresh_status().is_none() {
+        let Some(status) = steam_status::try_refresh_status() else {
             return;
-        }
+        };
         let event_config = config.clone();
+        let event_shutting_down = Arc::clone(&app_shutting_down);
         invoke_on_event_loop(&config, &app_shutting_down, move || {
             let Some(ui) = ui.upgrade() else {
                 return;
             };
-            apply_home_notices_view(&ui, &event_config);
+            if launcher_opening
+                && event_config.start_steam_with_launcher
+                && status.steam_installed
+                && !status.steam_running
+            {
+                start_steam(&ui, event_config, event_shutting_down);
+            } else {
+                apply_home_notices_view(&ui, &event_config);
+            }
         });
+    });
+}
+
+/// Starts Steam, then follows it more closely than the regular check does,
+/// so that Home stops saying it is starting as soon as it runs.
+fn start_steam(ui: &AppWindow, config: LauncherConfig, app_shutting_down: Arc<AtomicBool>) {
+    if !steam_start::begin() {
+        return;
+    }
+    apply_home_notices_view(ui, &config);
+
+    let ui = ui.as_weak();
+    thread::spawn(move || {
+        let launched = steam_start::launch();
+        match &launched {
+            Ok(command) => log_for_config(
+                &config,
+                diagnostics::LogLevel::Info,
+                &format!("Starting Steam: {command}"),
+            ),
+            Err(error) => {
+                steam_start::cancel();
+                home_notices::withdraw_steam_auto_start_offer();
+                log_for_config(
+                    &config,
+                    diagnostics::LogLevel::Error,
+                    &format!("Could not start Steam: {error}"),
+                );
+            }
+        }
+
+        while steam_start::is_starting() && !app_shutting_down.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_secs(1));
+            if steam_status::try_refresh_status().is_some() {
+                refresh_home_notices_from_thread(&ui, &config, &app_shutting_down, None);
+            }
+        }
+        let failure = launched
+            .err()
+            .map(|_| "Could not start Steam. Start it yourself to play.".to_string());
+        refresh_home_notices_from_thread(&ui, &config, &app_shutting_down, failure);
+    });
+}
+
+fn refresh_home_notices_from_thread(
+    ui: &slint::Weak<AppWindow>,
+    config: &LauncherConfig,
+    app_shutting_down: &AtomicBool,
+    error: Option<String>,
+) {
+    let ui = ui.clone();
+    let event_config = config.clone();
+    invoke_on_event_loop(config, app_shutting_down, move || {
+        let Some(ui) = ui.upgrade() else {
+            return;
+        };
+        apply_home_notices_view(&ui, &event_config);
+        if let Some(error) = error {
+            set_status_message(&ui, HomeMessage::error(error));
+        }
     });
 }
 
@@ -2801,6 +2904,8 @@ fn refresh_settings_view(ui: &AppWindow, config: &LauncherConfig, save_text: &st
     ui.set_download_cache_limit_error("".into());
     ui.set_hide_official_ownership_notice(config.hide_official_ownership_notice);
     ui.set_saved_hide_official_ownership_notice(config.hide_official_ownership_notice);
+    ui.set_start_steam_with_launcher(config.start_steam_with_launcher);
+    ui.set_saved_start_steam_with_launcher(config.start_steam_with_launcher);
     ui.set_hide_haxe_iteratee_log_lines(config.hide_haxe_iteratee_log_lines);
 }
 

@@ -21,6 +21,13 @@ pub struct LauncherConfig {
     pub game_args: Vec<String>,
     #[serde(default)]
     pub hide_official_ownership_notice: bool,
+    /// Steam is started as the launcher opens, when it is not running.
+    #[serde(default)]
+    pub start_steam_with_launcher: bool,
+    /// The player answered Home's offer to turn `start_steam_with_launcher`
+    /// on, or did it in Settings: Home does not ask again.
+    #[serde(default)]
+    pub start_steam_offer_answered: bool,
     #[serde(default = "default_hide_haxe_iteratee_log_lines")]
     pub hide_haxe_iteratee_log_lines: bool,
     /// The user went past the notice shown before playing with mods.
@@ -58,6 +65,8 @@ impl Default for LauncherConfig {
             frame_rate: FrameRatePreference::default(),
             game_args: Vec::new(),
             hide_official_ownership_notice: false,
+            start_steam_with_launcher: false,
+            start_steam_offer_answered: false,
             hide_haxe_iteratee_log_lines: default_hide_haxe_iteratee_log_lines(),
             mods_disclosure_confirmed: false,
             mods_sort: ModsSort::default(),

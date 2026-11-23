@@ -277,6 +277,8 @@ export component HomeNoticeCard inherits Rectangle {
     in property <int> count;
     in property <int> index;
     in property <bool> dismissible;
+    in property <string> dismiss-label: "Hide";
+    in property <string> action-label;
     in property <bool> has-link;
     in property <string> link-prefix;
     in property <string> link-label;
@@ -286,6 +288,7 @@ export component HomeNoticeCard inherits Rectangle {
     property <bool> hovering: body.has-hover || root.link-hovering;
     callback select(int);
     callback dismiss();
+    callback action();
     callback open-link(string);
     callback show-tooltip(string, length, length);
     callback hide-tooltip();
@@ -393,12 +396,43 @@ export component HomeNoticeCard inherits Rectangle {
             }
         }
 
+        if root.action-label != "" : Rectangle {
+            width: action-label-text.preferred-width + 20px;
+            height: parent.height;
+
+            Rectangle {
+                y: 5px;
+                height: parent.height - 10px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: action-touch.has-hover ? Theme.accent-warm : Theme.border-accent-muted;
+                background: action-touch.pressed ? Theme.surface-pressed : action-touch.has-hover ? Theme.surface-accent : Theme.surface-raised;
+
+                action-label-text := Text {
+                    text: root.action-label;
+                    font-size: 12px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                action-touch := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => {
+                        root.hide-tooltip();
+                        root.action();
+                    }
+                }
+            }
+        }
+
         if root.dismissible : Rectangle {
             width: hide-label.preferred-width;
             height: parent.height;
 
             hide-label := Text {
-                text: "Hide";
+                text: root.dismiss-label;
                 font-size: 12px;
                 font-weight: 700;
                 color: hide.has-hover ? Theme.text-title : Theme.text-secondary;
@@ -441,6 +475,13 @@ export component HomeNoticeCard inherits Rectangle {
                     active: root.index == 2;
                     clicked => {
                         root.select(2);
+                    }
+                }
+
+                if root.count > 3 : HomeNoticeDot {
+                    active: root.index == 3;
+                    clicked => {
+                        root.select(3);
                     }
                 }
             }

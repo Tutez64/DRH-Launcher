@@ -3,6 +3,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 
 ### Added
 
+- When Steam is not running, its notice on Home has a **Start Steam** button, which starts it in the background. **Start Steam when the launcher opens**, off by default in Settings → General, does it each time the launcher opens; the first click on the button offers to turn it on.
 - The Mods lists can be sorted, and keep the sort last chosen. Catalog: by downloads (of every version, which it starts with, or of the latest one), newest, last update, or name. Installed: by load order, name, or updates first.
 - **Update all**, in the Installed list when a mod has an update: it lists each mod with its installed and its new version, then updates them one after the other.
 - **Hide disabled**, in the Installed list, shows only the enabled mods.

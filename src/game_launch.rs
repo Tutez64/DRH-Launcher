@@ -276,14 +276,23 @@ fn configure_game_process_environment(command: &mut Command, launch_executable: 
         return;
     }
 
-    clear_parent_desktop_identity(command);
-    clear_parent_appimage_environment(command, env::var_os("APPDIR").as_deref().map(Path::new));
+    clear_launcher_environment(command);
 
     let Some(window_class) = launch_executable.file_name() else {
         return;
     };
     command.env("SDL_VIDEO_WAYLAND_WMCLASS", window_class);
     command.env("SDL_VIDEO_X11_WMCLASS", window_class);
+}
+
+/// Keeps what describes DRHL itself out of a program it starts.
+pub(crate) fn clear_launcher_environment(command: &mut Command) {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+
+    clear_parent_desktop_identity(command);
+    clear_parent_appimage_environment(command, env::var_os("APPDIR").as_deref().map(Path::new));
 }
 
 fn clear_parent_desktop_identity(command: &mut Command) {
