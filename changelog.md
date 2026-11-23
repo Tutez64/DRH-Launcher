@@ -17,6 +17,7 @@ At tag time, copy these sections into the GitHub release notes under `Changelog`
 - Updating a disabled mod no longer enables it.
 - Installing or updating a mod whose zip is gone, or is no longer the one the index checked, says so and that its author has to fix it, in place of a download or SHA-256 error.
 - A Mods list that gets shorter than where it was scrolled to (a mod uninstalled, a taller window) no longer leaves an empty area.
+- On Windows and Linux, the launcher no longer needs a processor with SSE4.2 and POPCNT: on one without them (Intel before Nehalem, such as the Pentium E5500, AMD before Bulldozer) it crashed before showing its window, on Windows with the exception code `0xC000001D`. DRH itself still needs them for now.
 
 ### Improved
 
