@@ -1,7 +1,7 @@
 //! The checks on a release's zip that need no index, shared by
 //! `--check-entry` (the index CI) and `--submit-mod` (before the pull
-//! request): its `size` and `sha256`, `--check-mod` on what it holds, the
-//! entry it gives, and the sources of its tag.
+//! request): its `size` and `sha256`, the files it holds, `--check-mod` on
+//! them, the entry it gives, and the sources of its tag.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,8 @@ use super::check::check_mod;
 use super::index::{Entry, http_client};
 use super::index_ci::{EntryReport, differences};
 use super::install::download_and_extract;
-use super::pack::{entry_for, packed_files};
+use super::manifest::reserved_device_name;
+use super::pack::{FILES, FOLDERS, entry_for, packed_files};
 use crate::archive::extract_zip;
 use crate::error_chain::with_sources;
 
@@ -27,6 +28,18 @@ pub fn check_zip(entry: &Entry, folder: &Path, indexed: &[Entry], report: &mut E
     if let Err(problem) = download_and_extract(entry, folder) {
         report.problems.push(problem);
         return;
+    }
+    let mut held = Vec::new();
+    match files_under(folder, folder, &mut held) {
+        Ok(()) => {
+            held.sort();
+            report.problems.extend(
+                layout_problems(&held)
+                    .into_iter()
+                    .map(|problem| format!("zip: {problem}")),
+            );
+        }
+        Err(problem) => report.problems.push(problem),
     }
     match check_mod(folder) {
         Ok(checked) => {
@@ -162,6 +175,51 @@ fn compare(zip: &Path, tag: &Path) -> Result<Comparison, String> {
     Ok(comparison)
 }
 
+/// What a release's zip may not hold, among `paths`, its files: anything
+/// outside what `--pack-mod` packs, and a name that is another file's, or
+/// another name, once written on Windows. The index CI checks and shows a zip
+/// as Linux extracts it; a player's launcher may extract it on Windows, where
+/// `SRC/Evil.hx` goes into `src/`, `Main.HX ` or `main.hx` over `Main.hx`, and
+/// `Evil.hx::$DATA` is `Evil.hx`. A `.gitattributes` beside the sources has
+/// git show them as binary files in the reviewer's diff.
+fn layout_problems(paths: &[String]) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut seen: std::collections::BTreeMap<String, &String> = std::collections::BTreeMap::new();
+    for path in paths {
+        let (top, rest) = path
+            .split_once('/')
+            .map_or((path.as_str(), None), |(top, rest)| (top, Some(rest)));
+        let packed = match rest {
+            None => FILES.contains(&top),
+            Some(_) => FOLDERS.contains(&top),
+        };
+        if !packed {
+            problems.push(format!(
+                "holds {path}: a release's zip holds mod.json, README.md, LICENSE, src/ and Resources/, nothing else"
+            ));
+        }
+        if !path.split('/').all(portable_name) {
+            problems.push(format!(
+                "{path}: Windows cannot write this name as it is (no control character, none of < > : \" \\ | ? *, no final dot or space, no device name)"
+            ));
+        }
+        if let Some(other) = seen.insert(path.to_lowercase(), path) {
+            problems.push(format!(
+                "{other} and {path} are one file where case does not count"
+            ));
+        }
+    }
+    problems
+}
+
+/// Whether Windows writes a file or folder of this name under this name.
+fn portable_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or_default();
+    let device = stem.is_ascii() && reserved_device_name(&stem.to_ascii_lowercase());
+    let refused = |c: char| c.is_control() || "<>:\"\\|?*".contains(c);
+    !name.is_empty() && !name.ends_with(['.', ' ']) && !name.contains(refused) && !device
+}
+
 fn files_under(base: &Path, dir: &Path, files: &mut Vec<String>) -> Result<(), String> {
     let items =
         fs::read_dir(dir).map_err(|error| format!("Could not read {}: {error}", dir.display()))?;
@@ -287,6 +345,45 @@ mod tests {
             ["the zip and tag v0.1.0 differ in README.md"]
         );
         assert!(!beside(&folder, "tag").exists());
+    }
+
+    #[test]
+    fn a_zip_holds_what_is_packed_under_names_every_system_keeps() {
+        let paths =
+            |names: &[&str]| -> Vec<String> { names.iter().map(|name| name.to_string()).collect() };
+        assert!(
+            layout_problems(&paths(&[
+                "LICENSE",
+                "README.md",
+                "Resources/Glyphs/Keyboard & Mouse/Esc_Key.png",
+                "Resources/icons/memory-stick.svg",
+                "mod.json",
+                "src/Main.hx",
+                "src/ui/Panel.hx",
+            ]))
+            .is_empty()
+        );
+        assert_eq!(
+            layout_problems(&paths(&[
+                ".gitattributes",
+                "SRC/Evil.hx",
+                "src",
+                "src/Main.hx",
+                "src/Other.hx::$DATA",
+                "src/Third.hx.",
+                "src/aux.hx",
+                "src/main.hx",
+            ])),
+            [
+                "holds .gitattributes: a release's zip holds mod.json, README.md, LICENSE, src/ and Resources/, nothing else",
+                "holds SRC/Evil.hx: a release's zip holds mod.json, README.md, LICENSE, src/ and Resources/, nothing else",
+                "holds src: a release's zip holds mod.json, README.md, LICENSE, src/ and Resources/, nothing else",
+                "src/Other.hx::$DATA: Windows cannot write this name as it is (no control character, none of < > : \" \\ | ? *, no final dot or space, no device name)",
+                "src/Third.hx.: Windows cannot write this name as it is (no control character, none of < > : \" \\ | ? *, no final dot or space, no device name)",
+                "src/aux.hx: Windows cannot write this name as it is (no control character, none of < > : \" \\ | ? *, no final dot or space, no device name)",
+                "src/Main.hx and src/main.hx are one file where case does not count",
+            ]
+        );
     }
 
     #[test]

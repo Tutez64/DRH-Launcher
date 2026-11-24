@@ -109,7 +109,7 @@ pub fn id_from_name(name: &str) -> Option<String> {
     valid_id(&id).then_some(id)
 }
 
-fn reserved_device_name(id: &str) -> bool {
+pub(super) fn reserved_device_name(id: &str) -> bool {
     if matches!(id, "con" | "prn" | "aux" | "nul") {
         return true;
     }

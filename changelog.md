@@ -17,6 +17,7 @@ In each section, what matters to the most players comes first. What only people 
 - A Mods list no longer shows an empty area once it is shorter than where it was scrolled to: after a search, a mod uninstalled, or in a taller window.
 - Updating a disabled mod no longer enables it.
 - Installing or updating a mod whose zip is gone, or is no longer the one the index checked, says so and that its author has to fix it, in place of a download or SHA-256 error.
+- A link in a mod's description or in a changelog only opens a web address (`https://` or `http://`). Any other target, a file's path among them, was handed to the system as it was, which opens a file and runs a program.
 
 ### Improved
 
@@ -32,6 +33,8 @@ In each section, what matters to the most players comes first. What only people 
 - `--submit-mod` and the index's check refuse a `drh` that names a DRH not released yet, which would keep the launcher from warning its players, and note one that leaves out the latest DRH.
 - `--submit-mod` and the index's check note a zip that does not hold the files of its tag, such as a release made by hand from other sources, and a mod its code names that the index does not have.
 - `--check-mod` and the index's check note an id that is not the one its name gives, without refusing it.
+- `--check-mod` refuses a file under `src/` that is not a `.hx`, and a source that holds a character not seen when the code is read: a control character such as NUL, a zero-width one, a direction mark. Write it as an escape in a string (`\u{202E}`).
+- `--submit-mod` and the index's check refuse a zip that holds anything but what `--pack-mod` packs (`mod.json`, `README.md`, `LICENSE`, `src/`, `Resources/`), or a name that Windows would write as another one or over another file.
 
 ### Internal
 

@@ -791,7 +791,10 @@ store.
   document's markers show (all of it when they are malformed; nothing
   when its shown zone is empty). The page links the mod's
   repository when it has one: the index entry's `source`, or the
-  repository link it was installed from.
+  repository link it was installed from. A link in that text, as in a
+  changelog, opens only a web address (`https://` or `http://`): the
+  system opens whatever it is handed, a file's path or a `file:` address
+  as a file or a program.
 - install: download zip, verify SHA-256, extract under `mods/<id>/`
   using the same archive path rules as game releases (no `..`, no
   absolute paths, files and directories only). `id` must match

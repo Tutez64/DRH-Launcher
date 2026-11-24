@@ -3101,7 +3101,24 @@ fn open_file(path: &Path) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+/// Whether `url` is a web page's address. A link's target comes from text
+/// the launcher did not write, a mod's description among them, and the system
+/// opens whatever it is handed: a path or a `file:` address is a program it
+/// runs, on a network share as well.
+fn is_web_url(url: &str) -> bool {
+    ["https://", "http://"].iter().any(|scheme| {
+        url.get(..scheme.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(scheme))
+    }) && !url.contains(|c: char| c.is_control() || c.is_whitespace())
+}
+
 fn open_external_link_from_ui(ui: &AppWindow, config: &LauncherConfig, label: &str, url: &str) {
+    if !is_web_url(url) {
+        let message = format!("{label} link not opened: {url} is not a web address.");
+        log_for_config(config, diagnostics::LogLevel::Warn, &message);
+        set_status_message(ui, HomeMessage::error(message));
+        return;
+    }
     match open_url(url) {
         Ok(()) => {
             log_for_config(
@@ -3168,6 +3185,25 @@ mod home_support_text_tests {
     use crate::home_view::{restore_previous_version_available, restore_previous_version_text};
     use crate::install_metadata::{InstalledRelease, InstalledState};
     use tempfile::tempdir;
+
+    #[test]
+    fn a_link_opens_web_addresses_only() {
+        assert!(is_web_url("https://github.com/Tutez64/DRH-Launcher"));
+        assert!(is_web_url("HTTP://example.test/a%20b"));
+        for other in [
+            "file:///C:/Windows/System32/calc.exe",
+            "\\\\example.test\\share\\run.exe",
+            "C:\\Windows\\System32\\calc.exe",
+            "Resources/run.bat",
+            "steam://run/1",
+            "https://example.test/ a",
+            " https://example.test",
+            "https",
+            "",
+        ] {
+            assert!(!is_web_url(other), "{other}");
+        }
+    }
 
     #[test]
     fn appimage_actions_are_blocked_while_game_runs() {

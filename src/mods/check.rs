@@ -122,7 +122,8 @@ fn check_template_values(text: &str, problems: &mut Vec<String>) {
     }
 }
 
-/// Every `.hx` under `src/` declares the package of its folder, there is no
+/// Every file under `src/` is a `.hx` that declares the package of its
+/// folder and holds no character a reviewer cannot read, there is no
 /// `import.hx`, and the entry's module exists; then what the code says
 /// ([`sources::scan`]). Returns the other mods it names outside
 /// `dependencies`.
@@ -169,7 +170,12 @@ fn check_sources(
             ));
             continue;
         }
+        // The game compiles the `.hx` files and nothing else. Another file
+        // has no use there, and its name may be a `.hx` one once on Windows,
+        // which drops a final dot or space and reads `Evil.hx::$DATA` as
+        // `Evil.hx`: a source the checks and the reviewer took for none.
         if file.extension().is_none_or(|extension| extension != "hx") {
+            problems.push(format!("{shown}: only .hx files go under src/"));
             continue;
         }
         let expected = std::iter::once(format!("mods.{}", manifest.id))
@@ -178,6 +184,12 @@ fn check_sources(
             .join(".");
         match fs::read_to_string(&file) {
             Ok(text) => {
+                if let Some((line, character)) = unseen_character(&text) {
+                    problems.push(format!(
+                        "{shown}:{line}: holds the character U+{:04X}, which is not seen when the code is read: write it as an escape in a string (\\u{{{:04X}}})",
+                        character as u32, character as u32
+                    ));
+                }
                 match declared_package(&text) {
                     Some(package) if package == expected => {}
                     Some(package) => problems.push(format!(
@@ -208,6 +220,37 @@ fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The first character of a source that whoever reads it does not see, and
+/// its line: a control character other than a tab or a line end, or one of
+/// Unicode's that has no width or sets the direction of what follows. A NUL
+/// is the end of the source for the game, while git takes the file for
+/// binary and shows none of it in a diff; a direction mark shows code in
+/// another order than the one it runs in. A byte order mark may start it.
+fn unseen_character(source: &str) -> Option<(usize, char)> {
+    let text = source.strip_prefix('\u{feff}').unwrap_or(source);
+    let mut line = 1;
+    for character in text.chars() {
+        let unseen = match character {
+            '\n' => {
+                line += 1;
+                false
+            }
+            '\t' | '\r' => false,
+            '\u{061c}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{feff}' => true,
+            other => other.is_control(),
+        };
+        if unseen {
+            return Some((line, character));
+        }
+    }
+    None
 }
 
 fn valid_package_part(part: &str) -> bool {
@@ -325,6 +368,35 @@ mod tests {
                 "src/ui/Panel.hx: declares package mods.some_mod, its folder is mods.some_mod.ui",
             ]
         );
+    }
+
+    #[test]
+    fn only_sources_that_can_be_read_go_under_src() {
+        let dir = valid_mod();
+        // On Windows these two are written as Evil.hx.
+        write(dir.path(), "src/Evil.hx.", "package mods.some_mod;\n");
+        write(dir.path(), "src/ui/.gitattributes", "*.hx -diff\n");
+        write(
+            dir.path(),
+            "src/Nul.hx",
+            "package mods.some_mod;\nclass Nul {}\n// \0\n",
+        );
+        write(
+            dir.path(),
+            "src/Turned.hx",
+            "\u{feff}package mods.some_mod;\n\nvar a = \"\u{202e}\";\n",
+        );
+        assert_eq!(
+            problems(dir.path()),
+            [
+                "src/Evil.hx.: only .hx files go under src/",
+                "src/Nul.hx:3: holds the character U+0000, which is not seen when the code is read: write it as an escape in a string (\\u{0000})",
+                "src/Turned.hx:3: holds the character U+202E, which is not seen when the code is read: write it as an escape in a string (\\u{202E})",
+                "src/ui/.gitattributes: only .hx files go under src/",
+            ]
+        );
+        assert_eq!(unseen_character("\u{feff}a\tb\r\nc\n"), None);
+        assert_eq!(unseen_character("a\nb\u{200b}"), Some((2, '\u{200b}')));
     }
 
     #[test]

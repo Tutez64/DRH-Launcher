@@ -13,8 +13,8 @@ use super::repository;
 use crate::download::sha256_file;
 
 /// What the zip holds, flat at its root: extracted as is into `mods/<id>/`.
-const FILES: [&str; 3] = ["mod.json", "README.md", "LICENSE"];
-const FOLDERS: [&str; 2] = ["src", "Resources"];
+pub(super) const FILES: [&str; 3] = ["mod.json", "README.md", "LICENSE"];
+pub(super) const FOLDERS: [&str; 2] = ["src", "Resources"];
 
 pub struct Packed {
     pub zip: PathBuf,
