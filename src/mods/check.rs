@@ -373,13 +373,12 @@ mod tests {
     #[test]
     fn only_sources_that_can_be_read_go_under_src() {
         let dir = valid_mod();
-        // On Windows these two are written as Evil.hx.
-        write(dir.path(), "src/Evil.hx.", "package mods.some_mod;\n");
         write(dir.path(), "src/ui/.gitattributes", "*.hx -diff\n");
+        // Not `Nul.hx`: on Windows that name is the NUL device, with any extension.
         write(
             dir.path(),
-            "src/Nul.hx",
-            "package mods.some_mod;\nclass Nul {}\n// \0\n",
+            "src/Zero.hx",
+            "package mods.some_mod;\nclass Zero {}\n// \0\n",
         );
         write(
             dir.path(),
@@ -389,12 +388,20 @@ mod tests {
         assert_eq!(
             problems(dir.path()),
             [
-                "src/Evil.hx.: only .hx files go under src/",
-                "src/Nul.hx:3: holds the character U+0000, which is not seen when the code is read: write it as an escape in a string (\\u{0000})",
                 "src/Turned.hx:3: holds the character U+202E, which is not seen when the code is read: write it as an escape in a string (\\u{202E})",
+                "src/Zero.hx:3: holds the character U+0000, which is not seen when the code is read: write it as an escape in a string (\\u{0000})",
                 "src/ui/.gitattributes: only .hx files go under src/",
             ]
         );
+        // Windows drops the dot as it writes the file, which leaves a plain Evil.hx.
+        #[cfg(not(windows))]
+        {
+            write(dir.path(), "src/Evil.hx.", "package mods.some_mod;\n");
+            assert!(
+                problems(dir.path())
+                    .contains(&"src/Evil.hx.: only .hx files go under src/".to_string())
+            );
+        }
         assert_eq!(unseen_character("\u{feff}a\tb\r\nc\n"), None);
         assert_eq!(unseen_character("a\nb\u{200b}"), Some((2, '\u{200b}')));
     }
